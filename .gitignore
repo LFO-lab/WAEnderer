@@ -1,0 +1,4 @@
+venv/*
+corpus/*
+user_audio/*
+.DS_Store
