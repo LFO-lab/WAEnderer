@@ -4,3 +4,4 @@ corpus/*
 user_audio/*
 eval_out/*
 .DS_Store
+venv/*
