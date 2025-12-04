@@ -1,4 +1,6 @@
 .venv
+*.pyc
 corpus/*
 user_audio/*
+eval_out/*
 .DS_Store

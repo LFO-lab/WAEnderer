@@ -21,3 +21,4 @@ python-osc>=1.8
 
 # Optional (used during preprocessing / local dev)
 tqdm>=4.66
+librosa
