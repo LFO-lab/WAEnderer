@@ -10,7 +10,9 @@ class Player:
     def __init__(self, ae, ZZ, meta, paths, Z_mean, Z_std,
                  latent_bundle_loader,
                  beta_target=0.2, jump_thresh=64, micro_jitter=0,
-                 win_sec=0.2, hop_sec=0.05):
+                 win_sec=0.2, hop_sec=0.05,
+                 kernel_blend=False, kernel_k=4, kernel_sigma=None,
+                 kernel_sigma_scale=1.0, kernel_target_norm=None):
         self.ae = ae
         self.ZZ = ZZ.astype(np.float32)                  # [N_seg, D]
         self.nav_dim = int(self.ZZ.shape[1])
@@ -19,6 +21,7 @@ class Player:
         self.paths = list(map(str, paths))
         self.Z_mean = Z_mean.astype(np.float32)
         self.Z_std  = Z_std.astype(np.float32)
+        self.latent_dim = int(self.Z_mean.shape[0])
         self._latent_bundle_loader = latent_bundle_loader
 
         self.kdt = cKDTree(self.ZZ)
@@ -38,6 +41,21 @@ class Player:
         self.win_sec = float(win_sec)
         self.hop_sec = float(hop_sec)
 
+        self.kernel_blend = bool(kernel_blend)
+        self.kernel_k = max(1, min(int(kernel_k), self.ZZ.shape[0]))
+        self.kernel_sigma = float(kernel_sigma) if (kernel_sigma is not None and float(kernel_sigma) > 0.0) else None
+        self.kernel_sigma_scale = max(float(kernel_sigma_scale), 1e-6)
+        target_norm = None
+        if kernel_target_norm is not None and float(kernel_target_norm) > 0.0:
+            target_norm = float(kernel_target_norm)
+        self.kernel_target_norm = target_norm
+        if self.kernel_blend:
+            print(
+                f"[info] Kernel blending enabled (k={self.kernel_k}, sigma="
+                f"{self.kernel_sigma if self.kernel_sigma is not None else 'auto'}"
+                f", target_norm={self.kernel_target_norm if self.kernel_target_norm is not None else 'none'})"
+            )
+
     # --- OSC cursor ---
     def set_cursor_nd(self, coords):
         n = min(len(coords), self.nav_dim)
@@ -54,16 +72,80 @@ class Player:
         self._latent_cache[file_id] = z
         return z
 
+    def _slice_latent_window(self, file_id: int, start_lat: int, win_lat: int):
+        z_full = self._load_full_latents(file_id)
+        start = int(start_lat)
+        end = min(z_full.shape[0], start + win_lat)
+        z_win = z_full[start:end]
+        if z_win.shape[0] == 0:
+            z_win = np.repeat(z_full[:1], win_lat, axis=0)
+        elif z_win.shape[0] < win_lat:
+            pad = np.repeat(z_win[-1:], win_lat - z_win.shape[0], axis=0)
+            z_win = np.concatenate([z_win, pad], axis=0)
+        elif z_win.shape[0] > win_lat:
+            z_win = z_win[:win_lat]
+        return np.ascontiguousarray(z_win.astype(np.float32))
+
     def _decode_latent_window(self, z_win_np):
         z = (z_win_np - self.Z_mean) / self.Z_std
         z = np.clip(z, -NORM_CLAMP, NORM_CLAMP)
         z = z * self.Z_std + self.Z_mean
         return decode_window(self.ae, z)
 
+    def _renormalize_window(self, z_win_np: np.ndarray, target_norm: float):
+        z_norm = (z_win_np - self.Z_mean) / (self.Z_std + 1e-8)
+        norms = np.linalg.norm(z_norm, axis=1, keepdims=True)
+        scales = target_norm / np.maximum(norms, 1e-6)
+        z_scaled = z_norm * scales
+        return z_scaled * self.Z_std + self.Z_mean
+
     # --- navigation ---
     def _nearest_primary(self):
         _, i = self.kdt.query(self.cursor, k=1)
         return int(i)
+
+    def _blend_latent_window(self, win_lat: int):
+        dist, idx = self.kdt.query(self.cursor, k=self.kernel_k)
+        idx_arr = np.atleast_1d(idx).astype(int)
+        dist_arr = np.atleast_1d(dist).astype(np.float32)
+
+        mask = np.isfinite(dist_arr)
+        idx_arr = idx_arr[mask]
+        dist_arr = dist_arr[mask]
+        if idx_arr.size == 0:
+            idx_arr = np.array([self._nearest_primary()], dtype=int)
+            dist_arr = np.array([0.0], dtype=np.float32)
+
+        sigma = self.kernel_sigma
+        if sigma is None:
+            positive = dist_arr[dist_arr > 1e-6]
+            if positive.size == 0:
+                base = float(dist_arr.max()) if dist_arr.size else 1.0
+            else:
+                base = float(np.median(positive))
+            if not np.isfinite(base) or base <= 0.0:
+                base = 1e-3
+            sigma = max(base * self.kernel_sigma_scale, 1e-4)
+
+        weights = np.exp(-(dist_arr ** 2) / (2.0 * sigma * sigma))
+        if not np.isfinite(weights).all() or weights.sum() <= 0.0:
+            weights = np.ones_like(dist_arr)
+        weights = weights / np.maximum(weights.sum(), 1e-12)
+
+        acc = None
+        for w, j in zip(weights.tolist(), idx_arr.tolist()):
+            fid, t0, _ = self.meta[j]
+            z_win = self._slice_latent_window(int(fid), int(t0), win_lat)
+            acc = z_win * w if acc is None else acc + z_win * w
+
+        if acc is None:
+            acc = np.zeros((win_lat, self.latent_dim), dtype=np.float32)
+        else:
+            acc = np.ascontiguousarray(acc.astype(np.float32))
+
+        if self.kernel_target_norm is not None and self.kernel_target_norm > 0.0:
+            acc = self._renormalize_window(acc, target_norm=self.kernel_target_norm)
+        return acc
 
     def _ensure_playhead_initialized(self, idx_primary, win_lat):
         fid, t0, _ = int(self.meta[idx_primary, 0]), int(self.meta[idx_primary, 1]), int(self.meta[idx_primary, 2])
@@ -153,16 +235,13 @@ class Player:
 
         try:
             while not self._stop_event.is_set():
-                idx_primary = self._nearest_primary()
-                self._ensure_playhead_initialized(idx_primary, win_lat)
-                fid, s_lat = self._advance_playhead(hop_lat, idx_primary, win_lat)
-
-                z_full = self._load_full_latents(fid)
-                e_lat = min(z_full.shape[0], s_lat + win_lat)
-                z_win = z_full[s_lat:e_lat]
-                if z_win.shape[0] < win_lat:
-                    pad = np.repeat(z_win[-1:], win_lat - z_win.shape[0], axis=0)
-                    z_win = np.concatenate([z_win, pad], axis=0)
+                if self.kernel_blend:
+                    z_win = self._blend_latent_window(win_lat)
+                else:
+                    idx_primary = self._nearest_primary()
+                    self._ensure_playhead_initialized(idx_primary, win_lat)
+                    fid, s_lat = self._advance_playhead(hop_lat, idx_primary, win_lat)
+                    z_win = self._slice_latent_window(fid, s_lat, win_lat)
 
                 audio = self._decode_latent_window(z_win)
                 a0 = audio[:hop_samps]

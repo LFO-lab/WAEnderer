@@ -37,6 +37,16 @@ def main():
                     help="Seuil (frames latentes) de saut immédiat.")
     ap.add_argument("--micro_jitter", type=int, default=0,
                     help="±1 frame de jitter pour réduire artefacts de bouclage (0/1).")
+    ap.add_argument("--kernel_blend", action="store_true",
+                    help="Active le blending local (noyau gaussien) dans l'espace latent VAE.")
+    ap.add_argument("--kernel_k", type=int, default=4,
+                    help="Nombre de voisins en géométrie de projection pour le blending (k).")
+    ap.add_argument("--kernel_sigma", type=float, default=-1.0,
+                    help="Sigma du noyau gaussien dans l'espace de projection (<=0 pour sigma auto local).")
+    ap.add_argument("--kernel_sigma_scale", type=float, default=1.0,
+                    help="Facteur multiplicatif appliqué au sigma auto (si utilisé).")
+    ap.add_argument("--kernel_target_norm", type=float, default=0.0,
+                    help="Norme L2 cible dans l'espace latent normalisé (<=0 pour désactiver la renormalisation).")
     args = ap.parse_args()
 
     # Resolve files from folder
@@ -68,7 +78,12 @@ def main():
         jump_thresh=args.jump_thresh,
         micro_jitter=args.micro_jitter,
         win_sec=args.win_sec,
-        hop_sec=args.hop_sec
+        hop_sec=args.hop_sec,
+        kernel_blend=args.kernel_blend,
+        kernel_k=args.kernel_k,
+        kernel_sigma=args.kernel_sigma,
+        kernel_sigma_scale=args.kernel_sigma_scale,
+        kernel_target_norm=args.kernel_target_norm
     )
 
     t = threading.Thread(target=player.run, daemon=True)
