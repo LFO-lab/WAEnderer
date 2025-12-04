@@ -1,4 +1,6 @@
 import numpy as np, sounddevice as sd
+import threading
+from queue import Queue, Empty, Full
 from scipy.spatial import cKDTree
 from ..config import SR, LATENT_HZ, NORM_CLAMP
 from ..vae.sae import decode_window
@@ -22,6 +24,9 @@ class Player:
         self.kdt = cKDTree(self.ZZ)
         self.cursor = np.full((self.nav_dim,), 0.5, dtype=np.float32)
         self._stop = False
+        self._stop_event = threading.Event()
+        self._audio_queue = None
+        self._playback_thread = None
         self._latent_cache = {}   # file_id -> z_full [T_lat, 64]
 
         self.play_file = None
@@ -85,21 +90,69 @@ class Player:
         self.play_tlat = float(np.clip(self.play_tlat, 0, max_start))
         return self.play_file, int(round(self.play_tlat))
 
+    def _enqueue_audio_chunk(self, a0, a1):
+        if self._audio_queue is None:
+            return False
+        while not self._stop_event.is_set():
+            try:
+                self._audio_queue.put((a0, a1), timeout=0.1)
+                return True
+            except Full:
+                continue
+        return False
+
+    def _request_playback_stop(self):
+        if self._audio_queue is None:
+            return
+        while True:
+            try:
+                self._audio_queue.put(None, timeout=0.1)
+                break
+            except Full:
+                if self._playback_thread is None or not self._playback_thread.is_alive():
+                    break
+                continue
+
     # --- audio loop ---
     def run(self):
+        self._stop = False
+        self._stop_event.clear()
         win_lat   = max(1, int(round(self.win_sec * LATENT_HZ)))
         hop_samps = int(round(self.hop_sec * SR))
         hop_lat   = max(1, int(round(self.hop_sec * LATENT_HZ)))
 
         fade = np.ascontiguousarray(np.hanning(2 * hop_samps).astype(np.float32))
         fade_in, fade_out = fade[:hop_samps], fade[hop_samps:]
+        self._audio_queue = Queue(maxsize=8)
 
-        stream = sd.OutputStream(samplerate=SR, channels=2, dtype='float32', blocksize=hop_samps)
-        stream.start()
-        carry = np.ascontiguousarray(np.zeros((hop_samps, 2), np.float32))
+        def playback_loop():
+            stream = sd.OutputStream(samplerate=SR, channels=2, dtype='float32', blocksize=hop_samps)
+            stream.start()
+            carry = np.ascontiguousarray(np.zeros((hop_samps, 2), np.float32))
+            try:
+                while True:
+                    try:
+                        item = self._audio_queue.get(timeout=0.1)
+                    except Empty:
+                        if self._stop_event.is_set():
+                            break
+                        continue
+                    if item is None:
+                        break
+                    a0, a1 = item
+                    out = carry * fade_out[:, None] + a0 * fade_in[:, None]
+                    out = np.ascontiguousarray(out, dtype=np.float32)
+                    stream.write(out)
+                    carry = np.ascontiguousarray(a1, dtype=np.float32)
+            finally:
+                stream.stop()
+                stream.close()
+
+        self._playback_thread = threading.Thread(target=playback_loop, daemon=True)
+        self._playback_thread.start()
 
         try:
-            while not self._stop:
+            while not self._stop_event.is_set():
                 idx_primary = self._nearest_primary()
                 self._ensure_playhead_initialized(idx_primary, win_lat)
                 fid, s_lat = self._advance_playhead(hop_lat, idx_primary, win_lat)
@@ -114,13 +167,19 @@ class Player:
                 audio = self._decode_latent_window(z_win)
                 a0 = audio[:hop_samps]
                 a1 = audio[hop_samps:2 * hop_samps] if audio.shape[0] >= 2 * hop_samps else np.zeros_like(a0)
-
-                out = carry * fade_out[:, None] + a0 * fade_in[:, None]
-                out = np.ascontiguousarray(out, dtype=np.float32)
-                stream.write(out)
-                carry = np.ascontiguousarray(a1, dtype=np.float32)
+                a0 = np.ascontiguousarray(a0, dtype=np.float32)
+                a1 = np.ascontiguousarray(a1, dtype=np.float32)
+                if not self._enqueue_audio_chunk(a0, a1):
+                    break
         finally:
-            stream.stop(); stream.close()
+            self._stop_event.set()
+            self._request_playback_stop()
+            if self._playback_thread is not None:
+                self._playback_thread.join()
+            self._audio_queue = None
+            self._playback_thread = None
 
     def stop(self):
         self._stop = True
+        self._stop_event.set()
+        self._request_playback_stop()

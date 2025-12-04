@@ -5,3 +5,5 @@ user_audio/*
 eval_out/*
 .DS_Store
 venv/*
+/stable_audio_wanderer/vae/__pycache__
+/stable_audio_wanderer/runtime/__pycache__

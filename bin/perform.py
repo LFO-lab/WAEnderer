@@ -73,6 +73,7 @@ def main():
 
     t = threading.Thread(target=player.run, daemon=True)
     t.start()
+    print(threading.enumerate())
     try:
         run_server(player, ip=args.osc_ip, port=args.osc_port)
     except KeyboardInterrupt:
