@@ -1,4 +1,6 @@
 setup.py
+stable_audio_wanderer/__init__.py
+stable_audio_wanderer/config.py
 stable_audio_wanderer.egg-info/PKG-INFO
 stable_audio_wanderer.egg-info/SOURCES.txt
 stable_audio_wanderer.egg-info/dependency_links.txt
