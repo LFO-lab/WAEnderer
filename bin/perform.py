@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-import os, argparse, threading
+import os, argparse, threading, torch
 import numpy as np
-from stable_audio_wanderer.config import SR
+from stable_audio_wanderer.config import SR, DEVICE
 from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, load_latents_bundle
 from stable_audio_wanderer.vae.sae import load_vae, encode_full, load_wav
 from stable_audio_wanderer.runtime.player import Player
 from stable_audio_wanderer.runtime.osc_server import run_server
+from stable_audio_wanderer.models.latent_ar import load_latent_ar_model
 
 def make_bundle_loader(bundle_path, ae):
     lat_bundle = None
@@ -47,6 +48,10 @@ def main():
                     help="Facteur multiplicatif appliqué au sigma auto (si utilisé).")
     ap.add_argument("--kernel_target_norm", type=float, default=0.0,
                     help="Norme L2 cible dans l'espace latent normalisé (<=0 pour désactiver la renormalisation).")
+    ap.add_argument("--ar_drive", action="store_true",
+                    help="Génère l'audio via le modèle AR latent entraîné (si présent dans le corpus).")
+    ap.add_argument("--ar_noise", type=float, default=0.0,
+                    help="Ecart-type du bruit gaussien ajouté aux prédictions AR (>=0).")
     args = ap.parse_args()
 
     # Resolve files from folder
@@ -59,6 +64,35 @@ def main():
     paths = list(map(str, data["paths"]))
     Z_mean= data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
+    ar_model = None
+    ar_context = None
+    ar_path = None
+    ar_noise_std = max(0.0, float(args.ar_noise))
+
+    if args.ar_drive:
+        if "ar_model_path" in data.files:
+            candidate = str(data["ar_model_path"])
+            if candidate and os.path.isfile(candidate):
+                ar_path = candidate
+        if ar_path is None:
+            print("[warn] --ar_drive demandé mais aucun modèle AR trouvé dans le corpus; retour au mode kNN.")
+            args.ar_drive = False
+        else:
+            device = torch.device(DEVICE)
+            ar_model, ar_meta = load_latent_ar_model(ar_path, device=device)
+            ctx_from_meta = ar_meta.get("context", 0) if isinstance(ar_meta, dict) else 0
+            ar_context = int(ctx_from_meta) if ctx_from_meta else None
+            if ar_context is None and "ar_context" in data.files:
+                try:
+                    ar_context = int(data["ar_context"])
+                except Exception:
+                    ar_context = None
+            if ar_context is None or ar_context <= 0:
+                print("[warn] Impossible de récupérer le contexte AR; retour au mode kNN.")
+                args.ar_drive = False
+                ar_model = None
+            else:
+                print(f"[info] Modèle AR chargé ({ar_path}), contexte={ar_context}")
 
     # Bundle path (fallback to latest latents file in folder)
     if "latent_bundle_path" in data.files and os.path.isfile(str(data["latent_bundle_path"])):
@@ -83,7 +117,11 @@ def main():
         kernel_k=args.kernel_k,
         kernel_sigma=args.kernel_sigma,
         kernel_sigma_scale=args.kernel_sigma_scale,
-        kernel_target_norm=args.kernel_target_norm
+        kernel_target_norm=args.kernel_target_norm,
+        ar_model=ar_model,
+        ar_context=ar_context,
+        ar_drive=args.ar_drive,
+        ar_noise_std=ar_noise_std,
     )
 
     t = threading.Thread(target=player.run, daemon=True)

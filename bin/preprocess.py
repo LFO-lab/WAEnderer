@@ -13,6 +13,7 @@ from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.features.mfcc import segment_mfcc_no_c0, ensure_2d_stack
 from stable_audio_wanderer.dr.pca import fit_transform
 from stable_audio_wanderer.io.corpus_io import save_latents_bundle, save_corpus
+from stable_audio_wanderer.models.latent_ar import LatentAutoregressiveCNN
 
 
 class LatentDataset(Dataset):
@@ -27,6 +28,28 @@ class LatentDataset(Dataset):
         if self.return_index:
             return self.latents[idx], idx
         return self.latents[idx]
+
+
+class LatentSequenceDataset(Dataset):
+    def __init__(self, sequences: List[np.ndarray], context: int):
+        self.sequences = [torch.from_numpy(seq) for seq in sequences]
+        self.context = int(context)
+        self.index: List[Tuple[int, int]] = []
+        for si, seq in enumerate(self.sequences):
+            if seq.shape[0] <= self.context:
+                continue
+            for start in range(0, seq.shape[0] - self.context):
+                self.index.append((si, start))
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx: int):
+        seq_id, start = self.index[idx]
+        seq = self.sequences[seq_id]
+        x = seq[start : start + self.context]
+        y = seq[start + self.context]
+        return x, y
 
 
 class LatentProjector(nn.Module):
@@ -115,6 +138,54 @@ def covariance_regularizer(
 
     cov_loss = var_weight * var_loss + decorr_weight * decorr_loss
     return cov_loss, var_loss, decorr_loss
+
+
+def train_autoregressive_cnn(
+    sequences: List[np.ndarray],
+    context: int,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    weight_decay: float,
+    device: torch.device,
+    hidden_dim: int,
+    layers: int,
+    kernel_size: int,
+    dropout: float,
+):
+    dataset = LatentSequenceDataset(sequences, context=context)
+    if len(dataset) == 0:
+        raise RuntimeError("No training samples for autoregressive model (sequences shorter than context).")
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    latent_dim = int(sequences[0].shape[1])
+    model = LatentAutoregressiveCNN(
+        latent_dim=latent_dim,
+        hidden_dim=hidden_dim,
+        layers=layers,
+        kernel_size=kernel_size,
+        dropout=dropout,
+    ).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_history: List[float] = []
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+        total_samples = 0
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            pred = model(x)
+            loss = F.mse_loss(pred, y)
+            loss.backward()
+            optimizer.step()
+            bs = x.size(0)
+            total_loss += float(loss.item()) * bs
+            total_samples += bs
+        avg_loss = total_loss / max(total_samples, 1)
+        loss_history.append(avg_loss)
+        print(f"[ar] epoch {epoch + 1}/{epochs} - mse: {avg_loss:.6f}")
+    return model, loss_history
 
 
 def info_nce_loss(u: torch.Tensor, v: torch.Tensor, tau: float) -> torch.Tensor:
@@ -313,6 +384,21 @@ def main():
         default=0.0,
         help="Optional weight for ||mean||^2 penalty on projector outputs (helps recentring if needed).",
     )
+    ap.add_argument(
+        "--train_ar",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Train an autoregressive CNN on normalized latent sequences (default: on).",
+    )
+    ap.add_argument("--ar_context", type=int, default=32, help="Context window (latent frames) for AR conditioning.")
+    ap.add_argument("--ar_hidden", type=int, default=256, help="Hidden channels inside the AR CNN.")
+    ap.add_argument("--ar_layers", type=int, default=4, help="Number of dilated conv layers in the AR CNN.")
+    ap.add_argument("--ar_kernel", type=int, default=3, help="Kernel size for AR convolutions.")
+    ap.add_argument("--ar_dropout", type=float, default=0.05, help="Dropout applied inside the AR CNN.")
+    ap.add_argument("--ar_epochs", type=int, default=10, help="Training epochs for the autoregressive model.")
+    ap.add_argument("--ar_batch", type=int, default=256, help="Batch size for AR model training.")
+    ap.add_argument("--ar_lr", type=float, default=1e-3, help="Learning rate for AR model training.")
+    ap.add_argument("--ar_weight_decay", type=float, default=1e-4, help="Weight decay for AR optimizer.")
     args = ap.parse_args()
 
     if not (1 <= args.proj_dim <= 64):
@@ -327,6 +413,22 @@ def main():
     args.proj_tau = tau
     if args.proj_knn < 1:
         ap.error("--proj_knn must be ≥ 1.")
+    if args.ar_context < 1:
+        ap.error("--ar_context must be ≥ 1.")
+    if args.ar_hidden < 1:
+        ap.error("--ar_hidden must be ≥ 1.")
+    if args.ar_layers < 1:
+        ap.error("--ar_layers must be ≥ 1.")
+    if args.ar_kernel < 2:
+        ap.error("--ar_kernel must be ≥ 2.")
+    if args.ar_epochs < 1:
+        ap.error("--ar_epochs must be ≥ 1.")
+    if args.ar_batch < 1:
+        ap.error("--ar_batch must be ≥ 1.")
+    if args.ar_lr <= 0.0:
+        ap.error("--ar_lr must be > 0.")
+    if args.ar_weight_decay < 0.0:
+        ap.error("--ar_weight_decay must be ≥ 0.")
 
     # Clamp weights to sane ranges.
     args.proj_lambda_unif = max(0.0, float(args.proj_lambda_unif))
@@ -334,6 +436,7 @@ def main():
     args.proj_cov_var = max(0.0, float(args.proj_cov_var))
     args.proj_cov_decorr = max(0.0, float(args.proj_cov_decorr))
     args.proj_mean_weight = max(0.0, float(args.proj_mean_weight))
+    args.ar_dropout = min(max(0.0, float(args.ar_dropout)), 0.95)
     max_gamma = 1.0 / float(args.proj_dim)
     if args.proj_cov_gamma <= 0.0 or args.proj_cov_gamma > max_gamma:
         if args.proj_cov_gamma > max_gamma:
@@ -392,14 +495,58 @@ def main():
     Z_var = latent_stack.var(axis=0).astype(np.float32)
     Z_std = np.sqrt(Z_var + 1e-6).astype(np.float32)
 
+    latent_sequences_norm = []
+    for seq in latent_sequences:
+        seq_norm = (seq - Z_mean[None, :]) / Z_std[None, :]
+        latent_sequences_norm.append(np.ascontiguousarray(seq_norm.astype(np.float32)))
+
     latent_stack_norm = (latent_stack - Z_mean[None, :]) / Z_std[None, :]
     latent_stack_norm = np.ascontiguousarray(latent_stack_norm.astype(np.float32))
     if latent_stack_norm.shape[0] < 2:
         raise RuntimeError("Need at least two latent frames to train the contrastive projector.")
 
+    device = torch.device(DEVICE)
+
+    ar_checkpoint_path = None
+    ar_loss_history: List[float] = []
+    ar_config = None
+    if args.train_ar:
+        try:
+            print("[info] Training autoregressive latent CNN…")
+            ar_model, ar_loss_history = train_autoregressive_cnn(
+                latent_sequences_norm,
+                context=int(args.ar_context),
+                epochs=int(args.ar_epochs),
+                batch_size=int(args.ar_batch),
+                lr=float(args.ar_lr),
+                weight_decay=float(args.ar_weight_decay),
+                device=device,
+                hidden_dim=int(args.ar_hidden),
+                layers=int(args.ar_layers),
+                kernel_size=int(args.ar_kernel),
+                dropout=float(args.ar_dropout),
+            )
+            ar_state = {k: v.detach().cpu() for k, v in ar_model.state_dict().items()}
+            ar_checkpoint_path = os.path.join(out_dir, f"{prefix}_ar_{ts}.pt")
+            ar_config = ar_model.to_config()
+            torch.save(
+                {
+                    "state_dict": ar_state,
+                    "config": ar_config,
+                    "context": int(args.ar_context),
+                    "loss_history": ar_loss_history,
+                    "epochs": int(args.ar_epochs),
+                    "batch_size": int(args.ar_batch),
+                    "lr": float(args.ar_lr),
+                    "weight_decay": float(args.ar_weight_decay),
+                },
+                ar_checkpoint_path,
+            )
+        except RuntimeError as exc:
+            print(f"[warn] Skipping autoregressive training: {exc}")
+
     proj_batch = min(args.proj_batch, latent_stack_norm.shape[0])
     proj_batch = max(2, proj_batch)
-    device = torch.device(DEVICE)
 
     print(f"Training contrastive projector g… (uniform_proj={bool(args.uniform_proj)})")
     projector, g_loss_history = train_contrastive_projector(
@@ -501,6 +648,15 @@ def main():
         g_cov_gamma=np.array(float(args.proj_cov_gamma), dtype=np.float32),
         g_mean_weight=np.array(float(args.proj_mean_weight), dtype=np.float32),
         g_loss_breakdown=np.array(g_loss_history, dtype=object),
+        ar_model_path=np.array(ar_checkpoint_path if ar_checkpoint_path is not None else ""),
+        ar_context=np.array(int(args.ar_context), dtype=np.int32),
+        ar_loss_history=np.asarray(ar_loss_history, dtype=np.float32),
+        ar_config=np.array(ar_config if ar_config is not None else {}, dtype=object),
+        ar_train_epochs=np.array(int(args.ar_epochs), dtype=np.int32),
+        ar_train_batch=np.array(int(args.ar_batch), dtype=np.int32),
+        ar_train_lr=np.array(float(args.ar_lr), dtype=np.float32),
+        ar_weight_decay=np.array(float(args.ar_weight_decay), dtype=np.float32),
+        ar_trained=np.array(bool(ar_checkpoint_path is not None)),
         latent_bundle_path=np.array(latents_path),
         **dr_arrays,
     )
@@ -508,6 +664,8 @@ def main():
     print("\nSaved:")
     print("  Latents   :", latents_path)
     print("  Projector :", projector_path)
+    if ar_checkpoint_path is not None:
+        print("  AR model  :", ar_checkpoint_path)
     print("  Corpus    :", corpus_path)
     print("  Folder    :", out_dir)
 

@@ -12,7 +12,8 @@ class Player:
                  beta_target=0.2, jump_thresh=64, micro_jitter=0,
                  win_sec=0.2, hop_sec=0.05,
                  kernel_blend=False, kernel_k=4, kernel_sigma=None,
-                 kernel_sigma_scale=1.0, kernel_target_norm=None):
+                 kernel_sigma_scale=1.0, kernel_target_norm=None,
+                 ar_model=None, ar_context=None, ar_drive=False, ar_noise_std=0.0):
         self.ae = ae
         self.ZZ = ZZ.astype(np.float32)                  # [N_seg, D]
         self.nav_dim = int(self.ZZ.shape[1])
@@ -54,6 +55,24 @@ class Player:
                 f"[info] Kernel blending enabled (k={self.kernel_k}, sigma="
                 f"{self.kernel_sigma if self.kernel_sigma is not None else 'auto'}"
                 f", target_norm={self.kernel_target_norm if self.kernel_target_norm is not None else 'none'})"
+            )
+        self.ar_model = ar_model
+        self.ar_context = int(ar_context) if ar_context is not None else None
+        self.ar_drive = bool(ar_drive and self.ar_model is not None and self.ar_context is not None)
+        self.ar_noise_std = max(0.0, float(ar_noise_std))
+        self._ar_buffer = []
+        self._ar_pos = 0
+        self._ar_anchor_idx = None
+        self._ar_device = None
+        self._Z_mean_t = None
+        self._Z_std_t = None
+        if self.ar_drive:
+            self.ar_model.eval()
+            self._ar_device = next(self.ar_model.parameters()).device
+            self._Z_mean_t = torch.from_numpy(self.Z_mean).to(self._ar_device)
+            self._Z_std_t = torch.from_numpy(self.Z_std).to(self._ar_device)
+            print(
+                f"[info] Autoregressive drive enabled (context={self.ar_context}, noise_std={self.ar_noise_std})"
             )
 
     # --- OSC cursor ---
@@ -147,6 +166,63 @@ class Player:
             acc = self._renormalize_window(acc, target_norm=self.kernel_target_norm)
         return acc
 
+    # --- autoregressive ---
+    def _reseed_ar_buffer(self, idx_primary: int, win_lat: int):
+        if not self.ar_drive:
+            return
+        seed_len = max(win_lat, self.ar_context)
+        fid, t0, _ = self.meta[idx_primary]
+        start = max(0, int(t0) - seed_len // 2)
+        seed = self._slice_latent_window(int(fid), start, seed_len)
+        self._ar_buffer = [row.astype(np.float32) for row in seed]
+        self._ar_pos = 0
+        self._ar_anchor_idx = idx_primary
+        self.play_file = int(fid)
+        self.play_tlat = float(start)
+
+    def _ensure_ar_ready(self, win_lat: int):
+        idx_primary = self._nearest_primary()
+        if not self._ar_buffer or self._ar_anchor_idx != idx_primary:
+            self._reseed_ar_buffer(idx_primary, win_lat)
+        return idx_primary
+
+    def _generate_ar_latents(self, num_needed: int):
+        if not self.ar_drive:
+            return
+        for _ in range(num_needed):
+            ctx = self._ar_buffer[-self.ar_context :]
+            if len(ctx) == 0:
+                break
+            if len(ctx) < self.ar_context:
+                ctx = ctx + [ctx[-1]] * (self.ar_context - len(ctx))
+            ctx_arr = np.stack(ctx, axis=0).astype(np.float32)
+            ctx_t = torch.from_numpy(ctx_arr).to(self._ar_device)
+            ctx_t = (ctx_t - self._Z_mean_t) / (self._Z_std_t + 1e-8)
+            with torch.inference_mode():
+                pred_norm = self.ar_model(ctx_t.unsqueeze(0)).squeeze(0).detach().cpu().numpy().astype(np.float32)
+            pred = pred_norm * self.Z_std + self.Z_mean
+            if self.ar_noise_std > 0.0:
+                pred = pred + np.random.randn(*pred.shape).astype(np.float32) * self.ar_noise_std
+            self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
+
+    def _next_ar_window(self, win_lat: int, hop_lat: int):
+        self._ensure_ar_ready(win_lat)
+        needed = self._ar_pos + win_lat
+        if len(self._ar_buffer) < needed:
+            self._generate_ar_latents(needed - len(self._ar_buffer))
+        if len(self._ar_buffer) < needed:
+            return self._blend_latent_window(win_lat) if self.kernel_blend else self._slice_latent_window(
+                self.play_file if self.play_file is not None else 0, max(int(self.play_tlat), 0), win_lat
+            )
+        z_win = np.stack(self._ar_buffer[self._ar_pos : self._ar_pos + win_lat], axis=0).astype(np.float32)
+        self._ar_pos += hop_lat
+        if self._ar_pos > self.ar_context * 4 and len(self._ar_buffer) > (self.ar_context * 6):
+            drop = min(self._ar_pos - self.ar_context * 2, len(self._ar_buffer) - win_lat)
+            if drop > 0:
+                self._ar_buffer = self._ar_buffer[drop:]
+                self._ar_pos -= drop
+        return z_win
+
     def _ensure_playhead_initialized(self, idx_primary, win_lat):
         fid, t0, _ = int(self.meta[idx_primary, 0]), int(self.meta[idx_primary, 1]), int(self.meta[idx_primary, 2])
         if self.play_file is None:
@@ -235,7 +311,9 @@ class Player:
 
         try:
             while not self._stop_event.is_set():
-                if self.kernel_blend:
+                if self.ar_drive:
+                    z_win = self._next_ar_window(win_lat, hop_lat)
+                elif self.kernel_blend:
                     z_win = self._blend_latent_window(win_lat)
                 else:
                     idx_primary = self._nearest_primary()
