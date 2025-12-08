@@ -31,14 +31,24 @@ class LatentDataset(Dataset):
 
 
 class LatentSequenceDataset(Dataset):
-    def __init__(self, sequences: List[np.ndarray], context: int):
+    def __init__(
+        self,
+        sequences: List[np.ndarray],
+        context: int,
+        max_future: int,
+        jitter: int = 0,
+        mix_prob: float = 0.0,
+    ):
         self.sequences = [torch.from_numpy(seq) for seq in sequences]
         self.context = int(context)
+        self.max_future = max(1, int(max_future))
+        self.jitter = max(0, int(jitter))
+        self.mix_prob = max(0.0, float(mix_prob))
         self.index: List[Tuple[int, int]] = []
         for si, seq in enumerate(self.sequences):
-            if seq.shape[0] <= self.context:
+            if seq.shape[0] <= self.context + self.max_future:
                 continue
-            for start in range(0, seq.shape[0] - self.context):
+            for start in range(0, seq.shape[0] - (self.context + self.max_future) + 1):
                 self.index.append((si, start))
 
     def __len__(self):
@@ -47,9 +57,35 @@ class LatentSequenceDataset(Dataset):
     def __getitem__(self, idx: int):
         seq_id, start = self.index[idx]
         seq = self.sequences[seq_id]
+        start_jitter = 0
+        if self.jitter > 0:
+            start_jitter = int(np.random.randint(-self.jitter, self.jitter + 1))
+        start = int(np.clip(start + start_jitter, 0, max(seq.shape[0] - (self.context + self.max_future), 0)))
+
         x = seq[start : start + self.context]
-        y = seq[start + self.context]
-        return x, y
+        future = seq[start + self.context : start + self.context + self.max_future]
+
+        if future.shape[0] < self.max_future:
+            pad = future[-1:] if future.shape[0] > 0 else seq[start + self.context - 1 : start + self.context]
+            pad = pad.repeat(self.max_future - future.shape[0], 1)
+            future = torch.cat([future, pad], dim=0)
+
+        if self.mix_prob > 0.0 and len(self.sequences) > 1 and np.random.rand() < self.mix_prob:
+            alt_id = (seq_id + np.random.choice([-1, 1])) % len(self.sequences)
+            alt_seq = self.sequences[alt_id]
+            min_len = self.context + self.max_future + 1
+            if alt_seq.shape[0] >= min_len:
+                cut = int(np.random.randint(1, self.context))
+                alt_start_max = int(alt_seq.shape[0] - (self.context - cut + self.max_future))
+                alt_start = int(np.random.randint(0, max(1, alt_start_max)))
+                alt_ctx = alt_seq[alt_start : alt_start + (self.context - cut)]
+                alt_future = alt_seq[
+                    alt_start + (self.context - cut) : alt_start + (self.context - cut) + self.max_future
+                ]
+                x = torch.cat([x[:cut], alt_ctx], dim=0)
+                if alt_future.shape[0] == self.max_future:
+                    future = alt_future
+        return x, future
 
 
 class LatentProjector(nn.Module):
@@ -140,6 +176,54 @@ def covariance_regularizer(
     return cov_loss, var_loss, decorr_loss
 
 
+def residual_ref(x: torch.Tensor, span: int) -> torch.Tensor:
+    span = max(1, min(int(span), x.size(1)))
+    return x[:, -span:, :].mean(dim=1)
+
+
+def scheduled_replace_with_preds(
+    model: LatentAutoregressiveCNN,
+    x: torch.Tensor,
+    max_steps: int,
+    prob: float,
+) -> torch.Tensor:
+    if prob <= 0.0 or max_steps <= 0 or x.size(1) < 2:
+        return x
+    if torch.rand(1, device=x.device).item() > prob:
+        return x
+    steps = int(np.random.randint(1, max_steps + 1))
+    steps = max(1, min(steps, x.size(1)))
+    with torch.no_grad():
+        ctx = x.clone()
+        preds = []
+        for _ in range(steps):
+            out = model(ctx, return_aux=False, return_delta=False)
+            pred = out["pred"] if isinstance(out, dict) else out
+            preds.append(pred.detach())
+            ctx = torch.cat([ctx[:, 1:, :], pred.unsqueeze(1)], dim=1)
+    preds_stack = torch.stack(preds, dim=1)  # [B, steps, D]
+    x_aug = x.clone()
+    x_aug[:, -steps:, :] = preds_stack
+    return x_aug
+
+
+def rollout_predictions(
+    model: LatentAutoregressiveCNN,
+    ctx: torch.Tensor,
+    steps: int,
+) -> torch.Tensor:
+    if steps <= 0:
+        return ctx.new_zeros((ctx.size(0), 0, ctx.size(2)))
+    preds = []
+    roll_ctx = ctx
+    for _ in range(steps):
+        out = model(roll_ctx, return_aux=False, return_delta=True)
+        pred = out["pred"] if isinstance(out, dict) else out
+        preds.append(pred)
+        roll_ctx = torch.cat([roll_ctx[:, 1:, :], pred.unsqueeze(1)], dim=1)
+    return torch.stack(preds, dim=1)  # [B, steps, D]
+
+
 def train_autoregressive_cnn(
     sequences: List[np.ndarray],
     context: int,
@@ -152,8 +236,28 @@ def train_autoregressive_cnn(
     layers: int,
     kernel_size: int,
     dropout: float,
+    rollout_min: int,
+    rollout_max: int,
+    scheduled_prob: float,
+    context_noise_std: float,
+    residual_span: int,
+    aux_weight: float,
+    rollout_weight: float,
+    delta_weight: float,
+    norm_reg_weight: float,
+    var_reg_weight: float,
+    target_norm: float,
+    target_var: np.ndarray,
+    jitter: int,
+    mix_prob: float,
 ):
-    dataset = LatentSequenceDataset(sequences, context=context)
+    dataset = LatentSequenceDataset(
+        sequences,
+        context=context,
+        max_future=rollout_max,
+        jitter=jitter,
+        mix_prob=mix_prob,
+    )
     if len(dataset) == 0:
         raise RuntimeError("No training samples for autoregressive model (sequences shorter than context).")
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
@@ -164,27 +268,96 @@ def train_autoregressive_cnn(
         layers=layers,
         kernel_size=kernel_size,
         dropout=dropout,
+        predict_residual=True,
+        residual_center_span=residual_span,
+        aux_head=aux_weight > 0.0,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_history: List[float] = []
+    loss_history: List[Dict[str, float]] = []
+    target_norm_t = torch.as_tensor(float(target_norm), device=device, dtype=torch.float32)
+    target_var_t = torch.from_numpy(target_var).to(device=device, dtype=torch.float32)
+    target_var_t = target_var_t.view(1, -1)
+
     for epoch in range(epochs):
         model.train()
-        total_loss = 0.0
+        totals = {
+            "total": 0.0,
+            "main": 0.0,
+            "delta": 0.0,
+            "rollout": 0.0,
+            "aux": 0.0,
+            "reg_norm": 0.0,
+            "reg_var": 0.0,
+        }
         total_samples = 0
-        for x, y in loader:
+        for x, future in loader:
             x = x.to(device)
-            y = y.to(device)
+            future = future.to(device)
+            if context_noise_std > 0.0:
+                x = x + context_noise_std * torch.randn_like(x)
+            x = scheduled_replace_with_preds(model, x, max_steps=rollout_max, prob=scheduled_prob)
+
             optimizer.zero_grad(set_to_none=True)
-            pred = model(x)
-            loss = F.mse_loss(pred, y)
-            loss.backward()
+
+            out = model(x, return_aux=True, return_delta=True)
+            pred_next = out["pred"]
+            delta_next = out.get("delta", pred_next)
+            ref = residual_ref(x, residual_span)
+
+            target_next = future[:, 0, :]
+            target_delta = target_next - ref
+
+            main_loss = F.mse_loss(pred_next, target_next)
+            delta_loss = F.mse_loss(delta_next, target_delta)
+
+            aux_loss = pred_next.new_tensor(0.0)
+            if out.get("aux_pred", None) is not None and future.size(1) > 1:
+                target_aux = future[:, 1, :]
+                aux_pred = out["aux_pred"]
+                aux_delta = out.get("aux_delta", aux_pred)
+                target_aux_delta = target_aux - ref
+                aux_loss = 0.5 * (F.mse_loss(aux_pred, target_aux) + F.mse_loss(aux_delta, target_aux_delta))
+
+            roll_steps = int(np.random.randint(max(1, rollout_min), rollout_max + 1))
+            roll_steps = min(roll_steps, future.size(1))
+            rollout_pred = rollout_predictions(model, x, steps=roll_steps)
+            rollout_target = future[:, :roll_steps, :]
+            rollout_loss = F.mse_loss(rollout_pred, rollout_target)
+
+            reg_frames = torch.cat([pred_next.unsqueeze(1), rollout_pred], dim=1)
+            norms = reg_frames.norm(dim=-1)
+            norm_reg = ((norms - target_norm_t) ** 2).mean()
+            batch_var = reg_frames.reshape(-1, reg_frames.size(-1)).var(dim=0, unbiased=False).view(1, -1)
+            var_reg = ((batch_var - target_var_t) ** 2).mean()
+
+            total_loss = (
+                main_loss
+                + delta_weight * delta_loss
+                + rollout_weight * rollout_loss
+                + aux_weight * aux_loss
+                + norm_reg_weight * norm_reg
+                + var_reg_weight * var_reg
+            )
+
+            total_loss.backward()
             optimizer.step()
             bs = x.size(0)
-            total_loss += float(loss.item()) * bs
             total_samples += bs
-        avg_loss = total_loss / max(total_samples, 1)
-        loss_history.append(avg_loss)
-        print(f"[ar] epoch {epoch + 1}/{epochs} - mse: {avg_loss:.6f}")
+            totals["total"] += float(total_loss.item()) * bs
+            totals["main"] += float(main_loss.item()) * bs
+            totals["delta"] += float(delta_loss.item()) * bs
+            totals["rollout"] += float(rollout_loss.item()) * bs
+            totals["aux"] += float(aux_loss.item()) * bs
+            totals["reg_norm"] += float(norm_reg.item()) * bs
+            totals["reg_var"] += float(var_reg.item()) * bs
+
+        denom = max(total_samples, 1)
+        epoch_stats = {k: v / denom for k, v in totals.items()}
+        loss_history.append(epoch_stats)
+        print(
+            f"[ar] epoch {epoch + 1}/{epochs} - total: {epoch_stats['total']:.6f} | "
+            f"main: {epoch_stats['main']:.6f} | roll: {epoch_stats['rollout']:.6f} | aux: {epoch_stats['aux']:.6f}"
+        )
     return model, loss_history
 
 
@@ -399,6 +572,68 @@ def main():
     ap.add_argument("--ar_batch", type=int, default=256, help="Batch size for AR model training.")
     ap.add_argument("--ar_lr", type=float, default=1e-3, help="Learning rate for AR model training.")
     ap.add_argument("--ar_weight_decay", type=float, default=1e-4, help="Weight decay for AR optimizer.")
+    ap.add_argument("--ar_rollout_min", type=int, default=2, help="Minimum rollout steps used inside AR loss.")
+    ap.add_argument("--ar_rollout_max", type=int, default=4, help="Maximum rollout steps used inside AR loss.")
+    ap.add_argument(
+        "--ar_rollout_weight",
+        type=float,
+        default=0.5,
+        help="Weight applied to rollout loss terms (keep small to avoid over-penalizing long horizons).",
+    )
+    ap.add_argument(
+        "--ar_sched_prob",
+        type=float,
+        default=0.2,
+        help="Probability of replacing the tail of the context with model predictions (scheduled sampling).",
+    )
+    ap.add_argument(
+        "--ar_context_noise",
+        type=float,
+        default=0.01,
+        help="Gaussian noise std added to AR context (in normalized latent units).",
+    )
+    ap.add_argument(
+        "--ar_residual_span",
+        type=int,
+        default=1,
+        help="Number of tail frames averaged as the residual anchor for Δz predictions.",
+    )
+    ap.add_argument(
+        "--ar_aux_weight",
+        type=float,
+        default=0.25,
+        help="Weight for the auxiliary 2-step prediction head inside the AR loss.",
+    )
+    ap.add_argument(
+        "--ar_delta_weight",
+        type=float,
+        default=0.5,
+        help="Weight for supervising Δz directly in addition to absolute latent MSE.",
+    )
+    ap.add_argument(
+        "--ar_norm_reg",
+        type=float,
+        default=0.01,
+        help="Regularizer weight for keeping predicted norms close to training stats (in normalized space).",
+    )
+    ap.add_argument(
+        "--ar_var_reg",
+        type=float,
+        default=0.01,
+        help="Regularizer weight for keeping per-dim variance close to training stats (in normalized space).",
+    )
+    ap.add_argument(
+        "--ar_jitter",
+        type=int,
+        default=2,
+        help="Temporal jitter (frames) applied when sampling AR training windows for seed diversity.",
+    )
+    ap.add_argument(
+        "--ar_mix_prob",
+        type=float,
+        default=0.1,
+        help="Probability of splicing the tail of a random neighboring sequence into the AR context.",
+    )
     args = ap.parse_args()
 
     if not (1 <= args.proj_dim <= 64):
@@ -429,6 +664,12 @@ def main():
         ap.error("--ar_lr must be > 0.")
     if args.ar_weight_decay < 0.0:
         ap.error("--ar_weight_decay must be ≥ 0.")
+    if args.ar_rollout_min < 1:
+        ap.error("--ar_rollout_min must be ≥ 1.")
+    if args.ar_rollout_max < args.ar_rollout_min:
+        ap.error("--ar_rollout_max must be ≥ --ar_rollout_min.")
+    if args.ar_residual_span < 1:
+        ap.error("--ar_residual_span must be ≥ 1.")
 
     # Clamp weights to sane ranges.
     args.proj_lambda_unif = max(0.0, float(args.proj_lambda_unif))
@@ -444,6 +685,15 @@ def main():
         args.proj_cov_gamma = max_gamma
     if args.uniform_proj and args.proj_mix > 0.0:
         print("[info] --proj_mix is ignored when --uniform_proj is enabled (using VAE-space neighbors as positives).")
+    args.ar_sched_prob = float(np.clip(args.ar_sched_prob, 0.0, 1.0))
+    args.ar_context_noise = max(0.0, float(args.ar_context_noise))
+    args.ar_rollout_weight = max(0.0, float(args.ar_rollout_weight))
+    args.ar_aux_weight = max(0.0, float(args.ar_aux_weight))
+    args.ar_delta_weight = max(0.0, float(args.ar_delta_weight))
+    args.ar_norm_reg = max(0.0, float(args.ar_norm_reg))
+    args.ar_var_reg = max(0.0, float(args.ar_var_reg))
+    args.ar_jitter = max(0, int(args.ar_jitter))
+    args.ar_mix_prob = float(np.clip(args.ar_mix_prob, 0.0, 1.0))
 
     prefix = os.path.basename(args.out_prefix)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -504,11 +754,14 @@ def main():
     latent_stack_norm = np.ascontiguousarray(latent_stack_norm.astype(np.float32))
     if latent_stack_norm.shape[0] < 2:
         raise RuntimeError("Need at least two latent frames to train the contrastive projector.")
+    train_norm = float(np.linalg.norm(latent_stack_norm, axis=1).mean())
+    train_var = np.maximum(latent_stack_norm.var(axis=0).astype(np.float32), 1e-6)
 
     device = torch.device(DEVICE)
 
     ar_checkpoint_path = None
-    ar_loss_history: List[float] = []
+    ar_loss_history: List[Dict[str, float]] = []
+    ar_loss_total: List[float] = []
     ar_config = None
     if args.train_ar:
         try:
@@ -525,7 +778,22 @@ def main():
                 layers=int(args.ar_layers),
                 kernel_size=int(args.ar_kernel),
                 dropout=float(args.ar_dropout),
+                rollout_min=int(args.ar_rollout_min),
+                rollout_max=int(args.ar_rollout_max),
+                scheduled_prob=float(args.ar_sched_prob),
+                context_noise_std=float(args.ar_context_noise),
+                residual_span=int(args.ar_residual_span),
+                aux_weight=float(args.ar_aux_weight),
+                rollout_weight=float(args.ar_rollout_weight),
+                delta_weight=float(args.ar_delta_weight),
+                norm_reg_weight=float(args.ar_norm_reg),
+                var_reg_weight=float(args.ar_var_reg),
+                target_norm=float(train_norm),
+                target_var=train_var,
+                jitter=int(args.ar_jitter),
+                mix_prob=float(args.ar_mix_prob),
             )
+            ar_loss_total = [float(entry["total"]) for entry in ar_loss_history]
             ar_state = {k: v.detach().cpu() for k, v in ar_model.state_dict().items()}
             ar_checkpoint_path = os.path.join(out_dir, f"{prefix}_ar_{ts}.pt")
             ar_config = ar_model.to_config()
@@ -535,10 +803,27 @@ def main():
                     "config": ar_config,
                     "context": int(args.ar_context),
                     "loss_history": ar_loss_history,
+                    "loss_total": ar_loss_total,
                     "epochs": int(args.ar_epochs),
                     "batch_size": int(args.ar_batch),
                     "lr": float(args.ar_lr),
                     "weight_decay": float(args.ar_weight_decay),
+                    "rollout": {
+                        "min": int(args.ar_rollout_min),
+                        "max": int(args.ar_rollout_max),
+                        "weight": float(args.ar_rollout_weight),
+                    },
+                    "scheduled_prob": float(args.ar_sched_prob),
+                    "context_noise": float(args.ar_context_noise),
+                    "residual_span": int(args.ar_residual_span),
+                    "aux_weight": float(args.ar_aux_weight),
+                    "delta_weight": float(args.ar_delta_weight),
+                    "norm_reg": float(args.ar_norm_reg),
+                    "var_reg": float(args.ar_var_reg),
+                    "target_norm": float(train_norm),
+                    "target_var": train_var,
+                    "jitter": int(args.ar_jitter),
+                    "mix_prob": float(args.ar_mix_prob),
                 },
                 ar_checkpoint_path,
             )
@@ -650,12 +935,27 @@ def main():
         g_loss_breakdown=np.array(g_loss_history, dtype=object),
         ar_model_path=np.array(ar_checkpoint_path if ar_checkpoint_path is not None else ""),
         ar_context=np.array(int(args.ar_context), dtype=np.int32),
-        ar_loss_history=np.asarray(ar_loss_history, dtype=np.float32),
+        ar_loss_history=np.asarray(ar_loss_total, dtype=np.float32),
+        ar_loss_breakdown=np.array(ar_loss_history, dtype=object),
         ar_config=np.array(ar_config if ar_config is not None else {}, dtype=object),
         ar_train_epochs=np.array(int(args.ar_epochs), dtype=np.int32),
         ar_train_batch=np.array(int(args.ar_batch), dtype=np.int32),
         ar_train_lr=np.array(float(args.ar_lr), dtype=np.float32),
         ar_weight_decay=np.array(float(args.ar_weight_decay), dtype=np.float32),
+        ar_rollout_min=np.array(int(args.ar_rollout_min), dtype=np.int32),
+        ar_rollout_max=np.array(int(args.ar_rollout_max), dtype=np.int32),
+        ar_rollout_weight=np.array(float(args.ar_rollout_weight), dtype=np.float32),
+        ar_sched_prob=np.array(float(args.ar_sched_prob), dtype=np.float32),
+        ar_context_noise=np.array(float(args.ar_context_noise), dtype=np.float32),
+        ar_residual_span=np.array(int(args.ar_residual_span), dtype=np.int32),
+        ar_aux_weight=np.array(float(args.ar_aux_weight), dtype=np.float32),
+        ar_delta_weight=np.array(float(args.ar_delta_weight), dtype=np.float32),
+        ar_norm_reg=np.array(float(args.ar_norm_reg), dtype=np.float32),
+        ar_var_reg=np.array(float(args.ar_var_reg), dtype=np.float32),
+        ar_jitter=np.array(int(args.ar_jitter), dtype=np.int32),
+        ar_mix_prob=np.array(float(args.ar_mix_prob), dtype=np.float32),
+        ar_target_norm=np.array(float(train_norm), dtype=np.float32),
+        ar_target_var=train_var,
         ar_trained=np.array(bool(ar_checkpoint_path is not None)),
         latent_bundle_path=np.array(latents_path),
         **dr_arrays,
