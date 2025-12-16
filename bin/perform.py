@@ -6,7 +6,7 @@ from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, load_la
 from stable_audio_wanderer.vae.sae import load_vae, encode_full, load_wav
 from stable_audio_wanderer.runtime.player import Player
 from stable_audio_wanderer.runtime.osc_server import run_server
-from stable_audio_wanderer.models.latent_ar import load_latent_ar_model
+from stable_audio_wanderer.models.latent_ar import load_ar_model_with_projector
 
 def make_bundle_loader(bundle_path, ae):
     lat_bundle = None
@@ -52,6 +52,15 @@ def main():
                     help="Génère l'audio via le modèle AR latent entraîné (si présent dans le corpus).")
     ap.add_argument("--ar_noise", type=float, default=0.0,
                     help="Ecart-type du bruit gaussien ajouté aux prédictions AR (>=0).")
+    # Inference stabilization options
+    ap.add_argument("--ar_use_projection", action=argparse.BooleanOptionalAction, default=True,
+                    help="Utilise le projecteur de manifold pour corriger la dérive (default: on si disponible).")
+    ap.add_argument("--ar_clamp_std", type=float, default=3.0,
+                    help="Seuil de clampage adaptatif en écarts-types (0 pour désactiver).")
+    ap.add_argument("--ar_target_norm", type=float, default=0.0,
+                    help="Norme cible pour projection sphérique (0 pour désactiver).")
+    ap.add_argument("--ar_reanchor_interval", type=int, default=0,
+                    help="Intervalle (frames) pour re-ancrage au corpus (0 pour désactiver).")
     args = ap.parse_args()
 
     # Resolve files from folder
@@ -65,9 +74,13 @@ def main():
     Z_mean= data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
     ar_model = None
+    ar_projector = None
     ar_context = None
     ar_path = None
     ar_noise_std = max(0.0, float(args.ar_noise))
+    ar_clamp_std = float(args.ar_clamp_std) if args.ar_clamp_std > 0 else None
+    ar_target_norm = float(args.ar_target_norm) if args.ar_target_norm > 0 else None
+    ar_reanchor_interval = max(0, int(args.ar_reanchor_interval))
 
     if args.ar_drive:
         if "ar_model_path" in data.files:
@@ -79,7 +92,8 @@ def main():
             args.ar_drive = False
         else:
             device = torch.device(DEVICE)
-            ar_model, ar_meta = load_latent_ar_model(ar_path, device=device)
+            # Load AR model and projector together
+            ar_model, ar_projector, ar_meta = load_ar_model_with_projector(ar_path, device=device)
             ctx_from_meta = ar_meta.get("context", 0) if isinstance(ar_meta, dict) else 0
             ar_context = int(ctx_from_meta) if ctx_from_meta else None
             if ar_context is None and "ar_context" in data.files:
@@ -91,8 +105,16 @@ def main():
                 print("[warn] Impossible de récupérer le contexte AR; retour au mode kNN.")
                 args.ar_drive = False
                 ar_model = None
+                ar_projector = None
             else:
-                print(f"[info] Modèle AR chargé ({ar_path}), contexte={ar_context}")
+                proj_status = "avec projecteur" if ar_projector is not None else "sans projecteur"
+                print(f"[info] Modèle AR chargé ({ar_path}), contexte={ar_context}, {proj_status}")
+                
+                # Get target norm from training if not specified
+                if ar_target_norm is None or ar_target_norm <= 0:
+                    if "target_norm" in ar_meta:
+                        ar_target_norm = float(ar_meta["target_norm"])
+                        print(f"[info] Utilisation de la norme cible d'entraînement: {ar_target_norm:.4f}")
 
     # Bundle path (fallback to latest latents file in folder)
     if "latent_bundle_path" in data.files and os.path.isfile(str(data["latent_bundle_path"])):
@@ -122,6 +144,12 @@ def main():
         ar_context=ar_context,
         ar_drive=args.ar_drive,
         ar_noise_std=ar_noise_std,
+        # Inference stabilization
+        ar_projector=ar_projector,
+        ar_use_projection=bool(args.ar_use_projection),
+        ar_clamp_std=ar_clamp_std,
+        ar_reanchor_interval=ar_reanchor_interval,
+        ar_target_norm=ar_target_norm,
     )
 
     t = threading.Thread(target=player.run, daemon=True)

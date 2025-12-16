@@ -4,6 +4,7 @@ from queue import Queue, Empty, Full
 from scipy.spatial import cKDTree
 from ..config import SR, LATENT_HZ, NORM_CLAMP
 from ..vae.sae import decode_window
+from ..models.latent_ar import InferenceBuffer, ManifoldProjector, spherical_projection, adaptive_clamping
 import torch
 
 class Player:
@@ -13,7 +14,10 @@ class Player:
                  win_sec=0.2, hop_sec=0.05,
                  kernel_blend=False, kernel_k=4, kernel_sigma=None,
                  kernel_sigma_scale=1.0, kernel_target_norm=None,
-                 ar_model=None, ar_context=None, ar_drive=False, ar_noise_std=0.0):
+                 ar_model=None, ar_context=None, ar_drive=False, ar_noise_std=0.0,
+                 # Inference stabilization options
+                 ar_projector=None, ar_use_projection=True,
+                 ar_clamp_std=3.0, ar_reanchor_interval=0, ar_target_norm=None):
         self.ae = ae
         self.ZZ = ZZ.astype(np.float32)                  # [N_seg, D]
         self.nav_dim = int(self.ZZ.shape[1])
@@ -60,19 +64,71 @@ class Player:
         self.ar_context = int(ar_context) if ar_context is not None else None
         self.ar_drive = bool(ar_drive and self.ar_model is not None and self.ar_context is not None)
         self.ar_noise_std = max(0.0, float(ar_noise_std))
+        self.ar_batch_size = 4  # Generate multiple frames at once for efficiency
         self._ar_buffer = []
         self._ar_pos = 0
         self._ar_anchor_idx = None
         self._ar_device = None
         self._Z_mean_t = None
         self._Z_std_t = None
+        self._inference_buffer: InferenceBuffer = None
+        
+        # Inference stabilization settings
+        self.ar_projector = ar_projector
+        self.ar_use_projection = bool(ar_use_projection and ar_projector is not None)
+        self.ar_clamp_std = float(ar_clamp_std) if ar_clamp_std is not None and ar_clamp_std > 0 else None
+        self.ar_reanchor_interval = max(0, int(ar_reanchor_interval)) if ar_reanchor_interval else 0
+        self.ar_target_norm = float(ar_target_norm) if ar_target_norm is not None and ar_target_norm > 0 else None
+        self._ar_step_counter = 0  # For re-anchoring
+        
+        # Running statistics for adaptive clamping
+        self._running_mean = None
+        self._running_var = None
+        self._running_momentum = 0.99
+        
         if self.ar_drive:
             self.ar_model.eval()
             self._ar_device = next(self.ar_model.parameters()).device
+            # Pre-allocate normalization tensors on device (avoid repeated CPU->GPU transfers)
             self._Z_mean_t = torch.from_numpy(self.Z_mean).to(self._ar_device)
             self._Z_std_t = torch.from_numpy(self.Z_std).to(self._ar_device)
+            # Pre-allocate inference buffer for efficient generation
+            self._inference_buffer = InferenceBuffer(
+                context_len=self.ar_context,
+                latent_dim=self.latent_dim,
+                device=self._ar_device,
+                dtype=torch.float32,
+            )
+            # Pre-allocate context tensor buffer (avoids repeated allocations)
+            self._ctx_tensor = torch.zeros(
+                1, self.ar_context, self.latent_dim, 
+                device=self._ar_device, dtype=torch.float32
+            )
+            
+            # Initialize running stats to training stats (normalized to N(0,1))
+            self._running_mean = torch.zeros(self.latent_dim, device=self._ar_device)
+            self._running_var = torch.ones(self.latent_dim, device=self._ar_device)
+            
+            # Move projector to device if available
+            if self.ar_projector is not None:
+                self.ar_projector.to(self._ar_device)
+                self.ar_projector.eval()
+            
+            stab_info = []
+            if self.ar_use_projection:
+                stab_info.append("projection")
+            if self.ar_clamp_std is not None:
+                stab_info.append(f"clamp±{self.ar_clamp_std}σ")
+            if self.ar_target_norm is not None:
+                stab_info.append(f"norm→{self.ar_target_norm}")
+            if self.ar_reanchor_interval > 0:
+                stab_info.append(f"reanchor@{self.ar_reanchor_interval}")
+            stab_str = ", ".join(stab_info) if stab_info else "none"
+            
             print(
-                f"[info] Autoregressive drive enabled (context={self.ar_context}, noise_std={self.ar_noise_std})"
+                f"[info] Autoregressive drive enabled (context={self.ar_context}, "
+                f"noise_std={self.ar_noise_std}, batch_size={self.ar_batch_size}, "
+                f"stabilization=[{stab_str}])"
             )
 
     # --- OSC cursor ---
@@ -186,24 +242,103 @@ class Player:
             self._reseed_ar_buffer(idx_primary, win_lat)
         return idx_primary
 
+    def _stabilize_prediction(self, pred_norm: torch.Tensor) -> torch.Tensor:
+        """Apply stabilization techniques to a normalized prediction."""
+        # 1. Apply manifold projection if available
+        if self.ar_use_projection and self.ar_projector is not None:
+            pred_norm = self.ar_projector(pred_norm)
+        
+        # 2. Apply adaptive clamping based on running statistics
+        if self.ar_clamp_std is not None and self._running_var is not None:
+            running_std = torch.sqrt(self._running_var + 1e-8)
+            pred_norm = adaptive_clamping(
+                pred_norm, self._running_mean, running_std, n_std=self.ar_clamp_std
+            )
+        
+        # 3. Apply spherical projection (norm constraint)
+        if self.ar_target_norm is not None:
+            pred_norm = spherical_projection(pred_norm, self.ar_target_norm, soft=True)
+        
+        # 4. Update running statistics (EMA)
+        if self._running_mean is not None:
+            with torch.no_grad():
+                batch_mean = pred_norm.mean(dim=0) if pred_norm.dim() > 1 else pred_norm
+                batch_var = pred_norm.var(dim=0) if pred_norm.dim() > 1 and pred_norm.size(0) > 1 else self._running_var
+                self._running_mean = self._running_momentum * self._running_mean + (1 - self._running_momentum) * batch_mean
+                self._running_var = self._running_momentum * self._running_var + (1 - self._running_momentum) * batch_var
+        
+        return pred_norm
+    
     def _generate_ar_latents(self, num_needed: int):
-        if not self.ar_drive:
+        """Generate AR latents using batched inference for efficiency."""
+        if not self.ar_drive or num_needed <= 0:
             return
-        for _ in range(num_needed):
-            ctx = self._ar_buffer[-self.ar_context :]
+        
+        # Check for re-anchoring
+        if self.ar_reanchor_interval > 0:
+            self._ar_step_counter += num_needed
+            if self._ar_step_counter >= self.ar_reanchor_interval:
+                idx_primary = self._nearest_primary()
+                self._reseed_ar_buffer(idx_primary, max(1, int(round(self.win_sec * LATENT_HZ))))
+                self._ar_step_counter = 0
+                return
+        
+        # Generate in batches for better throughput
+        remaining = num_needed
+        while remaining > 0:
+            batch_size = min(remaining, self.ar_batch_size)
+            
+            # Prepare context from buffer
+            ctx = self._ar_buffer[-self.ar_context:]
             if len(ctx) == 0:
                 break
             if len(ctx) < self.ar_context:
                 ctx = ctx + [ctx[-1]] * (self.ar_context - len(ctx))
+            
+            # Use pre-allocated tensor buffer (avoids repeated allocations)
             ctx_arr = np.stack(ctx, axis=0).astype(np.float32)
-            ctx_t = torch.from_numpy(ctx_arr).to(self._ar_device)
-            ctx_t = (ctx_t - self._Z_mean_t) / (self._Z_std_t + 1e-8)
+            self._ctx_tensor.copy_(torch.from_numpy(ctx_arr).unsqueeze(0))
+            ctx_norm = (self._ctx_tensor - self._Z_mean_t) / (self._Z_std_t + 1e-8)
+            
             with torch.inference_mode():
-                pred_norm = self.ar_model(ctx_t.unsqueeze(0)).squeeze(0).detach().cpu().numpy().astype(np.float32)
-            pred = pred_norm * self.Z_std + self.Z_mean
-            if self.ar_noise_std > 0.0:
-                pred = pred + np.random.randn(*pred.shape).astype(np.float32) * self.ar_noise_std
-            self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
+                # Use batched generation if model supports it
+                if hasattr(self.ar_model, 'generate_batch') and batch_size > 1:
+                    # Generate multiple frames at once
+                    noise = self.ar_noise_std / (self.Z_std.mean() + 1e-8) if self.ar_noise_std > 0 else 0.0
+                    preds_norm = self.ar_model.generate_batch(
+                        ctx_norm, num_frames=batch_size, noise_std=noise
+                    ).squeeze(0)  # [batch_size, D]
+                    
+                    # Apply stabilization to each prediction
+                    stabilized_preds = []
+                    for i in range(preds_norm.size(0)):
+                        stab_pred = self._stabilize_prediction(preds_norm[i:i+1])
+                        stabilized_preds.append(stab_pred)
+                    preds_norm = torch.cat(stabilized_preds, dim=0)
+                    
+                    # Convert all predictions to numpy at once (single transfer)
+                    preds_np = preds_norm.cpu().numpy().astype(np.float32)
+                    
+                    # Denormalize and add to buffer
+                    for i in range(batch_size):
+                        pred = preds_np[i] * self.Z_std + self.Z_mean
+                        self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
+                else:
+                    # Single-frame fallback
+                    out = self.ar_model(ctx_norm, return_aux=False, return_delta=False)
+                    pred_norm = out["pred"] if isinstance(out, dict) else out
+                    
+                    # Apply stabilization
+                    pred_norm = self._stabilize_prediction(pred_norm)
+                    
+                    pred_norm = pred_norm.squeeze(0).cpu().numpy().astype(np.float32)
+                    pred = pred_norm * self.Z_std + self.Z_mean
+                    if self.ar_noise_std > 0.0:
+                        pred = pred + np.random.randn(*pred.shape).astype(np.float32) * self.ar_noise_std
+                    self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
+                    batch_size = 1  # Only generated one
+            
+            remaining -= batch_size
 
     def _next_ar_window(self, win_lat: int, hop_lat: int):
         self._ensure_ar_ready(win_lat)

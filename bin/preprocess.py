@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
 import os, argparse, datetime, glob, numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from sklearn.neighbors import NearestNeighbors
+from sklearn.model_selection import train_test_split
+import copy
 
 from stable_audio_wanderer.config import SR, LATENT_HZ, DEVICE
 from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.features.mfcc import segment_mfcc_no_c0, ensure_2d_stack
 from stable_audio_wanderer.dr.pca import fit_transform
 from stable_audio_wanderer.io.corpus_io import save_latents_bundle, save_corpus
-from stable_audio_wanderer.models.latent_ar import LatentAutoregressiveCNN
+from stable_audio_wanderer.models.latent_ar import (
+    LatentAutoregressiveCNN,
+    LatentAutoregressiveHybrid,
+    ManifoldProjector,
+    RolloutScheduler,
+    kl_divergence_to_standard_normal,
+    moment_matching_loss,
+    free_running_rollout,
+)
 
 
 class LatentDataset(Dataset):
@@ -250,115 +261,420 @@ def train_autoregressive_cnn(
     target_var: np.ndarray,
     jitter: int,
     mix_prob: float,
+    # New parameters for validation, early stopping, LR scheduler, and architecture
+    val_split: float = 0.1,
+    patience: int = 5,
+    min_delta: float = 1e-6,
+    use_cosine_annealing: bool = True,
+    lr_min_factor: float = 0.01,
+    warmup_epochs: int = 2,
+    grad_clip_norm: float = 1.0,
+    use_hybrid_model: bool = False,
+    num_attention_heads: int = 4,
+    attention_dropout: float = 0.1,
+    # Free-running curriculum parameters
+    use_curriculum: bool = True,
+    curriculum_schedule: str = "cosine",
+    curriculum_initial_steps: int = 2,
+    curriculum_final_steps: int = 32,
+    curriculum_warmup: int = 5,
+    # Distribution regularization parameters
+    kl_weight: float = 0.01,
+    moment_weight: float = 0.01,
+    # Manifold projector training
+    train_projector: bool = False,
+    projector_hidden: int = 128,
+    projector_layers: int = 2,
 ):
-    dataset = LatentSequenceDataset(
-        sequences,
+    """Train autoregressive model with validation, early stopping, and LR scheduling.
+    
+    Extended with free-running curriculum and distribution regularization to prevent
+    inference-time collapse.
+    
+    Args:
+        sequences: List of normalized latent sequences
+        val_split: Fraction of sequences to use for validation (default: 0.1)
+        patience: Early stopping patience in epochs (default: 5)
+        min_delta: Minimum improvement for early stopping (default: 1e-6)
+        use_cosine_annealing: Use cosine annealing LR scheduler (default: True)
+        lr_min_factor: Minimum LR as fraction of initial (default: 0.01)
+        warmup_epochs: Number of warmup epochs with lower LR (default: 2)
+        grad_clip_norm: Gradient clipping norm (default: 1.0, set to 0 to disable)
+        use_hybrid_model: Use CNN+Attention hybrid instead of pure CNN (default: False)
+        num_attention_heads: Number of attention heads for hybrid model (default: 4)
+        attention_dropout: Dropout in attention layer (default: 0.1)
+        
+        Free-running curriculum (reduces train-inference distribution shift):
+        use_curriculum: Enable progressive rollout curriculum (default: True)
+        curriculum_schedule: Schedule type: "linear", "cosine", "exponential" (default: "cosine")
+        curriculum_initial_steps: Initial rollout steps (default: 2)
+        curriculum_final_steps: Final rollout steps at end of training (default: 32)
+        curriculum_warmup: Epochs before curriculum starts (default: 5)
+        
+        Distribution regularization (constrains to VAE prior):
+        kl_weight: Weight for KL divergence to N(0,I) (default: 0.01)
+        moment_weight: Weight for moment matching loss (default: 0.01)
+        
+        Manifold projector (optional learned drift correction):
+        train_projector: Train a manifold projector jointly (default: False)
+        projector_hidden: Hidden dimension for projector (default: 128)
+        projector_layers: Number of projector layers (default: 2)
+    """
+    # Split sequences into train and validation
+    if len(sequences) < 2:
+        train_sequences = sequences
+        val_sequences = []
+        print("[warn] Only 1 sequence available, skipping validation split")
+    else:
+        n_val = max(1, int(len(sequences) * val_split))
+        if n_val >= len(sequences):
+            n_val = 1
+        train_sequences, val_sequences = train_test_split(
+            sequences, test_size=n_val, random_state=42
+        )
+        print(f"[info] Train/val split: {len(train_sequences)}/{len(val_sequences)} sequences")
+    
+    # Create datasets
+    train_dataset = LatentSequenceDataset(
+        train_sequences,
         context=context,
         max_future=rollout_max,
         jitter=jitter,
         mix_prob=mix_prob,
     )
-    if len(dataset) == 0:
+    if len(train_dataset) == 0:
         raise RuntimeError("No training samples for autoregressive model (sequences shorter than context).")
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    
+    # Create validation dataset/loader if we have validation data
+    val_loader = None
+    if val_sequences:
+        val_dataset = LatentSequenceDataset(
+            val_sequences,
+            context=context,
+            max_future=rollout_max,
+            jitter=0,  # No jitter for validation
+            mix_prob=0.0,  # No mixing for validation
+        )
+        if len(val_dataset) > 0:
+            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
+    
     latent_dim = int(sequences[0].shape[1])
-    model = LatentAutoregressiveCNN(
-        latent_dim=latent_dim,
-        hidden_dim=hidden_dim,
-        layers=layers,
-        kernel_size=kernel_size,
-        dropout=dropout,
-        predict_residual=True,
-        residual_center_span=residual_span,
-        aux_head=aux_weight > 0.0,
-    ).to(device)
+    
+    # Create model (CNN or Hybrid based on flag)
+    if use_hybrid_model:
+        model = LatentAutoregressiveHybrid(
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim,
+            cnn_layers=layers,
+            kernel_size=kernel_size,
+            num_attention_heads=num_attention_heads,
+            attention_dropout=attention_dropout,
+            dropout=dropout,
+            predict_residual=True,
+            residual_center_span=residual_span,
+            aux_head=aux_weight > 0.0,
+        ).to(device)
+        print(f"[info] Using Hybrid CNN+Attention model with {num_attention_heads} attention heads")
+    else:
+        model = LatentAutoregressiveCNN(
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim,
+            layers=layers,
+            kernel_size=kernel_size,
+            dropout=dropout,
+            predict_residual=True,
+            residual_center_span=residual_span,
+            aux_head=aux_weight > 0.0,
+        ).to(device)
+    
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    # Learning rate scheduler
+    if use_cosine_annealing:
+        scheduler = CosineAnnealingLR(
+            optimizer, 
+            T_max=epochs - warmup_epochs,
+            eta_min=lr * lr_min_factor
+        )
+        print(f"[info] Using CosineAnnealingLR scheduler (warmup={warmup_epochs}, min_lr={lr * lr_min_factor:.2e})")
+    else:
+        scheduler = None
+    
+    # Early stopping state
+    best_val_loss = float('inf')
+    best_model_state = None
+    best_projector_state = None
+    patience_counter = 0
+    
     loss_history: List[Dict[str, float]] = []
     target_norm_t = torch.as_tensor(float(target_norm), device=device, dtype=torch.float32)
     target_var_t = torch.from_numpy(target_var).to(device=device, dtype=torch.float32)
     target_var_t = target_var_t.view(1, -1)
+    
+    # For KL/moment regularization: target is N(0,1) in normalized space
+    target_mean_t = torch.zeros(latent_dim, device=device, dtype=torch.float32)
+    target_unit_var_t = torch.ones(latent_dim, device=device, dtype=torch.float32)
+    
+    # Initialize curriculum scheduler
+    rollout_scheduler = None
+    if use_curriculum:
+        rollout_scheduler = RolloutScheduler(
+            initial_steps=curriculum_initial_steps,
+            final_steps=curriculum_final_steps,
+            warmup_epochs=curriculum_warmup,
+            total_epochs=epochs,
+            schedule=curriculum_schedule,
+        )
+        print(f"[info] Using free-running curriculum: {curriculum_schedule} schedule, "
+              f"{curriculum_initial_steps}→{curriculum_final_steps} steps over {epochs} epochs")
+    
+    # Initialize manifold projector if requested
+    projector = None
+    projector_optimizer = None
+    if train_projector:
+        projector = ManifoldProjector(
+            latent_dim=latent_dim,
+            hidden_dim=projector_hidden,
+            num_layers=projector_layers,
+            residual=True,
+        ).to(device)
+        projector_optimizer = torch.optim.AdamW(projector.parameters(), lr=lr, weight_decay=weight_decay)
+        print(f"[info] Training manifold projector jointly (hidden={projector_hidden}, layers={projector_layers})")
 
-    for epoch in range(epochs):
-        model.train()
+    def compute_epoch_loss(loader, is_training: bool = True, current_epoch: int = 0) -> Dict[str, float]:
+        """Compute losses over a dataloader with curriculum and distribution regularization."""
+        if is_training:
+            model.train()
+            if projector is not None:
+                projector.train()
+        else:
+            model.eval()
+            if projector is not None:
+                projector.eval()
+        
         totals = {
-            "total": 0.0,
-            "main": 0.0,
-            "delta": 0.0,
-            "rollout": 0.0,
-            "aux": 0.0,
-            "reg_norm": 0.0,
-            "reg_var": 0.0,
+            "total": 0.0, "main": 0.0, "delta": 0.0,
+            "rollout": 0.0, "aux": 0.0, "reg_norm": 0.0, "reg_var": 0.0,
+            "kl": 0.0, "moment_mean": 0.0, "moment_var": 0.0, "projector": 0.0,
         }
         total_samples = 0
-        for x, future in loader:
-            x = x.to(device)
-            future = future.to(device)
-            if context_noise_std > 0.0:
-                x = x + context_noise_std * torch.randn_like(x)
-            x = scheduled_replace_with_preds(model, x, max_steps=rollout_max, prob=scheduled_prob)
+        
+        # Get curriculum-adjusted rollout steps and teacher forcing probability
+        if rollout_scheduler is not None and is_training:
+            curr_rollout_steps = rollout_scheduler.get_rollout_steps(current_epoch)
+            curr_tf_prob = rollout_scheduler.get_teacher_forcing_prob(current_epoch)
+        else:
+            curr_rollout_steps = rollout_max
+            curr_tf_prob = 0.0
+        
+        context_manager = torch.no_grad() if not is_training else torch.enable_grad()
+        
+        with context_manager:
+            for x, future in loader:
+                x = x.to(device)
+                future = future.to(device)
+                
+                if is_training:
+                    if context_noise_std > 0.0:
+                        x = x + context_noise_std * torch.randn_like(x)
+                    # Use curriculum-aware scheduled sampling
+                    if scheduled_prob > 0.0 and curr_tf_prob < 1.0:
+                        effective_prob = scheduled_prob * (1.0 - curr_tf_prob)
+                        x = scheduled_replace_with_preds(model, x, max_steps=curr_rollout_steps, prob=effective_prob)
+                    optimizer.zero_grad(set_to_none=True)
+                    if projector_optimizer is not None:
+                        projector_optimizer.zero_grad(set_to_none=True)
 
-            optimizer.zero_grad(set_to_none=True)
+                out = model(x, return_aux=True, return_delta=True)
+                pred_next = out["pred"]
+                delta_next = out.get("delta", pred_next)
+                ref = residual_ref(x, residual_span)
 
-            out = model(x, return_aux=True, return_delta=True)
-            pred_next = out["pred"]
-            delta_next = out.get("delta", pred_next)
-            ref = residual_ref(x, residual_span)
+                target_next = future[:, 0, :]
+                target_delta = target_next - ref
 
-            target_next = future[:, 0, :]
-            target_delta = target_next - ref
+                main_loss = F.mse_loss(pred_next, target_next)
+                delta_loss = F.mse_loss(delta_next, target_delta)
 
-            main_loss = F.mse_loss(pred_next, target_next)
-            delta_loss = F.mse_loss(delta_next, target_delta)
+                aux_loss = pred_next.new_tensor(0.0)
+                if out.get("aux_pred", None) is not None and future.size(1) > 1:
+                    target_aux = future[:, 1, :]
+                    aux_pred = out["aux_pred"]
+                    aux_delta = out.get("aux_delta", aux_pred)
+                    target_aux_delta = target_aux - ref
+                    aux_loss = 0.5 * (F.mse_loss(aux_pred, target_aux) + F.mse_loss(aux_delta, target_aux_delta))
 
-            aux_loss = pred_next.new_tensor(0.0)
-            if out.get("aux_pred", None) is not None and future.size(1) > 1:
-                target_aux = future[:, 1, :]
-                aux_pred = out["aux_pred"]
-                aux_delta = out.get("aux_delta", aux_pred)
-                target_aux_delta = target_aux - ref
-                aux_loss = 0.5 * (F.mse_loss(aux_pred, target_aux) + F.mse_loss(aux_delta, target_aux_delta))
+                # Use curriculum-adjusted rollout steps
+                if is_training:
+                    roll_steps = int(np.random.randint(max(1, rollout_min), curr_rollout_steps + 1))
+                else:
+                    roll_steps = rollout_min
+                roll_steps = min(roll_steps, future.size(1))
+                
+                # Free-running rollout with teacher forcing schedule
+                if is_training and use_curriculum and roll_steps > 1:
+                    rollout_pred, _ = free_running_rollout(
+                        model, x, 
+                        num_steps=roll_steps,
+                        teacher_forcing_prob=curr_tf_prob,
+                        ground_truth=future[:, :roll_steps, :],
+                        noise_std=context_noise_std * 0.5,  # Light noise during rollout
+                        projector=projector if train_projector else None,
+                    )
+                else:
+                    rollout_pred = rollout_predictions(model, x, steps=roll_steps)
+                
+                rollout_target = future[:, :roll_steps, :]
+                rollout_loss = F.mse_loss(rollout_pred, rollout_target)
 
-            roll_steps = int(np.random.randint(max(1, rollout_min), rollout_max + 1))
-            roll_steps = min(roll_steps, future.size(1))
-            rollout_pred = rollout_predictions(model, x, steps=roll_steps)
-            rollout_target = future[:, :roll_steps, :]
-            rollout_loss = F.mse_loss(rollout_pred, rollout_target)
+                reg_frames = torch.cat([pred_next.unsqueeze(1), rollout_pred], dim=1)
+                norms = reg_frames.norm(dim=-1)
+                norm_reg = ((norms - target_norm_t) ** 2).mean()
+                batch_var = reg_frames.reshape(-1, reg_frames.size(-1)).var(dim=0, unbiased=False).view(1, -1)
+                var_reg = ((batch_var - target_var_t) ** 2).mean()
+                
+                # KL divergence to standard normal (constrains to VAE prior)
+                kl_loss = pred_next.new_tensor(0.0)
+                if kl_weight > 0.0:
+                    # Compute KL on flattened rollout predictions
+                    flat_preds = reg_frames.reshape(-1, reg_frames.size(-1))
+                    kl_loss = kl_divergence_to_standard_normal(flat_preds)
+                
+                # Moment matching loss (keeps mean≈0, var≈1)
+                moment_mean_loss = pred_next.new_tensor(0.0)
+                moment_var_loss = pred_next.new_tensor(0.0)
+                if moment_weight > 0.0:
+                    moment_mean_loss, moment_var_loss = moment_matching_loss(
+                        reg_frames, target_mean_t, target_unit_var_t
+                    )
+                
+                # Projector reconstruction loss (if training projector)
+                projector_loss = pred_next.new_tensor(0.0)
+                if train_projector and projector is not None and is_training:
+                    # Add noise to simulate drift, then project back
+                    drifted = rollout_pred + 0.1 * torch.randn_like(rollout_pred)
+                    projected = projector(drifted)
+                    # Should reconstruct closer to ground truth
+                    projector_loss = F.mse_loss(projected, rollout_target)
 
-            reg_frames = torch.cat([pred_next.unsqueeze(1), rollout_pred], dim=1)
-            norms = reg_frames.norm(dim=-1)
-            norm_reg = ((norms - target_norm_t) ** 2).mean()
-            batch_var = reg_frames.reshape(-1, reg_frames.size(-1)).var(dim=0, unbiased=False).view(1, -1)
-            var_reg = ((batch_var - target_var_t) ** 2).mean()
+                total_loss = (
+                    main_loss
+                    + delta_weight * delta_loss
+                    + rollout_weight * rollout_loss
+                    + aux_weight * aux_loss
+                    + norm_reg_weight * norm_reg
+                    + var_reg_weight * var_reg
+                    + kl_weight * kl_loss
+                    + moment_weight * (moment_mean_loss + moment_var_loss)
+                    + (0.1 * projector_loss if train_projector else 0.0)
+                )
 
-            total_loss = (
-                main_loss
-                + delta_weight * delta_loss
-                + rollout_weight * rollout_loss
-                + aux_weight * aux_loss
-                + norm_reg_weight * norm_reg
-                + var_reg_weight * var_reg
-            )
-
-            total_loss.backward()
-            optimizer.step()
-            bs = x.size(0)
-            total_samples += bs
-            totals["total"] += float(total_loss.item()) * bs
-            totals["main"] += float(main_loss.item()) * bs
-            totals["delta"] += float(delta_loss.item()) * bs
-            totals["rollout"] += float(rollout_loss.item()) * bs
-            totals["aux"] += float(aux_loss.item()) * bs
-            totals["reg_norm"] += float(norm_reg.item()) * bs
-            totals["reg_var"] += float(var_reg.item()) * bs
+                if is_training:
+                    total_loss.backward()
+                    # Gradient clipping
+                    if grad_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+                        if projector is not None:
+                            torch.nn.utils.clip_grad_norm_(projector.parameters(), grad_clip_norm)
+                    optimizer.step()
+                    if projector_optimizer is not None:
+                        projector_optimizer.step()
+                
+                bs = x.size(0)
+                total_samples += bs
+                totals["total"] += float(total_loss.item()) * bs
+                totals["main"] += float(main_loss.item()) * bs
+                totals["delta"] += float(delta_loss.item()) * bs
+                totals["rollout"] += float(rollout_loss.item()) * bs
+                totals["aux"] += float(aux_loss.item()) * bs
+                totals["reg_norm"] += float(norm_reg.item()) * bs
+                totals["reg_var"] += float(var_reg.item()) * bs
+                totals["kl"] += float(kl_loss.item()) * bs
+                totals["moment_mean"] += float(moment_mean_loss.item()) * bs
+                totals["moment_var"] += float(moment_var_loss.item()) * bs
+                totals["projector"] += float(projector_loss.item()) * bs
 
         denom = max(total_samples, 1)
-        epoch_stats = {k: v / denom for k, v in totals.items()}
-        loss_history.append(epoch_stats)
-        print(
-            f"[ar] epoch {epoch + 1}/{epochs} - total: {epoch_stats['total']:.6f} | "
-            f"main: {epoch_stats['main']:.6f} | roll: {epoch_stats['rollout']:.6f} | aux: {epoch_stats['aux']:.6f}"
-        )
-    return model, loss_history
+        return {k: v / denom for k, v in totals.items()}
+
+    for epoch in range(epochs):
+        # Warmup: use lower learning rate for first few epochs
+        if epoch < warmup_epochs:
+            warmup_lr = lr * (epoch + 1) / warmup_epochs
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = warmup_lr
+            if projector_optimizer is not None:
+                for param_group in projector_optimizer.param_groups:
+                    param_group['lr'] = warmup_lr
+        
+        # Training with current epoch for curriculum
+        train_stats = compute_epoch_loss(train_loader, is_training=True, current_epoch=epoch)
+        
+        # Update scheduler after warmup
+        if scheduler is not None and epoch >= warmup_epochs:
+            scheduler.step()
+        
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        # Get curriculum info for logging
+        curr_rollout = rollout_scheduler.get_rollout_steps(epoch) if rollout_scheduler else rollout_max
+        curr_tf = rollout_scheduler.get_teacher_forcing_prob(epoch) if rollout_scheduler else 0.0
+        
+        # Validation
+        val_stats = None
+        if val_loader is not None:
+            val_stats = compute_epoch_loss(val_loader, is_training=False, current_epoch=epoch)
+            val_loss = val_stats["total"]
+            
+            # Early stopping check
+            if val_loss < best_val_loss - min_delta:
+                best_val_loss = val_loss
+                best_model_state = copy.deepcopy(model.state_dict())
+                if projector is not None:
+                    best_projector_state = copy.deepcopy(projector.state_dict())
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            print(
+                f"[ar] epoch {epoch + 1}/{epochs} - "
+                f"train: {train_stats['total']:.6f} | val: {val_loss:.6f} | "
+                f"kl: {train_stats['kl']:.4f} | roll_steps: {curr_rollout} | tf: {curr_tf:.2f} | "
+                f"lr: {current_lr:.2e} | patience: {patience_counter}/{patience}"
+            )
+            
+            # Early stopping
+            if patience_counter >= patience:
+                print(f"[info] Early stopping at epoch {epoch + 1} (best val loss: {best_val_loss:.6f})")
+                break
+        else:
+            print(
+                f"[ar] epoch {epoch + 1}/{epochs} - total: {train_stats['total']:.6f} | "
+                f"main: {train_stats['main']:.6f} | roll: {train_stats['rollout']:.6f} | "
+                f"kl: {train_stats['kl']:.4f} | roll_steps: {curr_rollout} | tf: {curr_tf:.2f} | "
+                f"lr: {current_lr:.2e}"
+            )
+        
+        # Record stats
+        epoch_record = {**train_stats}
+        if val_stats is not None:
+            epoch_record["val_total"] = val_stats["total"]
+            epoch_record["val_main"] = val_stats["main"]
+        epoch_record["lr"] = current_lr
+        epoch_record["curriculum_rollout"] = curr_rollout
+        epoch_record["curriculum_tf"] = curr_tf
+        loss_history.append(epoch_record)
+    
+    # Restore best model if we did validation
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        if projector is not None and best_projector_state is not None:
+            projector.load_state_dict(best_projector_state)
+        print(f"[info] Restored best model with val loss: {best_val_loss:.6f}")
+    
+    return model, loss_history, projector
 
 
 def info_nce_loss(u: torch.Tensor, v: torch.Tensor, tau: float) -> torch.Tensor:
@@ -634,6 +950,131 @@ def main():
         default=0.1,
         help="Probability of splicing the tail of a random neighboring sequence into the AR context.",
     )
+    # New arguments for validation, early stopping, LR scheduler, and hybrid architecture
+    ap.add_argument(
+        "--ar_val_split",
+        type=float,
+        default=0.1,
+        help="Fraction of sequences to use for validation (default: 0.1).",
+    )
+    ap.add_argument(
+        "--ar_patience",
+        type=int,
+        default=5,
+        help="Early stopping patience in epochs (default: 5).",
+    )
+    ap.add_argument(
+        "--ar_min_delta",
+        type=float,
+        default=1e-6,
+        help="Minimum improvement for early stopping (default: 1e-6).",
+    )
+    ap.add_argument(
+        "--ar_cosine_annealing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use cosine annealing LR scheduler (default: on).",
+    )
+    ap.add_argument(
+        "--ar_lr_min_factor",
+        type=float,
+        default=0.01,
+        help="Minimum LR as fraction of initial for cosine annealing (default: 0.01).",
+    )
+    ap.add_argument(
+        "--ar_warmup_epochs",
+        type=int,
+        default=2,
+        help="Number of warmup epochs with linearly increasing LR (default: 2).",
+    )
+    ap.add_argument(
+        "--ar_grad_clip",
+        type=float,
+        default=1.0,
+        help="Gradient clipping norm (default: 1.0, set to 0 to disable).",
+    )
+    ap.add_argument(
+        "--ar_use_hybrid",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use CNN+Attention hybrid model instead of pure CNN (default: off).",
+    )
+    ap.add_argument(
+        "--ar_attention_heads",
+        type=int,
+        default=4,
+        help="Number of attention heads for hybrid model (default: 4).",
+    )
+    ap.add_argument(
+        "--ar_attention_dropout",
+        type=float,
+        default=0.1,
+        help="Dropout in attention layer for hybrid model (default: 0.1).",
+    )
+    # Free-running curriculum arguments
+    ap.add_argument(
+        "--ar_use_curriculum",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable progressive free-running curriculum (default: on).",
+    )
+    ap.add_argument(
+        "--ar_curriculum_schedule",
+        type=str,
+        default="cosine",
+        choices=["linear", "cosine", "exponential"],
+        help="Curriculum schedule type (default: cosine).",
+    )
+    ap.add_argument(
+        "--ar_curriculum_initial",
+        type=int,
+        default=2,
+        help="Initial rollout steps in curriculum (default: 2).",
+    )
+    ap.add_argument(
+        "--ar_curriculum_final",
+        type=int,
+        default=32,
+        help="Final rollout steps in curriculum (default: 32).",
+    )
+    ap.add_argument(
+        "--ar_curriculum_warmup",
+        type=int,
+        default=5,
+        help="Warmup epochs before curriculum starts (default: 5).",
+    )
+    # Distribution regularization arguments
+    ap.add_argument(
+        "--ar_kl_weight",
+        type=float,
+        default=0.01,
+        help="Weight for KL divergence to N(0,I) prior (default: 0.01).",
+    )
+    ap.add_argument(
+        "--ar_moment_weight",
+        type=float,
+        default=0.01,
+        help="Weight for moment matching loss (default: 0.01).",
+    )
+    # Manifold projector arguments
+    ap.add_argument(
+        "--ar_train_projector",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Train manifold projector for inference-time drift correction (default: off).",
+    )
+    ap.add_argument(
+        "--ar_projector_hidden",
+        type=int,
+        default=128,
+        help="Hidden dimension for manifold projector (default: 128).",
+    )
+    ap.add_argument(
+        "--ar_projector_layers",
+        type=int,
+        default=2,
+        help="Number of layers in manifold projector (default: 2).",
+    )
     args = ap.parse_args()
 
     if not (1 <= args.proj_dim <= 64):
@@ -694,6 +1135,24 @@ def main():
     args.ar_var_reg = max(0.0, float(args.ar_var_reg))
     args.ar_jitter = max(0, int(args.ar_jitter))
     args.ar_mix_prob = float(np.clip(args.ar_mix_prob, 0.0, 1.0))
+    # Validate new arguments
+    args.ar_val_split = float(np.clip(args.ar_val_split, 0.0, 0.5))
+    args.ar_patience = max(1, int(args.ar_patience))
+    args.ar_min_delta = max(0.0, float(args.ar_min_delta))
+    args.ar_lr_min_factor = float(np.clip(args.ar_lr_min_factor, 0.001, 1.0))
+    args.ar_warmup_epochs = max(0, int(args.ar_warmup_epochs))
+    args.ar_grad_clip = max(0.0, float(args.ar_grad_clip))
+    args.ar_attention_heads = max(1, int(args.ar_attention_heads))
+    args.ar_attention_dropout = float(np.clip(args.ar_attention_dropout, 0.0, 0.5))
+    
+    # Validate curriculum arguments
+    args.ar_curriculum_initial = max(1, int(args.ar_curriculum_initial))
+    args.ar_curriculum_final = max(args.ar_curriculum_initial, int(args.ar_curriculum_final))
+    args.ar_curriculum_warmup = max(0, int(args.ar_curriculum_warmup))
+    args.ar_kl_weight = max(0.0, float(args.ar_kl_weight))
+    args.ar_moment_weight = max(0.0, float(args.ar_moment_weight))
+    args.ar_projector_hidden = max(32, int(args.ar_projector_hidden))
+    args.ar_projector_layers = max(1, int(args.ar_projector_layers))
 
     prefix = os.path.basename(args.out_prefix)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -763,10 +1222,13 @@ def main():
     ar_loss_history: List[Dict[str, float]] = []
     ar_loss_total: List[float] = []
     ar_config = None
+    ar_projector = None
+    projector_checkpoint_path = None
     if args.train_ar:
         try:
-            print("[info] Training autoregressive latent CNN…")
-            ar_model, ar_loss_history = train_autoregressive_cnn(
+            model_type = "Hybrid CNN+Attention" if args.ar_use_hybrid else "CNN"
+            print(f"[info] Training autoregressive latent {model_type}…")
+            ar_model, ar_loss_history, ar_projector = train_autoregressive_cnn(
                 latent_sequences_norm,
                 context=int(args.ar_context),
                 epochs=int(args.ar_epochs),
@@ -792,11 +1254,52 @@ def main():
                 target_var=train_var,
                 jitter=int(args.ar_jitter),
                 mix_prob=float(args.ar_mix_prob),
+                # New parameters
+                val_split=float(args.ar_val_split),
+                patience=int(args.ar_patience),
+                min_delta=float(args.ar_min_delta),
+                use_cosine_annealing=bool(args.ar_cosine_annealing),
+                lr_min_factor=float(args.ar_lr_min_factor),
+                warmup_epochs=int(args.ar_warmup_epochs),
+                grad_clip_norm=float(args.ar_grad_clip),
+                use_hybrid_model=bool(args.ar_use_hybrid),
+                num_attention_heads=int(args.ar_attention_heads),
+                attention_dropout=float(args.ar_attention_dropout),
+                # Free-running curriculum
+                use_curriculum=bool(args.ar_use_curriculum),
+                curriculum_schedule=str(args.ar_curriculum_schedule),
+                curriculum_initial_steps=int(args.ar_curriculum_initial),
+                curriculum_final_steps=int(args.ar_curriculum_final),
+                curriculum_warmup=int(args.ar_curriculum_warmup),
+                # Distribution regularization
+                kl_weight=float(args.ar_kl_weight),
+                moment_weight=float(args.ar_moment_weight),
+                # Manifold projector
+                train_projector=bool(args.ar_train_projector),
+                projector_hidden=int(args.ar_projector_hidden),
+                projector_layers=int(args.ar_projector_layers),
             )
             ar_loss_total = [float(entry["total"]) for entry in ar_loss_history]
             ar_state = {k: v.detach().cpu() for k, v in ar_model.state_dict().items()}
             ar_checkpoint_path = os.path.join(out_dir, f"{prefix}_ar_{ts}.pt")
             ar_config = ar_model.to_config()
+            
+            # Save projector if trained
+            projector_state = None
+            projector_config = None
+            if ar_projector is not None:
+                projector_state = {k: v.detach().cpu() for k, v in ar_projector.state_dict().items()}
+                projector_config = ar_projector.to_config()
+                projector_checkpoint_path = os.path.join(out_dir, f"{prefix}_projector_{ts}.pt")
+                torch.save(
+                    {
+                        "state_dict": projector_state,
+                        "config": projector_config,
+                    },
+                    projector_checkpoint_path,
+                )
+                print(f"[info] Saved manifold projector to: {projector_checkpoint_path}")
+            
             torch.save(
                 {
                     "state_dict": ar_state,
@@ -824,6 +1327,39 @@ def main():
                     "target_var": train_var,
                     "jitter": int(args.ar_jitter),
                     "mix_prob": float(args.ar_mix_prob),
+                    # New training parameters
+                    "training": {
+                        "val_split": float(args.ar_val_split),
+                        "patience": int(args.ar_patience),
+                        "min_delta": float(args.ar_min_delta),
+                        "use_cosine_annealing": bool(args.ar_cosine_annealing),
+                        "lr_min_factor": float(args.ar_lr_min_factor),
+                        "warmup_epochs": int(args.ar_warmup_epochs),
+                        "grad_clip_norm": float(args.ar_grad_clip),
+                        "use_hybrid_model": bool(args.ar_use_hybrid),
+                        "num_attention_heads": int(args.ar_attention_heads),
+                        "attention_dropout": float(args.ar_attention_dropout),
+                    },
+                    # Free-running curriculum parameters
+                    "curriculum": {
+                        "enabled": bool(args.ar_use_curriculum),
+                        "schedule": str(args.ar_curriculum_schedule),
+                        "initial_steps": int(args.ar_curriculum_initial),
+                        "final_steps": int(args.ar_curriculum_final),
+                        "warmup_epochs": int(args.ar_curriculum_warmup),
+                    },
+                    # Distribution regularization parameters
+                    "distribution_reg": {
+                        "kl_weight": float(args.ar_kl_weight),
+                        "moment_weight": float(args.ar_moment_weight),
+                    },
+                    # Projector info
+                    "projector": {
+                        "trained": ar_projector is not None,
+                        "path": projector_checkpoint_path if ar_projector is not None else None,
+                        "config": projector_config,
+                        "state_dict": projector_state,
+                    },
                 },
                 ar_checkpoint_path,
             )
@@ -957,6 +1493,26 @@ def main():
         ar_target_norm=np.array(float(train_norm), dtype=np.float32),
         ar_target_var=train_var,
         ar_trained=np.array(bool(ar_checkpoint_path is not None)),
+        ar_val_split=np.array(float(args.ar_val_split), dtype=np.float32),
+        ar_patience=np.array(int(args.ar_patience), dtype=np.int32),
+        ar_use_cosine_annealing=np.array(bool(args.ar_cosine_annealing)),
+        ar_warmup_epochs=np.array(int(args.ar_warmup_epochs), dtype=np.int32),
+        ar_grad_clip=np.array(float(args.ar_grad_clip), dtype=np.float32),
+        ar_use_hybrid=np.array(bool(args.ar_use_hybrid)),
+        ar_attention_heads=np.array(int(args.ar_attention_heads), dtype=np.int32),
+        ar_attention_dropout=np.array(float(args.ar_attention_dropout), dtype=np.float32),
+        # Curriculum parameters
+        ar_use_curriculum=np.array(bool(args.ar_use_curriculum)),
+        ar_curriculum_schedule=np.array(str(args.ar_curriculum_schedule)),
+        ar_curriculum_initial=np.array(int(args.ar_curriculum_initial), dtype=np.int32),
+        ar_curriculum_final=np.array(int(args.ar_curriculum_final), dtype=np.int32),
+        ar_curriculum_warmup=np.array(int(args.ar_curriculum_warmup), dtype=np.int32),
+        # Distribution regularization
+        ar_kl_weight=np.array(float(args.ar_kl_weight), dtype=np.float32),
+        ar_moment_weight=np.array(float(args.ar_moment_weight), dtype=np.float32),
+        # Projector
+        ar_projector_trained=np.array(bool(ar_projector is not None)),
+        ar_projector_path=np.array(projector_checkpoint_path if projector_checkpoint_path is not None else ""),
         latent_bundle_path=np.array(latents_path),
         **dr_arrays,
     )
@@ -966,6 +1522,8 @@ def main():
     print("  Projector :", projector_path)
     if ar_checkpoint_path is not None:
         print("  AR model  :", ar_checkpoint_path)
+    if projector_checkpoint_path is not None:
+        print("  Manifold projector:", projector_checkpoint_path)
     print("  Corpus    :", corpus_path)
     print("  Folder    :", out_dir)
 
