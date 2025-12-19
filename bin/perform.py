@@ -37,6 +37,24 @@ def main():
                     help="Seuil (frames latentes) de saut immédiat.")
     ap.add_argument("--micro_jitter", type=int, default=0,
                     help="±1 frame de jitter pour réduire artefacts de bouclage (0/1).")
+    ap.add_argument("--mix_radius", type=int, default=1,
+                    help="Taille m de la fenêtre temporelle locale pour le barycentre (0–2 recommandé).")
+    ap.add_argument("--mix_momentum", type=float, default=0.85,
+                    help="Lissage temporel des poids barycentriques (0 = instantané, 0.99 = très lent).")
+    ap.add_argument("--mix_sigma", type=float, default=0.6,
+                    help="Largeur (en offsets latents) du noyau gaussien centrée sur le voisin principal.")
+    ap.add_argument("--policy_path", default=None, help="Checkpoint .pt pour la politique de navigation (Δi logits).")
+    ap.add_argument("--policy_temperature", type=float, default=1.0, help="Température de base pour l'échantillonnage Δi.")
+    ap.add_argument("--policy_sample", action=argparse.BooleanOptionalAction, default=True, help="Échantillonner stochastiquement la politique (par défaut: oui).")
+    ap.add_argument("--ctrl_width", type=float, default=0.5, help="Contrôle initial width→variance de Δi (0..1).")
+    ap.add_argument("--ctrl_energy", type=float, default=0.5, help="Contrôle initial energy→vitesse attendue (0..1).")
+    ap.add_argument("--ctrl_gravity", type=float, default=0.5, help="Contrôle initial gravity→biais avant/arrière (0..1).")
+    ap.add_argument("--ctrl_memory", type=float, default=0.0, help="Contrôle initial memory→répétition locales (0..1).")
+    ap.add_argument("--warp_speed", type=float, default=1.0, help="Multiplicateur de vitesse latente (1=origine, 0=freeze).")
+    ap.add_argument("--warp_inertia", type=float, default=0.85, help="Inertie du time-warp (0=instantané, 0.99=très lisse).")
+    ap.add_argument("--warp_jitter", type=float, default=0.0, help="Bruit gaussien ajouté à la vitesse latente (frames).")
+    ap.add_argument("--warp_max", type=float, default=8.0, help="Limite |warp_speed| en multiples du hop latent de base.")
+    ap.add_argument("--warp_allow_reverse", action=argparse.BooleanOptionalAction, default=False, help="Autoriser les vitesses négatives (lecture arrière).")
     args = ap.parse_args()
 
     # Resolve files from folder
@@ -68,7 +86,22 @@ def main():
         jump_thresh=args.jump_thresh,
         micro_jitter=args.micro_jitter,
         win_sec=args.win_sec,
-        hop_sec=args.hop_sec
+        hop_sec=args.hop_sec,
+        mix_radius=args.mix_radius,
+        mix_momentum=args.mix_momentum,
+        mix_sigma=args.mix_sigma,
+        policy_path=args.policy_path,
+        policy_temperature=args.policy_temperature,
+        policy_sample=bool(args.policy_sample),
+        control_width=args.ctrl_width,
+        control_energy=args.ctrl_energy,
+        control_gravity=args.ctrl_gravity,
+        control_memory=args.ctrl_memory,
+        warp_speed=args.warp_speed,
+        warp_inertia=args.warp_inertia,
+        warp_jitter=args.warp_jitter,
+        warp_max=args.warp_max,
+        warp_allow_reverse=bool(args.warp_allow_reverse),
     )
 
     t = threading.Thread(target=player.run, daemon=True)
