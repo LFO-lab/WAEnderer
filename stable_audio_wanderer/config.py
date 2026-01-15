@@ -1,8 +1,8 @@
 import torch
 
 SR = 44100
+# LATENT_HZ: VAE encoder downsampling rate (used during preprocess only)
 LATENT_HZ = 21.5
-NORM_CLAMP = 3.0
 DTYPE = torch.float32
 
 def pick_device():

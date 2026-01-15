@@ -1,9 +1,13 @@
+"""
+VAE encoding utilities for offline preprocessing.
+Runtime playback uses pre-rendered grains instead of live decoding.
+"""
 from typing import Optional
 import numpy as np
-import soundfile as sf
-import torch, torchaudio
+import torch
 from diffusers import AutoencoderOobleck
 from ..config import DEVICE, DTYPE, SR, LATENT_HZ
+from ..io.audio_io import load_wav  # Re-export for backward compatibility
 
 # Long MPS convolutions fail for multi-minute inputs; encode in smaller windows instead.
 MPS_AUTO_CHUNK_THRESHOLD_SEC = 240.0
@@ -109,19 +113,5 @@ def encode_full(ae, wav_np: np.ndarray, chunk_sec: Optional[float] = None, overl
         z_full = np.concatenate([z_full, pad], axis=0)
     return z_full
 
-def decode_window(ae, z_win_np: np.ndarray) -> np.ndarray:
-    with torch.inference_mode():
-        zt = torch.from_numpy(z_win_np.T).unsqueeze(0).to(DEVICE, dtype=DTYPE)  # [1,64,T_lat]
-        x = ae.decode(zt).sample                                                # [1,2,T_audio]
-        x = x.squeeze(0).permute(1, 0).cpu().numpy().astype(np.float32)         # [T_audio,2]
-    return x
-
-def load_wav(path: str, target_sr=SR) -> np.ndarray:
-    x, sr = sf.read(path, always_2d=True)
-    if sr != target_sr:
-        wt = torch.from_numpy(x.T).unsqueeze(0).float()
-        res = torchaudio.functional.resample(wt, sr, target_sr)
-        x = res.squeeze(0).numpy().T
-    if x.shape[1] == 1:
-        x = np.repeat(x, 2, axis=1)
-    return x.astype(np.float32)
+# decode_window removed - runtime uses pre-rendered grains instead of live VAE decoding
+# load_wav moved to stable_audio_wanderer.io.audio_io (re-exported above for compatibility)

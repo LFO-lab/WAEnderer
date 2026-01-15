@@ -1,15 +1,13 @@
-# Core audio model
+# Core audio model (offline encoding only)
 torch>=2.3
 torchaudio>=2.3
-diffusers==0.35.1
-transformers>=4.43
-accelerate>=0.33
-safetensors>=0.4
 
 # Audio and signal I/O
 soundfile>=0.12
-sounddevice>=0.4
 numpy>=1.25
+
+# Real-time audio synthesis
+pyo>=1.0.5
 
 # Latent space navigation
 scikit-learn>=1.3
@@ -22,3 +20,9 @@ python-osc>=1.8
 # Optional (used during preprocessing / local dev)
 tqdm>=4.66
 librosa
+
+# VAE encoding (preprocess only - install separately if needed)
+# diffusers==0.35.1
+# transformers>=4.43
+# accelerate>=0.33
+# safetensors>=0.4

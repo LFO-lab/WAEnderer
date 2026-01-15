@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+Preprocess audio files: MFCC→PCA + VAE latents + contrastive projector + grain rendering.
+"""
 import os, argparse, datetime, glob, numpy as np
 from typing import List, Dict, Tuple
 from tqdm import tqdm
@@ -12,7 +15,8 @@ from stable_audio_wanderer.config import SR, LATENT_HZ, DEVICE
 from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.features.mfcc import segment_mfcc_no_c0, ensure_2d_stack
 from stable_audio_wanderer.dr.pca import fit_transform
-from stable_audio_wanderer.io.corpus_io import save_latents_bundle, save_corpus
+from stable_audio_wanderer.io.corpus_io import save_latents_bundle, save_corpus, save_grain_manifest
+from stable_audio_wanderer.io.audio_io import save_wav
 
 
 class LatentDataset(Dataset):
@@ -258,6 +262,106 @@ def compute_segment_latents(latents_dict: dict, meta: np.ndarray, fallback_len: 
     return np.stack(seg_latents, axis=0).astype(np.float32)
 
 
+def render_grains(
+    wav_dict: Dict[int, np.ndarray],
+    meta: np.ndarray,
+    grain_sec: float,
+    out_dir: str,
+    sr: int = SR,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
+    """
+    Render pre-baked grains with Hann envelope for each segment.
+    
+    Args:
+        wav_dict: Dict mapping file_id -> loaded waveform [T, 2]
+        meta: Segment metadata [N_seg, 3] with (file_id, t_lat, win_lat)
+        grain_sec: Grain duration in seconds (longer grains with envelope)
+        out_dir: Output directory for grain WAV files
+        sr: Sample rate
+        
+    Returns:
+        offsets: Sample offset into concatenated grain buffer [N_grains]
+        lengths: Length in samples for each grain [N_grains]
+        file_ids: Source file ID for each grain [N_grains]
+        segment_ids: Maps each grain to corpus segment index [N_grains]
+        grain_paths: Path to each file's concatenated grain WAV [N_files]
+    """
+    grain_len_samp = int(round(grain_sec * sr))
+    
+    # Create Hann window for envelope
+    envelope = np.hanning(grain_len_samp).astype(np.float32)
+    envelope = envelope[:, None]  # [grain_len, 1] for broadcasting to stereo
+    
+    # Group segments by file
+    file_segments: Dict[int, List[Tuple[int, int]]] = {}  # file_id -> [(seg_idx, t_lat), ...]
+    for seg_idx, (fid, t_lat, _) in enumerate(meta):
+        fid = int(fid)
+        if fid not in file_segments:
+            file_segments[fid] = []
+        file_segments[fid].append((seg_idx, int(t_lat)))
+    
+    offsets_list: List[int] = []
+    lengths_list: List[int] = []
+    file_ids_list: List[int] = []
+    segment_ids_list: List[int] = []
+    grain_paths: List[str] = []
+    
+    grains_dir = os.path.join(out_dir, "grains")
+    os.makedirs(grains_dir, exist_ok=True)
+    
+    # For each source file, render grains and concatenate
+    for fid in sorted(file_segments.keys()):
+        wav = wav_dict[fid]
+        segments = file_segments[fid]
+        
+        grain_buffer_list: List[np.ndarray] = []
+        current_offset = 0
+        
+        for seg_idx, t_lat in segments:
+            # Convert latent time to sample position
+            sec_start = t_lat / LATENT_HZ
+            samp_start = int(round(sec_start * sr))
+            
+            # Extract grain with envelope
+            samp_end = min(samp_start + grain_len_samp, wav.shape[0])
+            grain = wav[samp_start:samp_end].copy()
+            
+            # Pad if grain is shorter than expected
+            if grain.shape[0] < grain_len_samp:
+                pad_len = grain_len_samp - grain.shape[0]
+                pad = np.zeros((pad_len, grain.shape[1]), dtype=np.float32)
+                grain = np.concatenate([grain, pad], axis=0)
+            
+            # Apply Hann envelope
+            grain = grain * envelope
+            
+            # Record metadata
+            offsets_list.append(current_offset)
+            lengths_list.append(grain.shape[0])
+            file_ids_list.append(fid)
+            segment_ids_list.append(seg_idx)
+            
+            grain_buffer_list.append(grain)
+            current_offset += grain.shape[0]
+        
+        # Concatenate all grains for this file
+        if grain_buffer_list:
+            file_grain_buffer = np.concatenate(grain_buffer_list, axis=0)
+            grain_path = os.path.join(grains_dir, f"file_{fid:04d}.wav")
+            save_wav(grain_path, file_grain_buffer, sr)
+            grain_paths.append(grain_path)
+        else:
+            grain_paths.append("")
+    
+    return (
+        np.array(offsets_list, dtype=np.int64),
+        np.array(lengths_list, dtype=np.int64),
+        np.array(file_ids_list, dtype=np.int32),
+        np.array(segment_ids_list, dtype=np.int32),
+        grain_paths,
+    )
+
+
 def main():
     ap = argparse.ArgumentParser(description="Préprocess: MFCC→PCA + bundle latents + contrastive projector g.")
     ap.add_argument("--audio_dir", required=True)
@@ -313,6 +417,19 @@ def main():
         default=0.0,
         help="Optional weight for ||mean||^2 penalty on projector outputs (helps recentring if needed).",
     )
+    # Grain rendering arguments
+    ap.add_argument(
+        "--render_grains",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Render pre-baked grain audio buffers for runtime playback (default: on).",
+    )
+    ap.add_argument(
+        "--grain_sec",
+        type=float,
+        default=0.5,
+        help="Grain duration in seconds (longer grains with Hann envelope, default: 0.5s).",
+    )
     args = ap.parse_args()
 
     if not (1 <= args.proj_dim <= 64):
@@ -362,10 +479,12 @@ def main():
     feat_list, meta_list = [], []
     latent_sequences: List[np.ndarray] = []
     latents_dict = {}
+    wav_dict: Dict[int, np.ndarray] = {}  # Store wavs for grain rendering
 
     print("Encoding + feature extraction…")
     for fid, p in enumerate(tqdm(paths)):
         wav = load_wav(p)
+        wav_dict[fid] = wav  # Store for grain rendering
         z_full = encode_full(ae, wav).astype(np.float32)  # [T_lat, 64]
         z_full = np.ascontiguousarray(z_full)
         latents_dict[f"z_{fid}"] = z_full
@@ -505,10 +624,42 @@ def main():
         **dr_arrays,
     )
 
+    # --- Grain Rendering ---
+    grain_manifest_path = None
+    if args.render_grains:
+        print(f"\nRendering grains (grain_sec={args.grain_sec})…")
+        offsets, lengths, file_ids, segment_ids, grain_paths = render_grains(
+            wav_dict=wav_dict,
+            meta=meta,
+            grain_sec=args.grain_sec,
+            out_dir=out_dir,
+            sr=SR,
+        )
+        
+        grain_manifest_path = os.path.join(out_dir, "grains", "manifest.npz")
+        save_grain_manifest(
+            path=grain_manifest_path,
+            offsets=offsets,
+            lengths=lengths,
+            file_ids=file_ids,
+            segment_ids=segment_ids,
+            grain_paths=grain_paths,
+            grain_sec=args.grain_sec,
+            grain_hop_sec=args.hop_sec,  # Use segment hop as grain hop reference
+            sr=SR,
+        )
+        print(f"  Grains manifest: {grain_manifest_path}")
+        print(f"  Grain files: {len(grain_paths)} files in {os.path.join(out_dir, 'grains')}")
+    
+    # Clear wav_dict to free memory
+    wav_dict.clear()
+
     print("\nSaved:")
     print("  Latents   :", latents_path)
     print("  Projector :", projector_path)
     print("  Corpus    :", corpus_path)
+    if grain_manifest_path:
+        print("  Grains    :", grain_manifest_path)
     print("  Folder    :", out_dir)
 
 
