@@ -29,8 +29,10 @@ def main():
     ap.add_argument("--corpus_dir", required=True, help="Directory containing corpus & grains")
     ap.add_argument("--osc_ip", default="127.0.0.1")
     ap.add_argument("--osc_port", type=int, default=9000)
+    ap.add_argument("--ws_port", type=int, default=8765,
+                    help="WebSocket port for visualization (0 to disable).")
     
-    # Grain playback
+    # Grain playback (basic)
     ap.add_argument("--grain_rate", type=float, default=10.0,
                     help="Initial grain trigger rate (grains/sec).")
     ap.add_argument("--grain_jitter", type=float, default=0.0,
@@ -40,6 +42,14 @@ def main():
     ap.add_argument("--buffersize", type=int, default=512,
                     help="Audio buffer size.")
     
+    # Grain playback (synthesis)
+    ap.add_argument("--grain_pitch", type=float, default=1.0,
+                    help="Initial pitch ratio (0.25-4.0).")
+    ap.add_argument("--grain_dur", type=float, default=0.1,
+                    help="Initial grain duration in seconds (0.01-0.5).")
+    ap.add_argument("--grain_filter", type=float, default=20000,
+                    help="Initial filter cutoff frequency (20-20000 Hz).")
+    
     # Policy controls
     ap.add_argument("--policy_path", default=None,
                     help="Checkpoint .pt for navigation policy.")
@@ -47,14 +57,22 @@ def main():
                     help="Base temperature for policy sampling.")
     ap.add_argument("--policy_sample", action=argparse.BooleanOptionalAction, default=True,
                     help="Stochastically sample from policy (default: yes).")
+    
+    # Control parameters (7 dimensions)
     ap.add_argument("--ctrl_width", type=float, default=0.5,
-                    help="Initial width control (0-1).")
+                    help="Initial width control (0-1): temperature scaling.")
     ap.add_argument("--ctrl_energy", type=float, default=0.5,
-                    help="Initial energy control (0-1).")
+                    help="Initial energy control (0-1): displacement magnitude.")
     ap.add_argument("--ctrl_gravity", type=float, default=0.5,
-                    help="Initial gravity control (0-1).")
+                    help="Initial gravity control (0-1): forward/backward bias.")
     ap.add_argument("--ctrl_memory", type=float, default=0.0,
-                    help="Initial memory control (0-1).")
+                    help="Initial memory control (0-1): pull toward recent positions.")
+    ap.add_argument("--ctrl_coherence", type=float, default=0.0,
+                    help="Initial coherence control (0-1): stay within same file.")
+    ap.add_argument("--ctrl_exploration", type=float, default=0.0,
+                    help="Initial exploration control (0-1): entropy injection.")
+    ap.add_argument("--ctrl_regime_bias", type=float, default=0.0,
+                    help="Initial regime bias (0-2): 0=drift, 1=turn, 2=linger.")
     
     args = ap.parse_args()
     
@@ -74,7 +92,7 @@ def main():
     ZZ = data["ZZ"].astype(np.float32)
     meta = data["meta"]
     
-    # Create navigation engine
+    # Create navigation engine with all control parameters
     nav = NavigationEngine(
         ZZ=ZZ,
         meta=meta,
@@ -85,6 +103,9 @@ def main():
         control_energy=args.ctrl_energy,
         control_gravity=args.ctrl_gravity,
         control_memory=args.ctrl_memory,
+        control_coherence=args.ctrl_coherence,
+        control_exploration=args.ctrl_exploration,
+        control_regime_bias=args.ctrl_regime_bias,
         grain_rate=args.grain_rate,
         grain_jitter=args.grain_jitter,
     )
@@ -96,9 +117,12 @@ def main():
         buffersize=args.buffersize,
     )
     
-    # Sync initial grain rate
+    # Sync initial grain parameters
     player.set_trigger_rate(args.grain_rate)
     player.set_trigger_jitter(args.grain_jitter)
+    player.set_pitch(args.grain_pitch)
+    player.set_grain_dur(args.grain_dur)
+    player.set_filter_freq(args.grain_filter)
     
     # Start audio
     print("[info] Starting audio...")
@@ -130,7 +154,24 @@ def main():
     audio_thread = threading.Thread(target=audio_loop, daemon=True)
     audio_thread.start()
     
+    # Start WebSocket server for visualization (if enabled)
+    ws_server = None
+    ws_thread = None
+    if args.ws_port > 0:
+        try:
+            from stable_audio_wanderer.runtime.ws_server import start_ws_server
+            ws_server, ws_thread = start_ws_server(nav, player, port=args.ws_port)
+            print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
+        except ImportError:
+            print("[warn] WebSocket server not available (missing dependencies)")
+        except Exception as e:
+            print(f"[warn] Failed to start WebSocket server: {e}")
+    
     print(f"[info] Running with {nav.N} segments, {args.voices} voices")
+    print(f"[info] Controls: width={args.ctrl_width}, energy={args.ctrl_energy}, "
+          f"gravity={args.ctrl_gravity}, memory={args.ctrl_memory}")
+    print(f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}, "
+          f"regime_bias={args.ctrl_regime_bias}")
     
     try:
         # Run OSC server (blocks until interrupted)
@@ -141,6 +182,8 @@ def main():
         running.clear()
         player.shutdown()
         audio_thread.join(timeout=1.0)
+        if ws_server is not None:
+            ws_server.shutdown()
     
     print("[info] Done.")
 

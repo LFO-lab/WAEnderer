@@ -17,6 +17,9 @@ scipy>=1.11
 # OSC control
 python-osc>=1.8
 
+# WebSocket server for visualization
+websockets>=12.0
+
 # Optional (used during preprocessing / local dev)
 tqdm>=4.66
 librosa

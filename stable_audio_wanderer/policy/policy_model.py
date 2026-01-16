@@ -8,10 +8,10 @@ import torch.nn.functional as F
 @dataclass
 class PolicyConfig:
     delta_max: int = 8
-    desc_dim: int = 3
+    desc_dim: int = 5  # speed, curvature, recurrence, novelty, coverage
     embed_dim: int = 2
     regime_classes: int = 3
-    control_dim: int = 4
+    control_dim: int = 7  # width, energy, gravity, memory, coherence, exploration, regime_bias
     hidden_size: int = 128
     input_proj: int = 32
     num_layers: int = 1
