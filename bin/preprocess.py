@@ -427,8 +427,8 @@ def main():
     ap.add_argument(
         "--grain_sec",
         type=float,
-        default=0.5,
-        help="Grain duration in seconds (longer grains with Hann envelope, default: 0.5s).",
+        default=1.0 / LATENT_HZ,  # ~0.0465s, matches one latent frame and playback grain duration
+        help="Grain duration in seconds (default: ~0.0465s, matching one latent frame).",
     )
     args = ap.parse_args()
 

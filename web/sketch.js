@@ -8,6 +8,9 @@ let ws = null;
 let wsConnected = false;
 const WS_URL = 'ws://127.0.0.1:8765';
 
+// Track which controls are currently being adjusted by the user
+let activeControls = new Set();
+
 // Corpus data
 let corpusPoints = [];
 let corpusFileIds = [];
@@ -266,9 +269,13 @@ function handleMessage(data) {
         if (data.controls) {
             updateControlDisplays('ctrl', data.controls);
         }
-        
+
         if (data.grain) {
             updateControlDisplays('grain', data.grain);
+        }
+
+        if (data.scheduler) {
+            updateControlDisplays('scheduler', data.scheduler);
         }
     }
 }
@@ -303,13 +310,27 @@ function updateInfoDisplay(data) {
 
 function updateControlDisplays(prefix, values) {
     for (const [key, value] of Object.entries(values)) {
+        // Skip updating controls that are currently being adjusted by the user
+        const inputId = `${prefix}-${key}`;
+        if (activeControls.has(inputId)) {
+            continue;
+        }
+
         const display = document.getElementById(`val-${key}`);
         if (display && typeof value === 'number') {
             if (key === 'filter_freq') {
                 display.textContent = value.toFixed(0);
+            } else if (key === 'num_streams') {
+                display.textContent = value.toFixed(0);
             } else {
                 display.textContent = value.toFixed(2);
             }
+        }
+
+        // Also update the slider position to match server state
+        const input = document.getElementById(inputId);
+        if (input && typeof value === 'number' && input.type === 'range') {
+            input.value = value;
         }
     }
 }
@@ -322,8 +343,18 @@ function setupControls() {
     policyControls.forEach(ctrl => {
         const input = document.getElementById(`ctrl-${ctrl}`);
         const display = document.getElementById(`val-${ctrl}`);
-        
+        const inputId = `ctrl-${ctrl}`;
+
         if (input) {
+            // Track when user starts adjusting
+            input.addEventListener('mousedown', () => activeControls.add(inputId));
+            input.addEventListener('touchstart', () => activeControls.add(inputId));
+
+            // Track when user stops adjusting
+            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) display.textContent = value.toFixed(2);
@@ -348,12 +379,22 @@ function setupControls() {
         'reverse_prob',
         'master_amp',
     ];
-    
+
     grainControls.forEach(param => {
         const input = document.getElementById(`grain-${param}`);
         const display = document.getElementById(`val-${param}`);
-        
+        const inputId = `grain-${param}`;
+
         if (input) {
+            // Track when user starts adjusting
+            input.addEventListener('mousedown', () => activeControls.add(inputId));
+            input.addEventListener('touchstart', () => activeControls.add(inputId));
+
+            // Track when user stops adjusting
+            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) {
@@ -364,6 +405,38 @@ function setupControls() {
                     }
                 }
                 sendGrainParam(param, value);
+            });
+        }
+    });
+
+    // Scheduler controls
+    const schedulerControls = [
+        { param: 'nav_speed', format: 2 },
+        { param: 'num_streams', format: 0 },
+        { param: 'overlap', format: 2 },
+    ];
+
+    schedulerControls.forEach(({ param, format }) => {
+        const input = document.getElementById(`scheduler-${param}`);
+        const display = document.getElementById(`val-${param}`);
+        const inputId = `scheduler-${param}`;
+
+        if (input) {
+            // Track when user starts adjusting
+            input.addEventListener('mousedown', () => activeControls.add(inputId));
+            input.addEventListener('touchstart', () => activeControls.add(inputId));
+
+            // Track when user stops adjusting
+            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+            input.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                if (display) {
+                    display.textContent = value.toFixed(format);
+                }
+                sendSchedulerParam(param, value);
             });
         }
     });
@@ -417,6 +490,15 @@ function sendGrainParam(name, value) {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
             type: 'grain',
+            params: { [name]: value }
+        }));
+    }
+}
+
+function sendSchedulerParam(name, value) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'scheduler',
             params: { [name]: value }
         }));
     }

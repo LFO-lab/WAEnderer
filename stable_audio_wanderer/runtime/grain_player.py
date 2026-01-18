@@ -314,8 +314,12 @@ class GrainPlayer:
         self._table_durs.clear()
         self._voices.clear()
         
-    def _compute_grain_params(self) -> dict:
-        """Compute randomized grain parameters."""
+    def _compute_grain_params(self, grain_dur_override: float = None) -> dict:
+        """Compute randomized grain parameters.
+
+        Args:
+            grain_dur_override: Optional grain duration override (from scheduler)
+        """
         pitch = self._pitch
         if self._pitch_spread > 0:
             semitone_offset = (np.random.random() - 0.5) * 2 * self._pitch_spread
@@ -324,7 +328,8 @@ class GrainPlayer:
         if self._reverse_prob > 0 and np.random.random() < self._reverse_prob:
             pitch = -abs(pitch)
 
-        dur = self._grain_dur
+        # Use override if provided, otherwise use internal setting
+        dur = grain_dur_override if grain_dur_override is not None else self._grain_dur
         if self._grain_dur_spread > 0:
             dur_factor = 1.0 + (np.random.random() - 0.5) * 2 * self._grain_dur_spread
             dur *= dur_factor
@@ -338,37 +343,49 @@ class GrainPlayer:
         # Ensure all values are Python native floats for pyo compatibility
         return {"pitch": float(pitch), "dur": float(dur), "pan": float(pan)}
         
-    def trigger_grain(self, segment_idx: int, amp: float = 1.0, pan: float = None) -> bool:
+    def trigger_grain(
+        self,
+        segment_idx: int,
+        amp: float = 1.0,
+        pan: float = None,
+        grain_dur: float = None,
+        position_spread: float = None,
+    ) -> bool:
         """
         Trigger grain for the given segment index.
-        
+
         Args:
             segment_idx: Corpus segment index
             amp: Amplitude (0-1)
             pan: Pan position, None uses internal setting
-            
+            grain_dur: Grain duration override, None uses internal setting
+            position_spread: Position spread override, None uses internal setting
+
         Returns:
             True if grain was triggered
         """
         if segment_idx not in self._segment_to_grain:
             return False
-            
+
         grain_idx = self._segment_to_grain[segment_idx]
         file_id = int(self.file_ids[grain_idx])
         offset_samples = int(self.offsets[grain_idx])
         length_samples = int(self.lengths[grain_idx])
-        
+
         if file_id not in self._tables:
             return False
-            
+
         with self._lock:
             # Convert samples to seconds
             start_sec = float(offset_samples / self.sr)
             grain_dur_sec = float(length_samples / self.sr)
 
+            # Use override or internal setting for position spread
+            effective_pos_spread = position_spread if position_spread is not None else self._position_spread
+
             # Apply position spread
-            if self._position_spread > 0:
-                max_jitter_sec = grain_dur_sec * self._position_spread * 0.5
+            if effective_pos_spread > 0:
+                max_jitter_sec = grain_dur_sec * effective_pos_spread * 0.5
                 jitter = (np.random.random() - 0.5) * 2 * max_jitter_sec
                 start_sec = float(max(0, start_sec + jitter))
 
@@ -384,7 +401,7 @@ class GrainPlayer:
                 voice_idx = self._voice_idx % len(matching)
                 _, _, voice = matching[voice_idx]
 
-            params = self._compute_grain_params()
+            params = self._compute_grain_params(grain_dur_override=grain_dur)
 
             # Ensure all values are native Python floats for pyo compatibility
             voice.trigger(
@@ -398,7 +415,7 @@ class GrainPlayer:
             )
 
             self._voice_idx += 1
-            
+
         return True
     
     # --- Setters ---
@@ -651,27 +668,30 @@ class GrainScheduler:
         with self._playhead_lock:
             segment = self._playhead_segment
 
-        # Apply small random position jitter (around current segment)
-        # This helps avoid repetition artifacts during time-stretching
+        # Compute position jitter for this grain (does not modify player state)
+        position_spread = None
         if self._position_jitter > 0:
-            pos_offset = (np.random.random() - 0.5) * 2 * self._position_jitter
-            # Store for position_spread in the player
-            self.player._position_spread = abs(pos_offset)
+            position_spread = abs((np.random.random() - 0.5) * 2 * self._position_jitter)
 
-        # Apply duration jitter
+        # Compute duration with jitter for this grain (does not modify player state)
         dur = self._grain_dur
         if self._dur_jitter > 0:
             dur_factor = 1.0 + (np.random.random() - 0.5) * 2 * self._dur_jitter
             dur *= dur_factor
-        self.player._grain_dur = dur
 
         # Apply pan with small jitter around stream's center
         pan = stream.pan_center
         pan_jitter = (np.random.random() - 0.5) * 0.1  # Small pan variation
         pan = float(np.clip(pan + pan_jitter, 0.0, 1.0))
 
-        # Trigger the grain
-        self.player.trigger_grain(segment, amp=self._stream_amp, pan=pan)
+        # Trigger the grain with scheduler-computed overrides
+        self.player.trigger_grain(
+            segment,
+            amp=self._stream_amp,
+            pan=pan,
+            grain_dur=dur,
+            position_spread=position_spread,
+        )
 
     def _tick(self, dt: float):
         """

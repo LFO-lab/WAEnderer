@@ -358,11 +358,11 @@
             
             <h2>Grain Playback</h2>
             
-            <h3>Timing</h3>
+            <h3>Navigation</h3>
             <div class="control-row">
                 <div class="control-group">
                     <div class="control-label">
-                        <span>Rate (g/s)</span>
+                        <span>Nav Rate (Hz)</span>
                         <span class="control-value" id="val-trigger_rate">21.5</span>
                     </div>
                     <input type="range" id="grain-trigger_rate" min="21.5" max="100" step="0.5" value="21.5">
@@ -376,7 +376,34 @@
                     <input type="range" id="grain-trigger_jitter" min="0" max="1" step="0.01" value="0">
                 </div>
             </div>
-            
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Nav Speed</span>
+                    <span class="control-value" id="val-nav_speed">1.00</span>
+                </div>
+                <input type="range" id="scheduler-nav_speed" min="0.1" max="4" step="0.1" value="1">
+            </div>
+
+            <h3>Grain Density</h3>
+            <div class="control-row">
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Streams</span>
+                        <span class="control-value" id="val-num_streams">4</span>
+                    </div>
+                    <input type="range" id="scheduler-num_streams" min="1" max="16" step="1" value="4">
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Overlap</span>
+                        <span class="control-value" id="val-overlap">0.75</span>
+                    </div>
+                    <input type="range" id="scheduler-overlap" min="0" max="0.95" step="0.05" value="0.75">
+                </div>
+            </div>
+
             <h3>Pitch</h3>
             <div class="control-row">
                 <div class="control-group">
