@@ -29,7 +29,7 @@ let currentFileId = 0;
 let vizMode = 'scatter';
 let trailLength = 64;
 let heatmapData = null;
-let heatmapResolution = 50;
+let heatmapResolution = 100; // Will be set from VIZ_CONFIG in setup()
 
 // Colors
 const COLORS = {
@@ -45,30 +45,65 @@ const COLORS = {
     files: [],
 };
 
+// Visualization configuration
+const VIZ_CONFIG = {
+    // Corpus points
+    pointSize: 6,
+    pointOpacity: 80,
+    pointGlow: true,
+    glowSize: 12,
+    glowOpacity: 25,
+
+    // Trajectory
+    trailFadeExponent: 2.5,
+    minLineWeight: 1,
+    maxLineWeight: 4,
+    smoothTrajectory: true,
+
+    // Heatmap
+    heatmapResolution: 100,
+
+    // Cursor
+    showVelocityVector: true,
+    velocityArrowScale: 50,
+    pulseEnabled: true,
+    pulseSpeed: 0.05,
+    pulseAmount: 0.3,
+
+    // Grid
+    showGrid: true,
+    gridDivisions: 10,
+    gridOpacity: 20,
+};
+
+// Cached corpus colors (computed once on corpus load)
+let cachedCorpusColors = [];
+
 // Canvas dimensions
 let canvasSize;
 
 function setup() {
     const container = document.getElementById('canvas-container');
     canvasSize = Math.min(container.clientWidth, container.clientHeight) - 40;
-    
+
     const canvas = createCanvas(canvasSize, canvasSize);
     canvas.parent('canvas-container');
-    
+
     // Generate file colors
     for (let i = 0; i < 20; i++) {
         const hue = (i * 137.5) % 360;
         COLORS.files.push(hslToRgb(hue, 60, 50));
     }
-    
-    // Initialize heatmap
-    heatmapData = new Array(heatmapResolution).fill(0).map(() => 
+
+    // Initialize heatmap with configured resolution
+    heatmapResolution = VIZ_CONFIG.heatmapResolution;
+    heatmapData = new Array(heatmapResolution).fill(0).map(() =>
         new Array(heatmapResolution).fill(0)
     );
-    
+
     connectWebSocket();
     setupControls();
-    
+
     frameRate(30);
 }
 
@@ -95,68 +130,242 @@ function draw() {
 }
 
 function drawCorpusScatter() {
+    // Draw optional grid first (behind points)
+    if (VIZ_CONFIG.showGrid) {
+        drawGrid();
+    }
+
     noStroke();
-    
+
     for (let i = 0; i < corpusPoints.length; i++) {
         const [x, y] = corpusPoints[i];
-        const fileId = corpusFileIds[i] || 0;
-        
-        const fileColor = COLORS.files[fileId % COLORS.files.length];
-        fill(fileColor[0], fileColor[1], fileColor[2], 50);
-        
+        const fileColor = cachedCorpusColors[i] || COLORS.files[0];
+
         const screenX = x * width;
         const screenY = (1 - y) * height;
-        
-        ellipse(screenX, screenY, 4, 4);
+
+        // Draw glow effect (larger semi-transparent point behind)
+        if (VIZ_CONFIG.pointGlow) {
+            fill(fileColor[0], fileColor[1], fileColor[2], VIZ_CONFIG.glowOpacity);
+            ellipse(screenX, screenY, VIZ_CONFIG.glowSize, VIZ_CONFIG.glowSize);
+        }
+
+        // Draw main point
+        fill(fileColor[0], fileColor[1], fileColor[2], VIZ_CONFIG.pointOpacity);
+        ellipse(screenX, screenY, VIZ_CONFIG.pointSize, VIZ_CONFIG.pointSize);
+    }
+}
+
+// Draw subtle reference grid
+function drawGrid() {
+    const divisions = VIZ_CONFIG.gridDivisions;
+    const opacity = VIZ_CONFIG.gridOpacity;
+
+    stroke(255, 255, 255, opacity);
+    strokeWeight(1);
+
+    // Vertical lines
+    for (let i = 1; i < divisions; i++) {
+        const x = (i / divisions) * width;
+        line(x, 0, x, height);
+    }
+
+    // Horizontal lines
+    for (let i = 1; i < divisions; i++) {
+        const y = (i / divisions) * height;
+        line(0, y, width, y);
+    }
+
+    // Draw coordinate labels at edges (very subtle)
+    fill(255, 255, 255, opacity + 10);
+    noStroke();
+    textSize(9);
+    textAlign(CENTER, TOP);
+
+    // X-axis labels (bottom)
+    for (let i = 0; i <= divisions; i += 2) {
+        const x = (i / divisions) * width;
+        const val = (i / divisions).toFixed(1);
+        text(val, x, height - 12);
+    }
+
+    // Y-axis labels (left)
+    textAlign(LEFT, CENTER);
+    for (let i = 0; i <= divisions; i += 2) {
+        const y = height - (i / divisions) * height;
+        const val = (i / divisions).toFixed(1);
+        text(val, 4, y);
     }
 }
 
 function drawTrajectory() {
     if (trajectory.length < 2) return;
-    
+
     noFill();
-    
-    for (let i = 1; i < trajectory.length; i++) {
-        const alpha = map(i, 0, trajectory.length, 50, 255);
-        const weight = map(i, 0, trajectory.length, 1, 3);
-        
-        const [x1, y1] = trajectory[i - 1];
-        const [x2, y2] = trajectory[i];
-        
-        const regimeColor = COLORS.regimes[currentRegime] || COLORS.trajectory;
-        stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
-        strokeWeight(weight);
-        
-        const sx1 = x1 * width;
-        const sy1 = (1 - y1) * height;
-        const sx2 = x2 * width;
-        const sy2 = (1 - y2) * height;
-        
-        line(sx1, sy1, sx2, sy2);
+    const len = trajectory.length;
+    const regimeColor = COLORS.regimes[currentRegime] || COLORS.trajectory;
+
+    if (VIZ_CONFIG.smoothTrajectory && len >= 4) {
+        // Draw smooth Catmull-Rom curve
+        drawSmoothTrajectory(regimeColor);
+    } else {
+        // Draw standard line segments with exponential fade
+        for (let i = 1; i < len; i++) {
+            const t = i / len;
+            const alpha = pow(t, VIZ_CONFIG.trailFadeExponent) * 255;
+            const weight = map(t, 0, 1, VIZ_CONFIG.minLineWeight, VIZ_CONFIG.maxLineWeight);
+
+            const [x1, y1] = trajectory[i - 1];
+            const [x2, y2] = trajectory[i];
+
+            stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
+            strokeWeight(weight);
+
+            const sx1 = x1 * width;
+            const sy1 = (1 - y1) * height;
+            const sx2 = x2 * width;
+            const sy2 = (1 - y2) * height;
+
+            line(sx1, sy1, sx2, sy2);
+        }
     }
+}
+
+// Catmull-Rom spline interpolation for smooth trajectory
+function drawSmoothTrajectory(regimeColor) {
+    const len = trajectory.length;
+    const steps = 4; // interpolation steps between points
+
+    for (let i = 0; i < len - 1; i++) {
+        // Get 4 control points for Catmull-Rom
+        const p0 = trajectory[max(0, i - 1)];
+        const p1 = trajectory[i];
+        const p2 = trajectory[min(len - 1, i + 1)];
+        const p3 = trajectory[min(len - 1, i + 2)];
+
+        for (let s = 0; s < steps; s++) {
+            const t1 = s / steps;
+            const t2 = (s + 1) / steps;
+
+            // Calculate progress along entire trajectory for alpha/weight
+            const progress1 = (i + t1) / len;
+            const progress2 = (i + t2) / len;
+
+            const alpha = pow(progress2, VIZ_CONFIG.trailFadeExponent) * 255;
+            const weight = map(progress2, 0, 1, VIZ_CONFIG.minLineWeight, VIZ_CONFIG.maxLineWeight);
+
+            // Catmull-Rom interpolation
+            const pt1 = catmullRom(p0, p1, p2, p3, t1);
+            const pt2 = catmullRom(p0, p1, p2, p3, t2);
+
+            stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
+            strokeWeight(weight);
+
+            const sx1 = pt1[0] * width;
+            const sy1 = (1 - pt1[1]) * height;
+            const sx2 = pt2[0] * width;
+            const sy2 = (1 - pt2[1]) * height;
+
+            line(sx1, sy1, sx2, sy2);
+        }
+    }
+}
+
+// Catmull-Rom spline point calculation
+function catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t;
+    const t3 = t2 * t;
+
+    const x = 0.5 * (
+        (2 * p1[0]) +
+        (-p0[0] + p2[0]) * t +
+        (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+        (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
+    );
+
+    const y = 0.5 * (
+        (2 * p1[1]) +
+        (-p0[1] + p2[1]) * t +
+        (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+        (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
+    );
+
+    return [x, y];
 }
 
 function drawCursor() {
     if (!currentPosition) return;
-    
+
     const [x, y] = currentPosition;
     const screenX = x * width;
     const screenY = (1 - y) * height;
-    
+
     const regimeColor = COLORS.regimes[currentRegime] || COLORS.cursor;
-    
+    const fileColor = COLORS.files[currentFileId % COLORS.files.length];
+
+    // Calculate pulse effect
+    let pulseScale = 1.0;
+    if (VIZ_CONFIG.pulseEnabled) {
+        pulseScale = 1.0 + sin(frameCount * VIZ_CONFIG.pulseSpeed) * VIZ_CONFIG.pulseAmount;
+    }
+
+    // Draw glow rings with pulse
     noStroke();
-    for (let r = 30; r > 0; r -= 5) {
-        const alpha = map(r, 30, 0, 10, 50);
+    for (let r = 30 * pulseScale; r > 0; r -= 5) {
+        const alpha = map(r, 30 * pulseScale, 0, 10, 50);
         fill(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
         ellipse(screenX, screenY, r, r);
     }
-    
+
+    // Draw file ID colored ring
     noFill();
+    stroke(fileColor[0], fileColor[1], fileColor[2], 150);
+    strokeWeight(3);
+    ellipse(screenX, screenY, 26 * pulseScale, 26 * pulseScale);
+
+    // Draw main regime-colored ring
     stroke(regimeColor[0], regimeColor[1], regimeColor[2]);
     strokeWeight(2);
-    ellipse(screenX, screenY, 20, 20);
-    
+    ellipse(screenX, screenY, 20 * pulseScale, 20 * pulseScale);
+
+    // Draw velocity vector arrow
+    if (VIZ_CONFIG.showVelocityVector && trajectory.length >= 2) {
+        const len = trajectory.length;
+        const [prevX, prevY] = trajectory[len - 2];
+        const [currX, currY] = trajectory[len - 1];
+
+        const dx = currX - prevX;
+        const dy = currY - prevY;
+        const mag = sqrt(dx * dx + dy * dy);
+
+        if (mag > 0.001) {
+            // Normalize and scale
+            const scale = VIZ_CONFIG.velocityArrowScale * min(mag * 100, 1);
+            const arrowX = (dx / mag) * scale;
+            const arrowY = -(dy / mag) * scale; // Flip Y for screen coords
+
+            // Draw arrow line
+            stroke(255, 255, 255, 200);
+            strokeWeight(2);
+            line(screenX, screenY, screenX + arrowX, screenY + arrowY);
+
+            // Draw arrowhead
+            const angle = atan2(arrowY, arrowX);
+            const arrowHeadSize = 8;
+            const endX = screenX + arrowX;
+            const endY = screenY + arrowY;
+
+            fill(255, 255, 255, 200);
+            noStroke();
+            push();
+            translate(endX, endY);
+            rotate(angle);
+            triangle(0, 0, -arrowHeadSize, -arrowHeadSize / 2, -arrowHeadSize, arrowHeadSize / 2);
+            pop();
+        }
+    }
+
+    // Draw center point
     fill(255);
     noStroke();
     ellipse(screenX, screenY, 6, 6);
@@ -164,28 +373,67 @@ function drawCursor() {
 
 function drawHeatmap() {
     noStroke();
-    const cellW = width / heatmapResolution;
-    const cellH = height / heatmapResolution;
-    
+    const res = heatmapResolution;
+    const cellW = width / res;
+    const cellH = height / res;
+
+    // Find max value (skip zero cells for efficiency)
     let maxVal = 1;
-    for (let i = 0; i < heatmapResolution; i++) {
-        for (let j = 0; j < heatmapResolution; j++) {
-            maxVal = max(maxVal, heatmapData[i][j]);
-        }
-    }
-    
-    for (let i = 0; i < heatmapResolution; i++) {
-        for (let j = 0; j < heatmapResolution; j++) {
-            const val = heatmapData[i][j] / maxVal;
-            if (val > 0.01) {
-                const r = map(val, 0, 1, 20, 255);
-                const g = map(val, 0, 1, 30, 50);
-                const b = map(val, 0, 1, 80, 50);
-                fill(r, g, b, map(val, 0, 1, 50, 200));
-                rect(i * cellW, (heatmapResolution - 1 - j) * cellH, cellW, cellH);
+    for (let i = 0; i < res; i++) {
+        for (let j = 0; j < res; j++) {
+            if (heatmapData[i][j] > 0) {
+                maxVal = max(maxVal, heatmapData[i][j]);
             }
         }
     }
+
+    // Draw cells with perceptually uniform viridis-like colormap
+    for (let i = 0; i < res; i++) {
+        for (let j = 0; j < res; j++) {
+            const rawVal = heatmapData[i][j];
+            if (rawVal < 0.01) continue; // Skip empty cells
+
+            const val = rawVal / maxVal;
+            const color = viridisColor(val);
+            fill(color[0], color[1], color[2], map(val, 0, 1, 80, 220));
+            rect(i * cellW, (res - 1 - j) * cellH, cellW + 1, cellH + 1); // +1 to avoid gaps
+        }
+    }
+}
+
+// Viridis-like perceptually uniform colormap
+function viridisColor(t) {
+    // Simplified viridis approximation (dark purple -> blue -> teal -> green -> yellow)
+    t = constrain(t, 0, 1);
+
+    let r, g, b;
+    if (t < 0.25) {
+        // Dark purple to blue
+        const s = t / 0.25;
+        r = map(s, 0, 1, 68, 59);
+        g = map(s, 0, 1, 1, 82);
+        b = map(s, 0, 1, 84, 139);
+    } else if (t < 0.5) {
+        // Blue to teal
+        const s = (t - 0.25) / 0.25;
+        r = map(s, 0, 1, 59, 33);
+        g = map(s, 0, 1, 82, 145);
+        b = map(s, 0, 1, 139, 140);
+    } else if (t < 0.75) {
+        // Teal to green
+        const s = (t - 0.5) / 0.25;
+        r = map(s, 0, 1, 33, 94);
+        g = map(s, 0, 1, 145, 201);
+        b = map(s, 0, 1, 140, 98);
+    } else {
+        // Green to yellow
+        const s = (t - 0.75) / 0.25;
+        r = map(s, 0, 1, 94, 253);
+        g = map(s, 0, 1, 201, 231);
+        b = map(s, 0, 1, 98, 37);
+    }
+
+    return [r, g, b];
 }
 
 function updateHeatmap() {
@@ -248,8 +496,14 @@ function handleMessage(data) {
         corpusFileIds = data.file_ids || [];
         corpusRegimes = data.regimes || [];
         totalCorpusPoints = data.total_points || 0;
+
+        // Pre-compute and cache colors for all corpus points (performance optimization)
+        cachedCorpusColors = corpusFileIds.map(fileId =>
+            COLORS.files[fileId % COLORS.files.length]
+        );
+
         console.log(`Received corpus: ${corpusPoints.length} points`);
-        
+
     } else if (data.type === 'state') {
         const nav = data.navigation || {};
         

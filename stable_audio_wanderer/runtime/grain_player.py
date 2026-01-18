@@ -117,27 +117,47 @@ class LooperVoice:
         filter_q: float,
     ):
         """Trigger grain playback at specified position."""
-        # Ensure all values are native Python floats for pyo compatibility
-        start_sec = float(start_sec)
+        # === Parameter validation for sound quality ===
+
+        # Validate duration - must be positive and reasonable
         dur_sec = float(dur_sec)
+        if dur_sec <= 0.001:
+            return  # Skip grain - too short to be audible
+        dur_sec = min(dur_sec, 2.0)  # Cap at 2 seconds max
+
+        # Validate start position - clamp to valid table range
+        start_sec = float(start_sec)
+        if start_sec < 0:
+            start_sec = 0.0
+        elif start_sec >= self._table_dur:
+            # Clamp to just before end, leave room for at least minimal grain
+            start_sec = max(0.0, self._table_dur - 0.01)
+
+        # Validate pitch - must be non-zero, clamp to reasonable range
         pitch = float(pitch)
-        amp = float(amp)
-        pan = float(pan)
-        filter_freq = float(filter_freq)
-        filter_q = float(filter_q)
+        if abs(pitch) < 0.1:
+            pitch = 0.1 if pitch >= 0 else -0.1
+        pitch = float(np.clip(pitch, -4.0, 4.0))
+
+        # Clamp other parameters
+        amp = float(np.clip(amp, 0.0, 2.0))
+        pan = float(np.clip(pan, 0.0, 1.0))
+        filter_freq = float(np.clip(filter_freq, 20, 20000))
+        filter_q = float(np.clip(filter_q, 0.5, 10.0))
 
         # Don't call stop() - it causes clicks on voice stealing.
         # Instead, just set new parameters and retrigger.
         # The envelope will handle amplitude shaping.
 
         # Set looper parameters
-        self._looper.setStart(max(0.0, start_sec))
+        self._looper.setStart(start_sec)
         self._looper.setDur(dur_sec)
         self._looper.setPitch(pitch)
         self._looper.setMul(amp * self._mul)
 
-        # Set envelope duration (accounting for pitch)
-        env_dur = dur_sec / abs(pitch) if pitch != 0 else dur_sec
+        # Set envelope duration (accounting for pitch) with safety clamp
+        env_dur = dur_sec / abs(pitch)
+        env_dur = min(env_dur, 4.0)  # Max 4 second envelope
         self._env.setDur(env_dur)
 
         # Set filter
@@ -218,21 +238,39 @@ class GrainPlayer:
         self._filter_freq = 20000
         self._filter_q = 1.0
         self._reverse_prob = 0.0
-        
+
         self._lock = threading.Lock()
-        
+
+        # Validate corpus is not empty
+        if len(self.segment_ids) == 0:
+            raise ValueError("Manifest contains no segments - cannot initialize player")
+        if len(self.grain_paths) == 0:
+            raise ValueError("Manifest contains no grain paths - cannot load audio")
+
     def _load_tables(self):
         """Load grain buffers into pyo SndTables."""
         unique_files = set(int(fid) for fid in self.file_ids)
+        failed_files = []
+
         for fid in unique_files:
             if fid < len(self.grain_paths) and self.grain_paths[fid]:
                 path = self.grain_paths[fid]
                 if os.path.isfile(path):
-                    table = pyo.SndTable(path)
-                    self._tables[fid] = table
-                    self._table_durs[fid] = table.getDur()
-                    print(f"[grain] Loaded table {fid}: {os.path.basename(path)} "
-                          f"({table.getDur():.2f}s, {table.getSize()} samples)")
+                    try:
+                        table = pyo.SndTable(path)
+                        self._tables[fid] = table
+                        self._table_durs[fid] = table.getDur()
+                        print(f"[grain] Loaded table {fid}: {os.path.basename(path)} "
+                              f"({table.getDur():.2f}s, {table.getSize()} samples)")
+                    except Exception as e:
+                        failed_files.append((fid, path, str(e)))
+                        print(f"[error] Failed to load table {fid} from {path}: {e}")
+
+        if failed_files:
+            print(f"[warn] {len(failed_files)} of {len(unique_files)} tables failed to load")
+
+        if not self._tables:
+            raise RuntimeError("No audio tables could be loaded - cannot start playback")
                     
     def _create_envelope(self):
         """Create the grain envelope table."""
@@ -307,9 +345,23 @@ class GrainPlayer:
     def shutdown(self):
         """Shutdown the pyo server completely."""
         self.stop()
+
+        # Stop all voices explicitly to prevent clicks
+        for fid, voice in self._voices:
+            try:
+                voice._looper.stop()
+                voice._output.stop()
+            except Exception:
+                pass  # Voice may already be stopped
+
         if self.server is not None:
-            self.server.shutdown()
+            try:
+                self.server.stop()
+                self.server.shutdown()
+            except Exception:
+                pass
             self.server = None
+
         self._tables.clear()
         self._table_durs.clear()
         self._voices.clear()
@@ -465,7 +517,22 @@ class GrainPlayer:
             
     def set_reverse_prob(self, prob: float):
         self._reverse_prob = float(np.clip(prob, 0.0, 1.0))
-        
+
+    def get_grain_params_snapshot(self) -> dict:
+        """Get a thread-safe snapshot of grain parameters for scheduler use.
+
+        Returns:
+            dict with position_spread, grain_dur, grain_dur_spread, pan, pan_spread
+        """
+        with self._lock:
+            return {
+                "position_spread": self._position_spread,
+                "grain_dur": self._grain_dur,
+                "grain_dur_spread": self._grain_dur_spread,
+                "pan": self._pan,
+                "pan_spread": self._pan_spread,
+            }
+
     def get_trigger_interval(self) -> float:
         base = 1.0 / self._trigger_rate
         if self._trigger_jitter > 0:
@@ -672,18 +739,21 @@ class GrainScheduler:
         with self._playhead_lock:
             segment = self._playhead_segment
 
+        # Get thread-safe parameter snapshot from player
+        params = self.player.get_grain_params_snapshot()
+
         # Use player's position_spread setting as base
         position_spread = None
-        player_pos_spread = self.player._position_spread
+        player_pos_spread = params["position_spread"]
         if player_pos_spread > 0 or self._position_jitter > 0:
             # Combine player's spread with scheduler's jitter
             total_spread = max(player_pos_spread, self._position_jitter)
             position_spread = abs((np.random.random() - 0.5) * 2 * total_spread)
 
         # Use player's grain_dur setting as base duration
-        dur = self.player._grain_dur
+        dur = params["grain_dur"]
         # Apply spread from player's grain_dur_spread setting
-        player_dur_spread = self.player._grain_dur_spread
+        player_dur_spread = params["grain_dur_spread"]
         if player_dur_spread > 0 or self._dur_jitter > 0:
             # Combine player's spread with scheduler's jitter
             total_spread = max(player_dur_spread, self._dur_jitter)
@@ -692,8 +762,8 @@ class GrainScheduler:
             dur = max(0.01, min(1.0, dur))
 
         # Use player's pan setting as base, with player's pan_spread
-        pan = self.player._pan
-        player_pan_spread = self.player._pan_spread
+        pan = params["pan"]
+        player_pan_spread = params["pan_spread"]
         if player_pan_spread > 0:
             pan_jitter = (np.random.random() - 0.5) * 2 * player_pan_spread
             pan = float(np.clip(pan + pan_jitter, 0.0, 1.0))
@@ -735,15 +805,30 @@ class GrainScheduler:
         """Main scheduler loop running in its own thread."""
         last_time = time.perf_counter()
 
-        while self._running:
-            current_time = time.perf_counter()
-            dt = current_time - last_time
-            last_time = current_time
+        try:
+            while self._running:
+                current_time = time.perf_counter()
+                dt = current_time - last_time
+                last_time = current_time
 
-            self._tick(dt)
+                try:
+                    self._tick(dt)
+                except Exception as e:
+                    # Log tick errors but continue - one bad tick shouldn't stop playback
+                    print(f"[error] Scheduler tick error: {e}")
+                    # Reset timing to prevent drift accumulation from error recovery
+                    last_time = time.perf_counter()
 
-            # Sleep for tick interval
-            time.sleep(self._tick_interval)
+                # Sleep for tick interval
+                time.sleep(self._tick_interval)
+
+        except Exception as e:
+            print(f"[error] Scheduler loop fatal error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[scheduler] Loop stopped")
+            self._running = False
 
     def start(self):
         """Start the grain scheduler thread."""
@@ -765,7 +850,9 @@ class GrainScheduler:
         """Stop the grain scheduler thread."""
         self._running = False
         if self._thread is not None:
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=2.0)  # Increased timeout for clean shutdown
+            if self._thread.is_alive():
+                print("[warn] Scheduler thread did not stop within timeout")
             self._thread = None
 
     # --- Setters for runtime control ---
