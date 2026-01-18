@@ -664,27 +664,41 @@ class GrainScheduler:
             return self._playhead_segment
 
     def _trigger_grain_for_stream(self, stream: GrainStream):
-        """Trigger a grain for the given stream with randomizations."""
+        """Trigger a grain for the given stream with randomizations.
+
+        Uses GrainPlayer's settings as base values for grain parameters,
+        applying scheduler's jitter on top.
+        """
         with self._playhead_lock:
             segment = self._playhead_segment
 
-        # Compute position jitter for this grain (does not modify player state)
+        # Use player's position_spread setting as base
         position_spread = None
-        if self._position_jitter > 0:
-            position_spread = abs((np.random.random() - 0.5) * 2 * self._position_jitter)
+        player_pos_spread = self.player._position_spread
+        if player_pos_spread > 0 or self._position_jitter > 0:
+            # Combine player's spread with scheduler's jitter
+            total_spread = max(player_pos_spread, self._position_jitter)
+            position_spread = abs((np.random.random() - 0.5) * 2 * total_spread)
 
-        # Compute duration with jitter for this grain (does not modify player state)
-        dur = self._grain_dur
-        if self._dur_jitter > 0:
-            dur_factor = 1.0 + (np.random.random() - 0.5) * 2 * self._dur_jitter
+        # Use player's grain_dur setting as base duration
+        dur = self.player._grain_dur
+        # Apply spread from player's grain_dur_spread setting
+        player_dur_spread = self.player._grain_dur_spread
+        if player_dur_spread > 0 or self._dur_jitter > 0:
+            # Combine player's spread with scheduler's jitter
+            total_spread = max(player_dur_spread, self._dur_jitter)
+            dur_factor = 1.0 + (np.random.random() - 0.5) * 2 * total_spread
             dur *= dur_factor
+            dur = max(0.01, min(1.0, dur))
 
-        # Apply pan with small jitter around stream's center
-        pan = stream.pan_center
-        pan_jitter = (np.random.random() - 0.5) * 0.1  # Small pan variation
-        pan = float(np.clip(pan + pan_jitter, 0.0, 1.0))
+        # Use player's pan setting as base, with player's pan_spread
+        pan = self.player._pan
+        player_pan_spread = self.player._pan_spread
+        if player_pan_spread > 0:
+            pan_jitter = (np.random.random() - 0.5) * 2 * player_pan_spread
+            pan = float(np.clip(pan + pan_jitter, 0.0, 1.0))
 
-        # Trigger the grain with scheduler-computed overrides
+        # Trigger the grain with player's base settings
         self.player.trigger_grain(
             segment,
             amp=self._stream_amp,

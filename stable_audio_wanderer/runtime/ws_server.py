@@ -197,7 +197,7 @@ class WSBroadcaster:
                         self.nav.set_grain_rate(value)
                     elif key == "trigger_jitter":
                         self.nav.set_grain_jitter(value)
-                    
+
                     # Also update grain player if available
                     if self.grain_player is not None:
                         setter = getattr(self.grain_player, f"set_{key}", None)
@@ -206,6 +206,13 @@ class WSBroadcaster:
                                 setter(value)
                             except Exception as e:
                                 print(f"[ws] Error setting grain.{key}: {e}")
+
+                    # Sync scheduler timing when grain_dur changes
+                    if key == "grain_dur" and self.scheduler is not None:
+                        try:
+                            self.scheduler.set_grain_dur(value)
+                        except Exception as e:
+                            print(f"[ws] Error syncing scheduler grain_dur: {e}")
                             
             elif msg_type == "scheduler":
                 # Update scheduler parameters

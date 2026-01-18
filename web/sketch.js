@@ -316,6 +316,13 @@ function updateControlDisplays(prefix, values) {
             continue;
         }
 
+        // For scheduler, only update if the input element exists
+        // This prevents scheduler.grain_dur from overwriting grain.grain_dur display
+        const input = document.getElementById(inputId);
+        if (prefix === 'scheduler' && !input) {
+            continue;
+        }
+
         const display = document.getElementById(`val-${key}`);
         if (display && typeof value === 'number') {
             if (key === 'filter_freq') {
@@ -328,7 +335,6 @@ function updateControlDisplays(prefix, values) {
         }
 
         // Also update the slider position to match server state
-        const input = document.getElementById(inputId);
         if (input && typeof value === 'number' && input.type === 'range') {
             input.value = value;
         }
