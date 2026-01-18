@@ -11,7 +11,7 @@ import numpy as np
 
 from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, find_grain_manifest, load_grain_manifest
 from stable_audio_wanderer.runtime.player import NavigationEngine
-from stable_audio_wanderer.runtime.grain_player import GrainPlayer
+from stable_audio_wanderer.runtime.grain_player import GrainPlayer, GrainScheduler
 from stable_audio_wanderer.runtime.osc_server import run_server
 
 
@@ -33,11 +33,11 @@ def main():
                     help="WebSocket port for visualization (0 to disable).")
     
     # Grain playback (basic)
-    ap.add_argument("--grain_rate", type=float, default=10.0,
-                    help="Initial grain trigger rate (grains/sec).")
+    ap.add_argument("--grain_rate", type=float, default=21.5,
+                    help="Initial grain trigger rate (min 21.5 Hz = latent rate).")
     ap.add_argument("--grain_jitter", type=float, default=0.0,
                     help="Grain timing jitter (0-1).")
-    ap.add_argument("--voices", type=int, default=4,
+    ap.add_argument("--voices", type=int, default=64,
                     help="Number of overlapping grain voices.")
     ap.add_argument("--buffersize", type=int, default=512,
                     help="Audio buffer size.")
@@ -45,10 +45,26 @@ def main():
     # Grain playback (synthesis)
     ap.add_argument("--grain_pitch", type=float, default=1.0,
                     help="Initial pitch ratio (0.25-4.0).")
-    ap.add_argument("--grain_dur", type=float, default=0.1,
-                    help="Initial grain duration in seconds (0.01-0.5).")
+    ap.add_argument("--grain_dur", type=float, default=0.04,
+                    help="Grain duration in seconds (default 40ms for resynthesis).")
     ap.add_argument("--grain_filter", type=float, default=20000,
                     help="Initial filter cutoff frequency (20-20000 Hz).")
+
+    # Multi-stream granular synthesis (resynthesis quality)
+    ap.add_argument("--num_streams", type=int, default=4,
+                    help="Number of concurrent grain streams (more = smoother).")
+    ap.add_argument("--grain_overlap", type=float, default=0.75,
+                    help="Grain overlap ratio (0-0.95). Higher = smoother time-stretch.")
+    ap.add_argument("--position_jitter", type=float, default=0.1,
+                    help="Position jitter (0-1). Small values for natural sound.")
+    ap.add_argument("--dur_jitter", type=float, default=0.05,
+                    help="Duration jitter (0-1). Small values avoid artifacts.")
+    ap.add_argument("--rate_jitter", type=float, default=0.02,
+                    help="Trigger rate jitter (0-1). Very small for stability.")
+    ap.add_argument("--stereo_spread", type=float, default=0.3,
+                    help="Stereo spread of grain streams (0-1).")
+    ap.add_argument("--nav_speed", type=float, default=1.0,
+                    help="Navigation speed (1.0 = normal, 0.5 = half speed/time-stretch, 2.0 = double).")
     
     # Policy controls
     ap.add_argument("--policy_path", default=None,
@@ -116,43 +132,59 @@ def main():
         num_voices=args.voices,
         buffersize=args.buffersize,
     )
-    
-    # Sync initial grain parameters
-    player.set_trigger_rate(args.grain_rate)
-    player.set_trigger_jitter(args.grain_jitter)
+
+    # Sync initial grain parameters to player
     player.set_pitch(args.grain_pitch)
     player.set_grain_dur(args.grain_dur)
     player.set_filter_freq(args.grain_filter)
-    
+
+    # Create multi-stream grain scheduler for resynthesis-quality playback
+    scheduler = GrainScheduler(
+        grain_player=player,
+        num_streams=args.num_streams,
+        grain_dur=args.grain_dur,
+        overlap=args.grain_overlap,
+        position_jitter=args.position_jitter,
+        dur_jitter=args.dur_jitter,
+        rate_jitter=args.rate_jitter,
+        stereo_spread=args.stereo_spread,
+        nav_speed=args.nav_speed,
+    )
+
     # Start audio
     print("[info] Starting audio...")
     player.boot()
     player.start()
-    
-    # Audio loop: navigation -> grain triggering
+    scheduler.start()
+
+    # Navigation loop: picks next segment and updates scheduler playhead
+    # The scheduler's internal thread handles grain triggering at high rate
     running = threading.Event()
     running.set()
-    
-    def audio_loop():
-        print("[info] Audio loop started")
+
+    def navigation_loop():
+        """Navigation loop that updates the playhead for the grain scheduler."""
+        print("[info] Navigation loop started")
         try:
             while running.is_set() and player.is_running:
-                # Pick next segment from navigation
+                # Pick next segment from navigation policy
                 segment_idx = nav.pick_next_index()
-                
-                # Trigger grain for this segment
-                player.trigger_grain(segment_idx, amp=1.0, pan=0.5)
-                
-                # Wait for next trigger
-                interval = nav.get_trigger_interval()
+
+                # Update scheduler playhead (scheduler handles grain triggering)
+                scheduler.set_playhead(segment_idx)
+
+                # Wait for next navigation step, adjusted by nav_speed
+                # nav_speed > 1 = faster movement, < 1 = slower (time-stretch)
+                base_interval = nav.get_trigger_interval()
+                interval = scheduler.get_nav_interval(base_interval)
                 time.sleep(interval)
         except Exception as e:
-            print(f"[error] Audio loop exception: {e}")
+            print(f"[error] Navigation loop exception: {e}")
         finally:
-            print("[info] Audio loop stopped")
-    
-    audio_thread = threading.Thread(target=audio_loop, daemon=True)
-    audio_thread.start()
+            print("[info] Navigation loop stopped")
+
+    nav_thread = threading.Thread(target=navigation_loop, daemon=True)
+    nav_thread.start()
     
     # Start WebSocket server for visualization (if enabled)
     ws_server = None
@@ -160,31 +192,34 @@ def main():
     if args.ws_port > 0:
         try:
             from stable_audio_wanderer.runtime.ws_server import start_ws_server
-            ws_server, ws_thread = start_ws_server(nav, player, port=args.ws_port)
+            ws_server, ws_thread = start_ws_server(nav, player, scheduler, port=args.ws_port)
             print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
         except ImportError:
             print("[warn] WebSocket server not available (missing dependencies)")
         except Exception as e:
             print(f"[warn] Failed to start WebSocket server: {e}")
     
-    print(f"[info] Running with {nav.N} segments, {args.voices} voices")
+    print(f"[info] Running with {nav.N} segments, {args.voices} voices, {args.num_streams} streams")
+    print(f"[info] Granular: dur={args.grain_dur*1000:.0f}ms, overlap={args.grain_overlap*100:.0f}%, "
+          f"rate={scheduler.total_grain_rate:.0f} grains/sec, nav_speed={args.nav_speed:.2f}x")
     print(f"[info] Controls: width={args.ctrl_width}, energy={args.ctrl_energy}, "
           f"gravity={args.ctrl_gravity}, memory={args.ctrl_memory}")
     print(f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}, "
           f"regime_bias={args.ctrl_regime_bias}")
-    
+
     try:
         # Run OSC server (blocks until interrupted)
-        run_server(nav, player, ip=args.osc_ip, port=args.osc_port)
+        run_server(nav, player, scheduler, ip=args.osc_ip, port=args.osc_port)
     except KeyboardInterrupt:
         print("\n[info] Shutting down...")
     finally:
         running.clear()
+        scheduler.stop()
         player.shutdown()
-        audio_thread.join(timeout=1.0)
+        nav_thread.join(timeout=1.0)
         if ws_server is not None:
             ws_server.shutdown()
-    
+
     print("[info] Done.")
 
 

@@ -7,7 +7,7 @@ import numpy as np
 import threading
 from collections import deque
 from scipy.spatial import cKDTree
-from ..config import DEVICE
+from ..config import DEVICE, LATENT_HZ
 from ..policy import IndexPolicy, PolicyConfig, compute_annotations
 import torch
 
@@ -43,7 +43,7 @@ class NavigationEngine:
         control_coherence: float = 0.0,
         control_exploration: float = 0.0,
         control_regime_bias: float = 0.0,
-        grain_rate: float = 10.0,
+        grain_rate: float = 21.5,  # Default to LATENT_HZ
         grain_jitter: float = 0.0,
     ):
         """
@@ -119,8 +119,8 @@ class NavigationEngine:
         # Current file for coherence tracking
         self._current_file_id = 0
         
-        # Grain rate control (replaces latent time-warp)
-        self._grain_rate = float(max(0.1, grain_rate))
+        # Grain rate control (minimum is LATENT_HZ to match encoder rate)
+        self._grain_rate = float(max(LATENT_HZ, grain_rate))
         self._grain_jitter = float(np.clip(grain_jitter, 0.0, 1.0))
         
         # Thread safety
@@ -271,9 +271,9 @@ class NavigationEngine:
     
     # --- Grain rate control ---
     def set_grain_rate(self, rate: float):
-        """Set grain trigger rate (grains per second)."""
+        """Set grain trigger rate (minimum LATENT_HZ = 21.5 Hz)."""
         with self._lock:
-            self._grain_rate = float(max(0.1, rate))
+            self._grain_rate = float(max(LATENT_HZ, rate))
     
     def set_grain_jitter(self, jitter: float):
         """Set grain timing jitter (0-1)."""

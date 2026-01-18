@@ -39,23 +39,22 @@ const COLORS = {
         [255, 166, 74],   // Turn - orange
         [74, 158, 255],   // Linger - blue
     ],
-    files: [], // Generated dynamically
+    files: [],
 };
 
 // Canvas dimensions
 let canvasSize;
 
 function setup() {
-    // Calculate canvas size
     const container = document.getElementById('canvas-container');
     canvasSize = Math.min(container.clientWidth, container.clientHeight) - 40;
     
     const canvas = createCanvas(canvasSize, canvasSize);
     canvas.parent('canvas-container');
     
-    // Generate file colors (20 distinct colors)
+    // Generate file colors
     for (let i = 0; i < 20; i++) {
-        const hue = (i * 137.5) % 360;  // Golden angle for distinct colors
+        const hue = (i * 137.5) % 360;
         COLORS.files.push(hslToRgb(hue, 60, 50));
     }
     
@@ -64,10 +63,7 @@ function setup() {
         new Array(heatmapResolution).fill(0)
     );
     
-    // Connect WebSocket
     connectWebSocket();
-    
-    // Setup UI handlers
     setupControls();
     
     frameRate(30);
@@ -76,7 +72,6 @@ function setup() {
 function draw() {
     background(...COLORS.background);
     
-    // Draw based on visualization mode
     if (vizMode === 'scatter') {
         drawCorpusScatter();
         drawTrajectory();
@@ -90,7 +85,6 @@ function draw() {
         drawCursor();
     }
     
-    // Draw border
     noFill();
     stroke(40, 40, 60);
     strokeWeight(2);
@@ -103,14 +97,12 @@ function drawCorpusScatter() {
     for (let i = 0; i < corpusPoints.length; i++) {
         const [x, y] = corpusPoints[i];
         const fileId = corpusFileIds[i] || 0;
-        const regime = corpusRegimes[i] || 0;
         
-        // Color by file ID
         const fileColor = COLORS.files[fileId % COLORS.files.length];
         fill(fileColor[0], fileColor[1], fileColor[2], 50);
         
         const screenX = x * width;
-        const screenY = (1 - y) * height;  // Flip Y axis
+        const screenY = (1 - y) * height;
         
         ellipse(screenX, screenY, 4, 4);
     }
@@ -121,7 +113,6 @@ function drawTrajectory() {
     
     noFill();
     
-    // Draw trajectory with fading alpha
     for (let i = 1; i < trajectory.length; i++) {
         const alpha = map(i, 0, trajectory.length, 50, 255);
         const weight = map(i, 0, trajectory.length, 1, 3);
@@ -129,7 +120,6 @@ function drawTrajectory() {
         const [x1, y1] = trajectory[i - 1];
         const [x2, y2] = trajectory[i];
         
-        // Color by regime at this point (approximate)
         const regimeColor = COLORS.regimes[currentRegime] || COLORS.trajectory;
         stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
         strokeWeight(weight);
@@ -150,10 +140,8 @@ function drawCursor() {
     const screenX = x * width;
     const screenY = (1 - y) * height;
     
-    // Regime color for outer ring
     const regimeColor = COLORS.regimes[currentRegime] || COLORS.cursor;
     
-    // Outer glow
     noStroke();
     for (let r = 30; r > 0; r -= 5) {
         const alpha = map(r, 30, 0, 10, 50);
@@ -161,13 +149,11 @@ function drawCursor() {
         ellipse(screenX, screenY, r, r);
     }
     
-    // Regime ring
     noFill();
     stroke(regimeColor[0], regimeColor[1], regimeColor[2]);
     strokeWeight(2);
     ellipse(screenX, screenY, 20, 20);
     
-    // Center dot
     fill(255);
     noStroke();
     ellipse(screenX, screenY, 6, 6);
@@ -178,7 +164,6 @@ function drawHeatmap() {
     const cellW = width / heatmapResolution;
     const cellH = height / heatmapResolution;
     
-    // Find max for normalization
     let maxVal = 1;
     for (let i = 0; i < heatmapResolution; i++) {
         for (let j = 0; j < heatmapResolution; j++) {
@@ -190,7 +175,6 @@ function drawHeatmap() {
         for (let j = 0; j < heatmapResolution; j++) {
             const val = heatmapData[i][j] / maxVal;
             if (val > 0.01) {
-                // Color from blue to red
                 const r = map(val, 0, 1, 20, 255);
                 const g = map(val, 0, 1, 30, 50);
                 const b = map(val, 0, 1, 80, 50);
@@ -212,7 +196,6 @@ function updateHeatmap() {
         heatmapData[i][j] += 1;
     }
     
-    // Decay heatmap slowly
     for (let a = 0; a < heatmapResolution; a++) {
         for (let b = 0; b < heatmapResolution; b++) {
             heatmapData[a][b] *= 0.999;
@@ -235,7 +218,6 @@ function connectWebSocket() {
             wsConnected = false;
             updateConnectionStatus(false);
             console.log('WebSocket disconnected');
-            // Attempt reconnect after 3 seconds
             setTimeout(connectWebSocket, 3000);
         };
         
@@ -259,7 +241,6 @@ function connectWebSocket() {
 
 function handleMessage(data) {
     if (data.type === 'corpus') {
-        // Initial corpus data
         corpusPoints = data.positions_2d || [];
         corpusFileIds = data.file_ids || [];
         corpusRegimes = data.regimes || [];
@@ -267,7 +248,6 @@ function handleMessage(data) {
         console.log(`Received corpus: ${corpusPoints.length} points`);
         
     } else if (data.type === 'state') {
-        // Navigation state update
         const nav = data.navigation || {};
         
         currentPosition = nav.position_2d || currentPosition;
@@ -276,20 +256,19 @@ function handleMessage(data) {
         currentVelocity = nav.velocity || 0;
         currentFileId = nav.file_id || 0;
         
-        // Update trajectory
         if (nav.trajectory_2d && nav.trajectory_2d.length > 0) {
             trajectory = nav.trajectory_2d;
         }
         
-        // Update heatmap
         updateHeatmap();
-        
-        // Update UI
         updateInfoDisplay(data);
         
-        // Update control values from server
         if (data.controls) {
-            updateControlDisplays(data.controls);
+            updateControlDisplays('ctrl', data.controls);
+        }
+        
+        if (data.grain) {
+            updateControlDisplays('grain', data.grain);
         }
     }
 }
@@ -317,17 +296,20 @@ function updateInfoDisplay(data) {
     const regimeNames = ['Drift', 'Turn', 'Linger'];
     document.getElementById('info-regime').textContent = regimeNames[nav.regime] || 'Unknown';
     
-    // Update regime indicators
     document.getElementById('regime-drift').className = 'regime-dot' + (nav.regime === 0 ? ' active-drift' : '');
     document.getElementById('regime-turn').className = 'regime-dot' + (nav.regime === 1 ? ' active-turn' : '');
     document.getElementById('regime-linger').className = 'regime-dot' + (nav.regime === 2 ? ' active-linger' : '');
 }
 
-function updateControlDisplays(controls) {
-    for (const [key, value] of Object.entries(controls)) {
+function updateControlDisplays(prefix, values) {
+    for (const [key, value] of Object.entries(values)) {
         const display = document.getElementById(`val-${key}`);
-        if (display) {
-            display.textContent = value.toFixed(2);
+        if (display && typeof value === 'number') {
+            if (key === 'filter_freq') {
+                display.textContent = value.toFixed(0);
+            } else {
+                display.textContent = value.toFixed(2);
+            }
         }
     }
 }
@@ -344,34 +326,54 @@ function setupControls() {
         if (input) {
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
-                display.textContent = value.toFixed(2);
+                if (display) display.textContent = value.toFixed(2);
                 sendControl(ctrl, value);
             });
         }
     });
     
-    // Grain controls
-    const grainControls = {
-        'grain-rate': 'trigger_rate',
-        'grain-pitch': 'pitch',
-        'grain-dur': 'grain_dur',
-        'grain-filter': 'filter_freq',
-    };
+    // Grain controls - all parameters
+    const grainControls = [
+        'trigger_rate',
+        'trigger_jitter',
+        'pitch',
+        'pitch_spread',
+        'grain_dur',
+        'grain_dur_spread',
+        'position_spread',
+        'pan',
+        'pan_spread',
+        'filter_freq',
+        'filter_q',
+        'reverse_prob',
+        'master_amp',
+    ];
     
-    for (const [inputId, param] of Object.entries(grainControls)) {
-        const input = document.getElementById(inputId);
-        const valId = inputId.replace('grain-', 'val-');
-        const display = document.getElementById(valId);
+    grainControls.forEach(param => {
+        const input = document.getElementById(`grain-${param}`);
+        const display = document.getElementById(`val-${param}`);
         
         if (input) {
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) {
-                    display.textContent = param === 'filter_freq' ? value.toFixed(0) : value.toFixed(2);
+                    if (param === 'filter_freq') {
+                        display.textContent = value.toFixed(0);
+                    } else {
+                        display.textContent = value.toFixed(2);
+                    }
                 }
                 sendGrainParam(param, value);
             });
         }
+    });
+    
+    // Envelope select
+    const envSelect = document.getElementById('grain-envelope');
+    if (envSelect) {
+        envSelect.addEventListener('change', (e) => {
+            sendGrainParam('envelope', e.target.value);
+        });
     }
     
     // Visualization mode buttons
@@ -386,7 +388,6 @@ function setupControls() {
     // Reset button
     document.getElementById('btn-reset').addEventListener('click', () => {
         sendReset();
-        // Clear heatmap
         for (let i = 0; i < heatmapResolution; i++) {
             for (let j = 0; j < heatmapResolution; j++) {
                 heatmapData[i][j] = 0;
@@ -429,11 +430,11 @@ function sendReset() {
     }
 }
 
-// Handle mouse clicks on canvas to set cursor
+// Handle mouse clicks on canvas
 function mousePressed() {
     if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
         const x = mouseX / width;
-        const y = 1 - (mouseY / height);  // Flip Y
+        const y = 1 - (mouseY / height);
         
         if (ws && wsConnected) {
             ws.send(JSON.stringify({
@@ -474,7 +475,6 @@ function hslToRgb(h, s, l) {
     return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
 }
 
-// Handle window resize
 function windowResized() {
     const container = document.getElementById('canvas-container');
     canvasSize = Math.min(container.clientWidth, container.clientHeight) - 40;

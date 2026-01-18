@@ -9,6 +9,8 @@ import time
 from typing import Optional, Set, Tuple
 import numpy as np
 
+from ..config import LATENT_HZ
+
 try:
     import websockets
     from websockets.server import serve
@@ -20,7 +22,7 @@ except ImportError:
 class WSBroadcaster:
     """
     WebSocket broadcaster for navigation state.
-    
+
     Broadcasts:
         - Current index (normalized 0-1)
         - Recent trajectory (last 128 indices)
@@ -28,30 +30,33 @@ class WSBroadcaster:
         - Current regime (0=drift, 1=turn, 2=linger)
         - All control values
         - Grain player state
+        - Scheduler state (multi-stream granular)
     """
-    
-    def __init__(self, nav, grain_player=None, fps: float = 30.0):
+
+    def __init__(self, nav, grain_player=None, scheduler=None, fps: float = 30.0):
         """
         Initialize broadcaster.
-        
+
         Args:
             nav: NavigationEngine instance
             grain_player: GrainPlayer instance (optional)
+            scheduler: GrainScheduler instance (optional)
             fps: Target broadcast rate in frames per second
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
-        
+
         self.nav = nav
         self.grain_player = grain_player
+        self.scheduler = scheduler
         self.fps = fps
         self.interval = 1.0 / fps
-        
+
         self._clients: Set = set()
         self._running = False
         self._server = None
         self._loop = None
-        
+
         # Precompute 2D projection if corpus is higher dimensional
         self._projection_matrix = None
         self._setup_projection()
@@ -113,7 +118,11 @@ class WSBroadcaster:
         # Add grain player state if available
         if self.grain_player is not None:
             state["grain"].update(self.grain_player.get_state())
-        
+
+        # Add scheduler state if available
+        if self.scheduler is not None:
+            state["scheduler"] = self.scheduler.get_state()
+
         return json.dumps(state)
     
     def _get_corpus_json(self) -> str:
@@ -180,17 +189,40 @@ class WSBroadcaster:
                 
             elif msg_type == "grain":
                 # Update grain parameters
-                if self.grain_player is not None:
-                    params = data.get("params", {})
-                    for key, value in params.items():
+                params = data.get("params", {})
+                for key, value in params.items():
+                    # Enforce minimum rate of LATENT_HZ for trigger_rate
+                    if key == "trigger_rate":
+                        value = max(LATENT_HZ, value)
+                        self.nav.set_grain_rate(value)
+                    elif key == "trigger_jitter":
+                        self.nav.set_grain_jitter(value)
+                    
+                    # Also update grain player if available
+                    if self.grain_player is not None:
                         setter = getattr(self.grain_player, f"set_{key}", None)
                         if setter is not None:
-                            setter(value)
+                            try:
+                                setter(value)
+                            except Exception as e:
+                                print(f"[ws] Error setting grain.{key}: {e}")
                             
+            elif msg_type == "scheduler":
+                # Update scheduler parameters
+                if self.scheduler is not None:
+                    params = data.get("params", {})
+                    for key, value in params.items():
+                        setter = getattr(self.scheduler, f"set_{key}", None)
+                        if setter is not None:
+                            try:
+                                setter(value)
+                            except Exception as e:
+                                print(f"[ws] Error setting scheduler.{key}: {e}")
+
             elif msg_type == "request_corpus":
                 # Client requesting corpus data
                 await websocket.send(self._get_corpus_json())
-                
+
         except json.JSONDecodeError:
             print(f"[ws] Invalid JSON message: {message[:100]}")
         except Exception as e:
@@ -251,23 +283,25 @@ class WSBroadcaster:
 def start_ws_server(
     nav,
     grain_player=None,
+    scheduler=None,
     host: str = "127.0.0.1",
     port: int = 8765,
     fps: float = 30.0,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
-    
+
     Args:
         nav: NavigationEngine instance
         grain_player: GrainPlayer instance (optional)
+        scheduler: GrainScheduler instance (optional)
         host: Server host address
         port: Server port
         fps: Broadcast rate in frames per second
-    
+
     Returns:
         Tuple of (WSBroadcaster, Thread)
     """
-    broadcaster = WSBroadcaster(nav, grain_player, fps=fps)
+    broadcaster = WSBroadcaster(nav, grain_player, scheduler, fps=fps)
     thread = broadcaster.start(host, port)
     return broadcaster, thread
