@@ -200,6 +200,14 @@ class WSBroadcaster:
 
                     # Also update grain player if available
                     if self.grain_player is not None:
+                        # Special case: phase_reset is a bang (no value)
+                        if key == "phase_reset":
+                            try:
+                                self.grain_player.reset_phase()
+                            except Exception as e:
+                                print(f"[ws] Error resetting phase: {e}")
+                            continue
+
                         setter = getattr(self.grain_player, f"set_{key}", None)
                         if setter is not None:
                             try:

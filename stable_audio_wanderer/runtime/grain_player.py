@@ -28,10 +28,22 @@ MIN_TRIGGER_RATE = LATENT_HZ  # 21.5 Hz
 DEFAULT_GRAIN_DUR = 1.0 / LATENT_HZ  # ~0.0465s
 
 
-def _make_envelope_table(env_type: str, size: int = 8192) -> pyo.PyoTableObject:
+def _make_envelope_table(env_type: str, size: int = 32768) -> pyo.PyoTableObject:
     """Create envelope table for grain shaping."""
     if env_type == "hann":
         return pyo.HannTable(size=size)
+    elif env_type == "blackman":
+        # Blackman window - better frequency resolution
+        return pyo.WinTable(winfunc=pyo.winfunc_blackman, size=size)
+    elif env_type == "blackman_harris":
+        # Blackman-Harris window - even better sidelobe suppression
+        return pyo.WinTable(winfunc=pyo.winfunc_blackman_harris, size=size)
+    elif env_type == "kaiser":
+        # Kaiser window - adjustable beta for trade-off
+        return pyo.WinTable(winfunc=lambda x: np.kaiser(x, beta=5), size=size)
+    elif env_type == "gaussian":
+        # Gaussian window - smooth, no sidelobes
+        return pyo.WinTable(winfunc=lambda x: np.exp(-0.5 * ((x - size/2) / (size/6))**2), size=size)
     elif env_type == "hamming":
         return pyo.HammingTable(size=size)
     elif env_type == "triangle":
@@ -45,6 +57,45 @@ def _make_envelope_table(env_type: str, size: int = 8192) -> pyo.PyoTableObject:
         return pyo.ExpTable([(0, 0.001), (size, 1)], exp=5, size=size)
     else:
         return pyo.HannTable(size=size)
+
+
+def _find_nearest_zero_crossing(
+    samples: np.ndarray,
+    target_sample: int,
+    search_radius: int = 256,
+    prefer: str = "nearest"  # "nearest", "before", "after"
+) -> int:
+    """Find nearest zero crossing to target sample.
+
+    Args:
+        samples: Audio samples as numpy array
+        target_sample: Target sample index to search around
+        search_radius: Number of samples to search in each direction
+        prefer: Which crossing to prefer - "nearest", "before", or "after"
+
+    Returns:
+        Sample index of nearest zero crossing, or target_sample if none found
+    """
+    start = max(0, target_sample - search_radius)
+    end = min(len(samples), target_sample + search_radius)
+
+    window = samples[start:end]
+    signs = np.sign(window)
+    signs[signs == 0] = 1
+    crossings = np.where(np.diff(signs) != 0)[0] + start
+
+    if len(crossings) == 0:
+        return target_sample
+
+    distances = crossings - target_sample
+    if prefer == "before":
+        before = crossings[distances <= 0]
+        return int(before[-1]) if len(before) > 0 else target_sample
+    elif prefer == "after":
+        after = crossings[distances >= 0]
+        return int(after[0]) if len(after) > 0 else target_sample
+
+    return int(crossings[np.argmin(np.abs(distances))])
 
 
 class LooperVoice:
@@ -68,17 +119,20 @@ class LooperVoice:
         self._mul = mul
         self._table_dur = table.getDur()
         self._table_size = table.getSize()
-        
+
+        # Cache table samples for zero-crossing detection
+        self._table_samples = np.array(table.getTable())
+
         # Looper for playback with start position control
         # mode=1 means one-shot (no loop)
         self._looper = pyo.Looper(
             table=self.table,
             dur=0.1,
-            xfade=0,
+            xfade=0.01, # 10ms crossfade
             mode=1,  # One-shot
-            xfadeshape=0,
+            xfadeshape=1, # smooth fade shape
             startfromloop=False,
-            interp=4,
+            interp=1,
             autosmooth=True,
             mul=mul,
         ).stop()
@@ -94,10 +148,13 @@ class LooperVoice:
         
         # Multiply looper by envelope
         self._output = pyo.Sig(self._looper, mul=self._env)
+
+        # DC blocker
+        self._dc_blocker = pyo.DCBlock(self._output)
         
         # Filter
         self._filter = pyo.Biquad(
-            self._output,
+            self._dc_blocker,
             freq=20000,
             q=1.0,
             type=0,
@@ -115,28 +172,45 @@ class LooperVoice:
         pan: float,
         filter_freq: float,
         filter_q: float,
+        align_zero_crossing: bool = False,
     ):
-        """Trigger grain playback at specified position."""
+        """Trigger grain playback at specified position.
+
+        Args:
+            start_sec: Start position in seconds
+            dur_sec: Grain duration in seconds
+            pitch: Playback pitch ratio
+            amp: Amplitude
+            pan: Pan position (0-1)
+            filter_freq: Filter cutoff frequency
+            filter_q: Filter resonance
+            align_zero_crossing: If True, align start to nearest zero crossing
+        """
         # === Parameter validation for sound quality ===
 
         # Validate duration - must be positive and reasonable
-        dur_sec = float(dur_sec)
-        if dur_sec <= 0.001:
-            return  # Skip grain - too short to be audible
-        dur_sec = min(dur_sec, 2.0)  # Cap at 2 seconds max
+        min_dur_sec = 0.001
+        # Prevent clicks at audio file boundaries by ensuring grains do not extend beyond file
+        max_start_sec = self._table_dur - min_dur_sec
+        max_dur_for_start = self._table_dur - float(np.clip(start_sec, 0.0, max_start_sec))
+        max_dur_sec = max(min_dur_sec, max_dur_for_start)
+        dur_sec = float(np.clip(dur_sec, min_dur_sec, max_dur_sec))
 
         # Validate start position - clamp to valid table range
-        start_sec = float(start_sec)
-        if start_sec < 0:
-            start_sec = 0.0
-        elif start_sec >= self._table_dur:
-            # Clamp to just before end, leave room for at least minimal grain
-            start_sec = max(0.0, self._table_dur - 0.01)
+        start_sec = float(np.clip(start_sec, 0.0, max_start_sec))
+
+        # Zero-crossing alignment for click reduction
+        if align_zero_crossing and len(self._table_samples) > 0:
+            target_sample = int(start_sec * self.sr)
+            # Max shift of 2ms to preserve timing accuracy
+            max_shift_samples = int(0.002 * self.sr)
+            aligned_sample = _find_nearest_zero_crossing(
+                self._table_samples, target_sample, search_radius=max_shift_samples
+            )
+            start_sec = float(aligned_sample / self.sr)
+            start_sec = float(np.clip(start_sec, 0.0, max_start_sec))
 
         # Validate pitch - must be non-zero, clamp to reasonable range
-        pitch = float(pitch)
-        if abs(pitch) < 0.1:
-            pitch = 0.1 if pitch >= 0 else -0.1
         pitch = float(np.clip(pitch, -4.0, 4.0))
 
         # Clamp other parameters
@@ -144,10 +218,17 @@ class LooperVoice:
         pan = float(np.clip(pan, 0.0, 1.0))
         filter_freq = float(np.clip(filter_freq, 20, 20000))
         filter_q = float(np.clip(filter_q, 0.5, 10.0))
+        nyquist = self.sr / 2.0
+        if abs(pitch) > 1.0:
+            max_freq = nyquist / abs(pitch)
+            filter_freq = float(np.clip(filter_freq, 20, max_freq))
 
-        # Don't call stop() - it causes clicks on voice stealing.
-        # Instead, just set new parameters and retrigger.
-        # The envelope will handle amplitude shaping.
+        # Anti-aliasing filter
+        nyquist = self.sr / 2.0
+        if abs(pitch) > 1.0:
+            # Prevent aliasing by limiting to nyquist / pitch
+            max_freq = nyquist / abs(pitch)
+            filter_freq = min(filter_freq, max_freq)
 
         # Set looper parameters
         self._looper.setStart(start_sec)
@@ -155,9 +236,8 @@ class LooperVoice:
         self._looper.setPitch(pitch)
         self._looper.setMul(amp * self._mul)
 
-        # Set envelope duration (accounting for pitch) with safety clamp
-        env_dur = dur_sec / abs(pitch)
-        env_dur = min(env_dur, 4.0)  # Max 4 second envelope
+        # Set envelope duration to match grain duration
+        env_dur = dur_sec 
         self._env.setDur(env_dur)
 
         # Set filter
@@ -167,14 +247,108 @@ class LooperVoice:
         # Set pan
         self._panner.setPan(pan)
 
-        # Trigger playback (play() restarts from current position)
+        # Check if envelope is still active before retriggering.
+        # If envelope > 10% of peak, fade out quickly before restarting.
+        env_val = self._env.get(True)
+        # get(True) returns the current value of the envelope generator
+        should_fade = False
+        try:
+            env_curr = float(env_val)
+            should_fade = env_curr > 0.1
+        except Exception:
+            should_fade = False
+        if should_fade:
+            # Fade out quickly
+            self._env.setDur(0.01)
+            self._env.play()
+            time.sleep(0.012)
+        
         self._looper.play()
+        self._trig.stop()
         self._trig.play()
         
     def out(self, chnl: int = 0):
         """Send to output."""
         self._panner.out(chnl)
         return self
+
+
+class PhaseCoherenceManager:
+    """Track phase across grains for coherent resynthesis.
+
+    Maintains phase continuity per audio region to reduce phasing
+    artifacts during time-stretching and pitch-shifting operations.
+    """
+
+    def __init__(self, sr: int):
+        self.sr = sr
+        self._region_phases: Dict[int, float] = {}
+        self._region_size_sec = 0.05  # 50ms regions
+        self._global_phase = 0.0
+        self._last_position = 0.0
+        self._last_time = time.perf_counter()
+
+    def get_region_key(self, position_sec: float) -> int:
+        """Get region key for a position."""
+        return int(position_sec / self._region_size_sec)
+
+    def get_phase_adjustment(self, position_sec: float, pitch: float,
+                             grain_dur_sec: float) -> float:
+        """
+        Return micro-timing adjustment for phase alignment.
+
+        Tracks phase accumulation per position region.
+        Returns adjustment in seconds (0 to 10% of grain duration).
+
+        Args:
+            position_sec: Current playback position in seconds
+            pitch: Playback pitch ratio
+            grain_dur_sec: Grain duration in seconds
+
+        Returns:
+            Time adjustment in seconds for phase alignment
+        """
+        region_key = self.get_region_key(position_sec)
+        current_time = time.perf_counter()
+        dt = current_time - self._last_time
+
+        # Update global phase based on position delta
+        if dt < 1.0:  # Ignore large time gaps
+            position_delta = position_sec - self._last_position
+            self._global_phase += position_delta * self.sr * abs(pitch)
+            self._global_phase = self._global_phase % (self.sr * 10)
+
+        self._last_position = position_sec
+        self._last_time = current_time
+
+        # Get or initialize region phase
+        if region_key not in self._region_phases:
+            self._region_phases[region_key] = self._global_phase
+
+        region_phase = self._region_phases[region_key]
+
+        # Update region for next grain
+        self._region_phases[region_key] = (
+            region_phase + grain_dur_sec * self.sr * abs(pitch)
+        )
+
+        # Cleanup old regions (keep last 100)
+        if len(self._region_phases) > 100:
+            sorted_keys = sorted(self._region_phases.keys())
+            for key in sorted_keys[:-100]:
+                del self._region_phases[key]
+
+        # Return micro-adjustment (phase offset mapped to time)
+        phase_offset_samples = region_phase % self.sr
+        phase_offset_sec = phase_offset_samples / self.sr
+        return (phase_offset_sec % grain_dur_sec) * 0.1  # 10% influence
+
+    def reset(self):
+        """Clear phase state."""
+        self._region_phases.clear()
+        self._global_phase = 0.0
+        self._last_position = 0.0
+        self._last_time = time.perf_counter()
 
 
 class GrainPlayer:
@@ -239,6 +413,11 @@ class GrainPlayer:
         self._filter_q = 1.0
         self._reverse_prob = 0.0
 
+        # Audio quality improvements
+        self._zero_crossing_align = False  # Zero-crossing alignment for click reduction
+        self._phase_coherence_enabled = False  # Phase coherence (experimental)
+        self._phase_managers: Dict[int, PhaseCoherenceManager] = {}
+
         self._lock = threading.Lock()
 
         # Validate corpus is not empty
@@ -260,6 +439,8 @@ class GrainPlayer:
                         table = pyo.SndTable(path)
                         self._tables[fid] = table
                         self._table_durs[fid] = table.getDur()
+                        # Create phase coherence manager for this table
+                        self._phase_managers[fid] = PhaseCoherenceManager(self.sr)
                         print(f"[grain] Loaded table {fid}: {os.path.basename(path)} "
                               f"({table.getDur():.2f}s, {table.getSize()} samples)")
                     except Exception as e:
@@ -455,6 +636,14 @@ class GrainPlayer:
 
             params = self._compute_grain_params(grain_dur_override=grain_dur)
 
+            # Apply phase coherence adjustment if enabled
+            if self._phase_coherence_enabled and file_id in self._phase_managers:
+                phase_manager = self._phase_managers[file_id]
+                phase_adj = phase_manager.get_phase_adjustment(
+                    start_sec, params["pitch"], params["dur"]
+                )
+                start_sec = float(start_sec + phase_adj)
+
             # Ensure all values are native Python floats for pyo compatibility
             voice.trigger(
                 start_sec=start_sec,
@@ -464,6 +653,7 @@ class GrainPlayer:
                 pan=float(pan) if pan is not None else params["pan"],
                 filter_freq=float(self._filter_freq),
                 filter_q=float(self._filter_q),
+                align_zero_crossing=self._zero_crossing_align,
             )
 
             self._voice_idx += 1
@@ -518,6 +708,19 @@ class GrainPlayer:
     def set_reverse_prob(self, prob: float):
         self._reverse_prob = float(np.clip(prob, 0.0, 1.0))
 
+    def set_zero_crossing_align(self, enabled: bool):
+        """Enable/disable zero-crossing grain alignment for click reduction."""
+        self._zero_crossing_align = bool(enabled)
+
+    def set_phase_coherence(self, enabled: bool):
+        """Enable/disable phase coherence tracking (experimental)."""
+        self._phase_coherence_enabled = bool(enabled)
+
+    def reset_phase(self):
+        """Reset all phase coherence managers."""
+        for manager in self._phase_managers.values():
+            manager.reset()
+
     def get_grain_params_snapshot(self) -> dict:
         """Get a thread-safe snapshot of grain parameters for scheduler use.
 
@@ -564,6 +767,8 @@ class GrainPlayer:
             "filter_q": self._filter_q,
             "envelope": self._env_type,
             "reverse_prob": self._reverse_prob,
+            "zero_crossing_align": self._zero_crossing_align,
+            "phase_coherence": self._phase_coherence_enabled,
         }
 
 
@@ -598,7 +803,8 @@ class GrainStream:
     A single grain stream with independent timing and phase.
 
     Each stream fires grains at a regular interval, offset in time
-    from other streams to create overlapping coverage.
+    from other streams to create overlapping coverage. 
+    A small random phase offset is added to avoid phase alignment artifacts.
     """
 
     def __init__(
@@ -613,8 +819,10 @@ class GrainStream:
         self.time_until_trigger = 0.0
 
     def reset(self, interval: float):
-        """Reset timing with phase offset applied."""
-        self.time_until_trigger = self.phase_offset * interval
+        """Reset timing with phase offset applied and a small random phase jitter."""
+        # Add small random phase offset to avoid phase alignment artifacts
+        phase_jitter = np.random.uniform(0, 0.1)  # 0-0.1 fraction of interval
+        self.time_until_trigger = (self.phase_offset + phase_jitter) * interval
 
 
 class GrainScheduler:

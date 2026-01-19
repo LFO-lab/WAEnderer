@@ -578,6 +578,19 @@ function updateControlDisplays(prefix, values) {
         }
 
         const display = document.getElementById(`val-${key}`);
+
+        // Handle boolean values (toggle switches)
+        if (typeof value === 'boolean') {
+            if (display) {
+                display.textContent = value ? 'on' : 'off';
+            }
+            if (input && input.type === 'checkbox') {
+                input.checked = value;
+            }
+            continue;
+        }
+
+        // Handle numeric values
         if (display && typeof value === 'number') {
             if (key === 'filter_freq') {
                 display.textContent = value.toFixed(0);
@@ -708,7 +721,34 @@ function setupControls() {
             sendGrainParam('envelope', e.target.value);
         });
     }
-    
+
+    // Audio quality toggle controls
+    const zeroCrossInput = document.getElementById('grain-zero_crossing_align');
+    if (zeroCrossInput) {
+        zeroCrossInput.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            document.getElementById('val-zero_crossing_align').textContent = enabled ? 'on' : 'off';
+            sendGrainParam('zero_crossing_align', enabled);
+        });
+    }
+
+    const phaseCoherenceInput = document.getElementById('grain-phase_coherence');
+    if (phaseCoherenceInput) {
+        phaseCoherenceInput.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            document.getElementById('val-phase_coherence').textContent = enabled ? 'on' : 'off';
+            sendGrainParam('phase_coherence', enabled);
+        });
+    }
+
+    // Phase reset button
+    const phaseResetBtn = document.getElementById('btn-phase-reset');
+    if (phaseResetBtn) {
+        phaseResetBtn.addEventListener('click', () => {
+            sendGrainParam('phase_reset', true);
+        });
+    }
+
     // Visualization mode buttons
     document.querySelectorAll('.viz-option').forEach(btn => {
         btn.addEventListener('click', (e) => {

@@ -247,6 +247,53 @@
         .control-row .control-group {
             margin-bottom: 8px;
         }
+
+        /* Toggle switch styles */
+        .toggle {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 20px;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #2a2a3a;
+            transition: 0.3s;
+            border-radius: 20px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #666;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle input:checked + .toggle-slider {
+            background-color: #4a9eff;
+        }
+
+        .toggle input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+            background-color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -498,6 +545,10 @@
                     <select id="grain-envelope">
                         <option value="hann" selected>Hann</option>
                         <option value="hamming">Hamming</option>
+                        <option value="blackman">Blackman</option>
+                        <option value="blackman_harris">Blackman-Harris</option>
+                        <option value="kaiser">Kaiser</option>
+                        <option value="gaussian">Gaussian</option>
                         <option value="triangle">Triangle</option>
                         <option value="trapezoid">Trapezoid</option>
                         <option value="expodec">Exp Decay</option>
@@ -522,7 +573,33 @@
                 </div>
                 <input type="range" id="grain-master_amp" min="0" max="2" step="0.01" value="1">
             </div>
-            
+
+            <h3>Audio Quality</h3>
+            <div class="control-row">
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Zero-Cross</span>
+                        <span class="control-value" id="val-zero_crossing_align">off</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="grain-zero_crossing_align">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <span>Phase Coherence</span>
+                        <span class="control-value" id="val-phase_coherence">off</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="grain-phase_coherence">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <button id="btn-phase-reset" class="secondary">Reset Phase</button>
+
             <button id="btn-reset">Reset Policy</button>
             <button id="btn-reconnect" class="secondary">Reconnect</button>
         </div>

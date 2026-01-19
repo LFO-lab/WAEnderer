@@ -51,6 +51,11 @@ def run_server(
             /grain/env type           - Set envelope type (hann, hamming, triangle, trapezoid, expodec, rexpodec)
             /grain/reverse value      - Set reverse probability (0-1)
 
+        Grain controls (audio quality):
+            /grain/zero_cross value   - Enable zero-crossing alignment (0|1)
+            /grain/phase_coherence value - Enable phase tracking (0|1, experimental)
+            /grain/phase_reset        - Reset phase coherence state (bang)
+
         Scheduler controls (multi-stream granular):
             /scheduler/streams value      - Set number of grain streams (1-16)
             /scheduler/overlap value      - Set grain overlap ratio (0-0.95)
@@ -229,7 +234,25 @@ def run_server(
         v = _as_scalar(vals)
         if v is not None and grain_player is not None:
             grain_player.set_reverse_prob(v)
-    
+
+    # --- Audio quality controls ---
+    def on_grain_zero_cross(addr, *vals):
+        """Enable/disable zero-crossing grain alignment for click reduction."""
+        v = _as_bool(vals)
+        if v is not None and grain_player is not None:
+            grain_player.set_zero_crossing_align(v)
+
+    def on_grain_phase_coherence(addr, *vals):
+        """Enable/disable phase coherence tracking (experimental)."""
+        v = _as_bool(vals)
+        if v is not None and grain_player is not None:
+            grain_player.set_phase_coherence(v)
+
+    def on_grain_phase_reset(addr, *vals):
+        """Reset phase coherence state."""
+        if grain_player is not None:
+            grain_player.reset_phase()
+
     # --- Legacy warp mappings (redirect to grain controls) ---
     def on_warp_speed(addr, *vals):
         """Legacy: /warp/speed maps to grain rate multiplier."""
@@ -315,7 +338,12 @@ def run_server(
     dispatcher.map("/grain/filter_q", on_grain_filter_q)
     dispatcher.map("/grain/env", on_grain_env)
     dispatcher.map("/grain/reverse", on_grain_reverse)
-    
+
+    # Grain controls (audio quality)
+    dispatcher.map("/grain/zero_cross", on_grain_zero_cross)
+    dispatcher.map("/grain/phase_coherence", on_grain_phase_coherence)
+    dispatcher.map("/grain/phase_reset", on_grain_phase_reset)
+
     # Legacy warp (partial compatibility)
     dispatcher.map("/warp/speed", on_warp_speed)
 
@@ -342,6 +370,10 @@ def run_server(
     print("    /grain/filter_freq (20-20000Hz), /grain/filter_q (0.5-10)")
     print("    /grain/env (hann|hamming|triangle|trapezoid|expodec|rexpodec)")
     print("    /grain/reverse (0-1 probability)")
+    print("  Grain (audio quality):")
+    print("    /grain/zero_cross (0|1 - zero-crossing alignment)")
+    print("    /grain/phase_coherence (0|1 - phase tracking, experimental)")
+    print("    /grain/phase_reset (bang - reset phase state)")
     print("  Scheduler (multi-stream):")
     print("    /scheduler/streams (1-16), /scheduler/overlap (0-0.95)")
     print("    /scheduler/dur (0.01-0.2s), /scheduler/pos_jitter (0-1)")
