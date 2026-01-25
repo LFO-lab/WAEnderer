@@ -10,8 +10,7 @@ class PolicyConfig:
     delta_max: int = 8
     desc_dim: int = 5  # speed, curvature, recurrence, novelty, coverage
     embed_dim: int = 2
-    regime_classes: int = 3
-    control_dim: int = 7  # width, energy, gravity, memory, coherence, exploration, regime_bias
+    control_dim: int = 6  # width, energy, gravity, memory, coherence, exploration
     hidden_size: int = 128
     input_proj: int = 32
     num_layers: int = 1
@@ -20,9 +19,9 @@ class PolicyConfig:
 class IndexPolicy(nn.Module):
     """
     GRU policy over 1D index trajectories.
-    Inputs per step: normalized index, previous velocity, descriptors, regime id,
+    Inputs per step: normalized index, previous velocity, descriptors,
     optional local embedding + performer controls.
-    Outputs per step: logits over Δi classes, velocity delta, regime logits.
+    Outputs per step: logits over Δi classes, velocity delta.
     """
 
     def __init__(self, cfg: PolicyConfig):
@@ -32,11 +31,10 @@ class IndexPolicy(nn.Module):
         self.index_proj = nn.Linear(1, p)
         self.vel_proj = nn.Linear(1, p)
         self.desc_proj = nn.Linear(cfg.desc_dim, p)
-        self.regime_emb = nn.Embedding(cfg.regime_classes, p)
         self.embed_proj = nn.Linear(cfg.embed_dim, p) if cfg.embed_dim > 0 else None
         self.ctrl_proj = nn.Linear(cfg.control_dim, p) if cfg.control_dim > 0 else None
 
-        feat_blocks = 4  # index, velocity, desc, regime
+        feat_blocks = 3  # index, velocity, desc
         if self.embed_proj is not None:
             feat_blocks += 1
         if self.ctrl_proj is not None:
@@ -46,23 +44,20 @@ class IndexPolicy(nn.Module):
         self.gru = nn.GRU(input_dim, cfg.hidden_size, num_layers=cfg.num_layers, batch_first=True)
         self.delta_head = nn.Linear(cfg.hidden_size, 2 * cfg.delta_max + 1)
         self.vel_head = nn.Linear(cfg.hidden_size, 1)
-        self.regime_head = nn.Linear(cfg.hidden_size, cfg.regime_classes)
 
     def forward(
         self,
         index_norm: torch.Tensor,
         velocity: torch.Tensor,
         descriptors: torch.Tensor,
-        regime: torch.Tensor,
         embedding: Optional[torch.Tensor] = None,
         controls: Optional[torch.Tensor] = None,
         hidden: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         index_norm: [B, T]
         velocity:   [B, T]
         descriptors:[B, T, desc_dim]
-        regime:     [B, T] (long)
         embedding:  [B, T, embed_dim] or None
         controls:   [B, T, control_dim] or None
         hidden:     [num_layers, B, H] or None
@@ -71,7 +66,6 @@ class IndexPolicy(nn.Module):
             self.index_proj(index_norm.unsqueeze(-1)),
             self.vel_proj(velocity.unsqueeze(-1)),
             self.desc_proj(descriptors),
-            self.regime_emb(regime),
         ]
         if self.embed_proj is not None:
             if embedding is None:
@@ -86,8 +80,7 @@ class IndexPolicy(nn.Module):
         out, h_next = self.gru(x, hidden)
         delta_logits = self.delta_head(out)
         vel_delta = self.vel_head(out).squeeze(-1)
-        regime_logits = self.regime_head(out)
-        return delta_logits, vel_delta, regime_logits, h_next
+        return delta_logits, vel_delta, h_next
 
     @torch.inference_mode()
     def step(
@@ -95,22 +88,21 @@ class IndexPolicy(nn.Module):
         state,
         controls: Optional[torch.Tensor] = None,
         hidden: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         One-step inference helper.
-        state: dict with keys index_norm, velocity, descriptors, regime, embedding (optional).
+        state: dict with keys index_norm, velocity, descriptors, embedding (optional).
         controls: optional control tensor [1,1,C].
         """
-        delta_logits, vel_delta, regime_logits, h_next = self.forward(
+        delta_logits, vel_delta, h_next = self.forward(
             index_norm=state["index_norm"],
             velocity=state["velocity"],
             descriptors=state["descriptors"],
-            regime=state["regime"],
             embedding=state.get("embedding"),
             controls=controls,
             hidden=hidden,
         )
-        return delta_logits[:, -1], vel_delta[:, -1], regime_logits[:, -1], h_next
+        return delta_logits[:, -1], vel_delta[:, -1], h_next
 
     def delta_class_to_value(self, cls: torch.Tensor) -> torch.Tensor:
         return cls.to(torch.float32) - float(self.cfg.delta_max)

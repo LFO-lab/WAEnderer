@@ -4,22 +4,117 @@ Real-time grain-based corpus playback with OSC control.
 Uses pre-rendered grains (no VAE decoding at runtime).
 """
 import os
+# Fix OpenMP duplicate library issue on macOS (must be set before any imports that use OpenMP)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import argparse
 import threading
 import time
 import numpy as np
 
 from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, find_grain_manifest, load_grain_manifest
-from stable_audio_wanderer.runtime.player import NavigationEngine
+from stable_audio_wanderer.runtime.player import NavigationEngine, LatentNavigationEngine
 from stable_audio_wanderer.runtime.grain_player import GrainPlayer, GrainScheduler
 from stable_audio_wanderer.runtime.osc_server import run_server
+from stable_audio_wanderer.policy.latent_geometry import load_geometry_from_dict
 
 
 def find_corpus_files(corpus_dir: str):
     """Find corpus and grain manifest in directory."""
-    corpus_npz = find_latest(corpus_dir, "*_corpus_*.npz")
+    # Try old pattern first (for backwards compatibility)
+    try:
+        corpus_npz = find_latest(corpus_dir, "*_corpus_*.npz")
+    except FileNotFoundError:
+        # Try new pattern (corpus.npz)
+        try:
+            corpus_npz = find_latest(corpus_dir, "corpus.npz")
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"No corpus file found in {corpus_dir}. "
+                "Expected either '*_corpus_*.npz' or 'corpus.npz'"
+            )
     grain_manifest = find_grain_manifest(corpus_dir)
     return corpus_npz, grain_manifest
+
+
+def load_navigation_engine(
+    data: dict,
+    policy_path: str = None,
+    policy_temperature: float = 1.0,
+    policy_sample: bool = True,
+    control_width: float = 0.5,
+    control_energy: float = 0.5,
+    control_gravity: float = 0.5,
+    control_memory: float = 0.0,
+    control_coherence: float = 0.0,
+    control_exploration: float = 0.0,
+    grain_rate: float = 21.5,
+    grain_jitter: float = 0.0,
+):
+    """
+    Factory function to create the appropriate navigation engine.
+
+    Returns LatentNavigationEngine for new corpora with geometry,
+    or NavigationEngine for legacy corpora.
+
+    Args:
+        data: Loaded corpus data dict
+        policy_path: Path to trained policy checkpoint (optional)
+        policy_temperature: Base temperature for policy sampling
+        policy_sample: Whether to sample from policy
+        control_*: Initial control parameters
+        grain_rate: Initial grain trigger rate
+        grain_jitter: Initial timing jitter
+
+    Returns:
+        NavigationEngine or LatentNavigationEngine instance
+    """
+    # Check if this corpus has latent geometry data
+    geometry = load_geometry_from_dict(data)
+
+    if geometry is not None:
+        # Use LatentNavigationEngine for new corpora
+        print("[info] Using LatentNavigationEngine (64D latent navigation)")
+        GG = data["GG"].astype(np.float32)
+        meta = data["meta"]
+
+        return LatentNavigationEngine(
+            GG=GG,
+            meta=meta,
+            geometry=geometry,
+            policy_path=policy_path,
+            policy_temperature=policy_temperature,
+            policy_sample=policy_sample,
+            control_width=control_width,
+            control_energy=control_energy,
+            control_gravity=control_gravity,
+            control_memory=control_memory,
+            control_coherence=control_coherence,
+            control_exploration=control_exploration,
+            grain_rate=grain_rate,
+            grain_jitter=grain_jitter,
+        )
+    else:
+        # Use legacy NavigationEngine for old corpora
+        print("[info] Using NavigationEngine (legacy index-based navigation)")
+        ZZ = data["ZZ"].astype(np.float32)
+        meta = data["meta"]
+
+        return NavigationEngine(
+            ZZ=ZZ,
+            meta=meta,
+            policy_path=policy_path,
+            policy_temperature=policy_temperature,
+            policy_sample=policy_sample,
+            control_width=control_width,
+            control_energy=control_energy,
+            control_gravity=control_gravity,
+            control_memory=control_memory,
+            control_coherence=control_coherence,
+            control_exploration=control_exploration,
+            grain_rate=grain_rate,
+            grain_jitter=grain_jitter,
+        )
 
 
 def main():
@@ -87,8 +182,6 @@ def main():
                     help="Initial coherence control (0-1): stay within same file.")
     ap.add_argument("--ctrl_exploration", type=float, default=0.0,
                     help="Initial exploration control (0-1): entropy injection.")
-    ap.add_argument("--ctrl_regime_bias", type=float, default=0.0,
-                    help="Initial regime bias (0-2): 0=drift, 1=turn, 2=linger.")
     
     args = ap.parse_args()
     
@@ -105,13 +198,10 @@ def main():
     
     # Load corpus data
     data = load_corpus(corpus_npz)
-    ZZ = data["ZZ"].astype(np.float32)
-    meta = data["meta"]
-    
-    # Create navigation engine with all control parameters
-    nav = NavigationEngine(
-        ZZ=ZZ,
-        meta=meta,
+
+    # Create navigation engine using factory function (auto-detects latent vs legacy)
+    nav = load_navigation_engine(
+        data=data,
         policy_path=args.policy_path,
         policy_temperature=args.policy_temperature,
         policy_sample=bool(args.policy_sample),
@@ -121,10 +211,12 @@ def main():
         control_memory=args.ctrl_memory,
         control_coherence=args.ctrl_coherence,
         control_exploration=args.ctrl_exploration,
-        control_regime_bias=args.ctrl_regime_bias,
         grain_rate=args.grain_rate,
         grain_jitter=args.grain_jitter,
     )
+
+    # Check if using latent navigation mode
+    is_latent_nav = isinstance(nav, LatentNavigationEngine)
     
     # Create grain player
     player = GrainPlayer(
@@ -164,14 +256,24 @@ def main():
 
     def navigation_loop():
         """Navigation loop that updates the playhead for the grain scheduler."""
-        print("[info] Navigation loop started")
+        print(f"[info] Navigation loop started (mode={'latent' if is_latent_nav else 'index'})")
         try:
             while running.is_set() and player.is_running:
-                # Pick next segment from navigation policy
-                segment_idx = nav.pick_next_index()
+                if is_latent_nav:
+                    # Latent navigation mode: get kNN weights for per-stream sampling
+                    indices, weights, times, file_ids = nav.get_render_weights()
+                    scheduler.set_latent_render_data(indices, weights, times, file_ids)
+                    # Sync coherence control from nav to scheduler
+                    scheduler.set_coherence(nav.ctrl_coherence)
+                else:
+                    # Legacy index navigation mode
+                    segment_idx = nav.pick_next_index()
 
-                # Update scheduler playhead (scheduler handles grain triggering)
-                scheduler.set_playhead(segment_idx)
+                    # Get fractional state for smooth interpolation
+                    frac_state = nav.get_fractional_state()
+
+                    # Update scheduler with fractional state for smooth transitions
+                    scheduler.set_playhead_fractional(frac_state)
 
                 # Wait for next navigation step, adjusted by nav_speed
                 # nav_speed > 1 = faster movement, < 1 = slower (time-stretch)
@@ -180,6 +282,8 @@ def main():
                 time.sleep(interval)
         except Exception as e:
             print(f"[error] Navigation loop exception: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             print("[info] Navigation loop stopped")
 
@@ -199,13 +303,14 @@ def main():
         except Exception as e:
             print(f"[warn] Failed to start WebSocket server: {e}")
     
+    nav_mode = "latent (64D)" if is_latent_nav else "index (legacy)"
     print(f"[info] Running with {nav.N} segments, {args.voices} voices, {args.num_streams} streams")
+    print(f"[info] Navigation mode: {nav_mode}")
     print(f"[info] Granular: dur={args.grain_dur*1000:.0f}ms, overlap={args.grain_overlap*100:.0f}%, "
           f"rate={scheduler.total_grain_rate:.0f} grains/sec, nav_speed={args.nav_speed:.2f}x")
     print(f"[info] Controls: width={args.ctrl_width}, energy={args.ctrl_energy}, "
           f"gravity={args.ctrl_gravity}, memory={args.ctrl_memory}")
-    print(f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}, "
-          f"regime_bias={args.ctrl_regime_bias}")
+    print(f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}")
 
     try:
         # Run OSC server (blocks until interrupted)

@@ -11,9 +11,8 @@ class TrajectoryAnnotations:
     speed: np.ndarray
     curvature: np.ndarray
     recurrence: np.ndarray
-    novelty: np.ndarray  # NEW: novelty score (higher = less recently visited)
-    coverage: np.ndarray  # NEW: local coverage score (fraction of nearby space visited)
-    regime: np.ndarray
+    novelty: np.ndarray  # novelty score (higher = less recently visited)
+    coverage: np.ndarray  # local coverage score (fraction of nearby space visited)
     desc: np.ndarray
     desc_mean: np.ndarray
     desc_std: np.ndarray
@@ -235,26 +234,6 @@ def compute_annotations(
     desc = np.stack([speed, curvature, recurrence, novelty, coverage], axis=1).astype(np.float32)
     desc_norm, desc_mean, desc_std = _normalize(desc)
 
-    # Regime heuristic thresholds.
-    speed_abs = np.abs(speed)
-    curv_abs = np.abs(curvature)
-    # Avoid degenerate quantiles by falling back to fixed small numbers.
-    sp_q = np.quantile(speed_abs, [0.3, 0.7]) if speed_abs.size > 0 else np.array([0.0, 0.1], dtype=np.float32)
-    curv_q = np.quantile(curv_abs, [0.6]) if curv_abs.size > 0 else np.array([0.05], dtype=np.float32)
-    recur_q = np.quantile(recurrence, [0.6]) if recurrence.size > 0 else np.array([0.2], dtype=np.float32)
-
-    regime = np.zeros((N,), dtype=np.int64)
-    for i in range(N):
-        r_val = recurrence[i]
-        s_val = speed_abs[i]
-        c_val = curv_abs[i]
-        reg = 0  # forward drift
-        if r_val >= recur_q[0] or s_val <= sp_q[0]:
-            reg = 2  # memory / linger
-        elif c_val >= curv_q[0] or velocities[i] < 0.0:
-            reg = 1  # turning / reversing
-        regime[i] = reg
-
     embed_min = ZZ.min(axis=0)
     embed_range = np.maximum(ZZ.max(axis=0) - embed_min, 1e-6)
 
@@ -265,7 +244,6 @@ def compute_annotations(
         recurrence=recurrence,
         novelty=novelty,
         coverage=coverage,
-        regime=regime,
         desc=desc_norm,
         desc_mean=desc_mean.astype(np.float32),
         desc_std=desc_std.astype(np.float32),
@@ -277,9 +255,9 @@ def compute_annotations(
 class IndexTrajectoryDataset:
     """
     Samples windows over index trajectories for policy learning.
-    Each item returns tensors for inputs (i_t, v_t, descriptors, regime) and targets (Δi class, Δv, next regime).
-    
-    Now includes novelty and coverage descriptors for diversity-aware training.
+    Each item returns tensors for inputs (i_t, v_t, descriptors) and targets (Δi class, Δv).
+
+    Includes novelty and coverage descriptors for diversity-aware training.
     """
 
     def __init__(
@@ -328,8 +306,6 @@ class IndexTrajectoryDataset:
         index_norm = curr_idx.astype(np.float32) / max(float(self.N - 1), 1.0)
         velocity = self.ann.velocities[curr_idx].astype(np.float32)
         descriptors = self.ann.desc[curr_idx].astype(np.float32)
-        regime = self.ann.regime[curr_idx].astype(np.int64)
-        regime_next = self.ann.regime[next_idx].astype(np.int64)
 
         delta = next_idx.astype(np.float32) - curr_idx.astype(np.float32)
         delta_round = np.round(delta).astype(np.int32)
@@ -339,14 +315,14 @@ class IndexTrajectoryDataset:
         dv = self.ann.velocities[next_idx].astype(np.float32) - velocity
 
         embed = self.ZZ_norm[curr_idx]
-        
+
         # Controls initialized to default values
-        # [width, energy, gravity, memory, coherence, exploration, regime_bias]
+        # [width, energy, gravity, memory, coherence, exploration]
         controls = np.zeros((self.seq_len, self.control_dim), dtype=np.float32)
         # Set default neutral values
         controls[:, :4] = 0.5  # width, energy, gravity, memory at 0.5
-        # coherence, exploration, regime_bias stay at 0
-        
+        # coherence, exploration stay at 0
+
         # Include novelty and coverage as additional outputs for loss weighting
         novelty = self.ann.novelty[curr_idx].astype(np.float32)
         coverage = self.ann.coverage[curr_idx].astype(np.float32)
@@ -355,8 +331,6 @@ class IndexTrajectoryDataset:
             "index_norm": index_norm,
             "velocity": velocity,
             "descriptors": descriptors,
-            "regime": regime,
-            "regime_next": regime_next,
             "delta_class": delta_class,
             "delta_raw": delta.astype(np.float32),
             "dv": dv,

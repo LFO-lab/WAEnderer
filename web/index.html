@@ -166,24 +166,6 @@
             color: #fff;
         }
         
-        .regime-indicator {
-            display: flex;
-            gap: 5px;
-            margin-top: 10px;
-        }
-        
-        .regime-dot {
-            flex: 1;
-            height: 4px;
-            border-radius: 2px;
-            background: #2a2a3a;
-            transition: background 0.3s;
-        }
-        
-        .regime-dot.active-drift { background: #4aff6a; }
-        .regime-dot.active-turn { background: #ffa64a; }
-        .regime-dot.active-linger { background: #4a9eff; }
-        
         .viz-options {
             display: flex;
             gap: 6px;
@@ -320,16 +302,6 @@
                     <div class="info-label">File ID</div>
                     <div class="info-value" id="info-file">0</div>
                 </div>
-                <div class="info-item">
-                    <div class="info-label">Regime</div>
-                    <div class="info-value" id="info-regime">Drift</div>
-                </div>
-            </div>
-            
-            <div class="regime-indicator">
-                <div class="regime-dot" id="regime-drift"></div>
-                <div class="regime-dot" id="regime-turn"></div>
-                <div class="regime-dot" id="regime-linger"></div>
             </div>
             
             <h2>Visualization</h2>
@@ -394,15 +366,7 @@
                     <input type="range" id="ctrl-exploration" min="0" max="1" step="0.01" value="0">
                 </div>
             </div>
-            
-            <div class="control-group">
-                <div class="control-label">
-                    <span>Regime Bias</span>
-                    <span class="control-value" id="val-regime_bias">0.00</span>
-                </div>
-                <input type="range" id="ctrl-regime_bias" min="0" max="2" step="0.01" value="0">
-            </div>
-            
+
             <h2>Grain Playback</h2>
             
             <h3>Navigation</h3>

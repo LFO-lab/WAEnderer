@@ -5,3 +5,9 @@ stable_audio_wanderer.egg-info/PKG-INFO
 stable_audio_wanderer.egg-info/SOURCES.txt
 stable_audio_wanderer.egg-info/dependency_links.txt
 stable_audio_wanderer.egg-info/top_level.txt
+stable_audio_wanderer/cli/__init__.py
+stable_audio_wanderer/cli/export_coreml.py
+stable_audio_wanderer/cli/preprocess_lib.py
+stable_audio_wanderer/policy/__init__.py
+stable_audio_wanderer/policy/policy_model.py
+stable_audio_wanderer/policy/trajectory.py

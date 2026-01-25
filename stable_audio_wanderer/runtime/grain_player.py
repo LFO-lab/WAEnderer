@@ -659,7 +659,148 @@ class GrainPlayer:
             self._voice_idx += 1
 
         return True
-    
+
+    def trigger_grain_interpolated(
+        self,
+        idx_lower: int,
+        idx_upper: int,
+        frac: float,
+        amp: float = 1.0,
+        pan: float = None,
+        grain_dur: float = None,
+        position_spread: float = None,
+    ) -> bool:
+        """Trigger grain with interpolated position or crossfade for cross-file transitions.
+
+        Within the same file: interpolates grain start offset for seamless audio.
+        Cross-file: triggers dual grains with amplitude crossfade.
+
+        Args:
+            idx_lower: Lower segment index (floor of fractional index)
+            idx_upper: Upper segment index (ceil of fractional index)
+            frac: Fractional interpolation weight (0-1)
+            amp: Amplitude (0-1)
+            pan: Pan position, None uses internal setting
+            grain_dur: Grain duration override, None uses internal setting
+            position_spread: Position spread override, None uses internal setting
+
+        Returns:
+            True if grain(s) were triggered
+        """
+        # Handle edge cases
+        if idx_lower == idx_upper or frac <= 0.0:
+            return self.trigger_grain(idx_lower, amp=amp, pan=pan, grain_dur=grain_dur, position_spread=position_spread)
+        if frac >= 1.0:
+            return self.trigger_grain(idx_upper, amp=amp, pan=pan, grain_dur=grain_dur, position_spread=position_spread)
+
+        # Get grain indices for segment indices
+        if idx_lower not in self._segment_to_grain or idx_upper not in self._segment_to_grain:
+            # Fallback to discrete trigger
+            return self.trigger_grain(int(round(idx_lower + frac * (idx_upper - idx_lower))),
+                                      amp=amp, pan=pan, grain_dur=grain_dur, position_spread=position_spread)
+
+        grain_idx_lower = self._segment_to_grain[idx_lower]
+        grain_idx_upper = self._segment_to_grain[idx_upper]
+        file_id_lower = int(self.file_ids[grain_idx_lower])
+        file_id_upper = int(self.file_ids[grain_idx_upper])
+
+        # Cross-file: dual-grain crossfade
+        if file_id_lower != file_id_upper:
+            return self.trigger_dual_grain(idx_lower, idx_upper, frac, amp, pan, grain_dur, position_spread)
+
+        # Same-file: interpolate offset for seamless audio
+        if file_id_lower not in self._tables:
+            return False
+
+        with self._lock:
+            offset_lower = int(self.offsets[grain_idx_lower])
+            offset_upper = int(self.offsets[grain_idx_upper])
+            offset_interp = offset_lower + frac * (offset_upper - offset_lower)
+            start_sec = float(offset_interp / self.sr)
+            grain_dur_sec = float(self.lengths[grain_idx_lower] / self.sr)
+
+            # Use override or internal setting for position spread
+            effective_pos_spread = position_spread if position_spread is not None else self._position_spread
+
+            # Apply position spread
+            if effective_pos_spread > 0:
+                max_jitter_sec = grain_dur_sec * effective_pos_spread * 0.5
+                jitter = (np.random.random() - 0.5) * 2 * max_jitter_sec
+                start_sec = float(max(0, start_sec + jitter))
+
+            # Find voice for this file
+            matching = [(i, fid, v) for i, (fid, v) in enumerate(self._voices) if fid == file_id_lower]
+
+            if not matching:
+                if not self._voices:
+                    return False
+                idx = self._voice_idx % len(self._voices)
+                _, voice = self._voices[idx]
+            else:
+                voice_idx = self._voice_idx % len(matching)
+                _, _, voice = matching[voice_idx]
+
+            params = self._compute_grain_params(grain_dur_override=grain_dur)
+
+            # Apply phase coherence adjustment if enabled
+            if self._phase_coherence_enabled and file_id_lower in self._phase_managers:
+                phase_manager = self._phase_managers[file_id_lower]
+                phase_adj = phase_manager.get_phase_adjustment(
+                    start_sec, params["pitch"], params["dur"]
+                )
+                start_sec = float(start_sec + phase_adj)
+
+            # Trigger the voice with interpolated start position
+            voice.trigger(
+                start_sec=start_sec,
+                dur_sec=params["dur"],
+                pitch=params["pitch"],
+                amp=float(amp * self._master_amp),
+                pan=float(pan) if pan is not None else params["pan"],
+                filter_freq=float(self._filter_freq),
+                filter_q=float(self._filter_q),
+                align_zero_crossing=self._zero_crossing_align,
+            )
+
+            self._voice_idx += 1
+
+        return True
+
+    def trigger_dual_grain(
+        self,
+        idx_lower: int,
+        idx_upper: int,
+        frac: float,
+        amp: float = 1.0,
+        pan: float = None,
+        grain_dur: float = None,
+        position_spread: float = None,
+    ) -> bool:
+        """Trigger two grains with amplitude crossfade for cross-file transitions.
+
+        Args:
+            idx_lower: Lower segment index
+            idx_upper: Upper segment index
+            frac: Crossfade weight (0 = full lower, 1 = full upper)
+            amp: Base amplitude (0-1)
+            pan: Pan position, None uses internal setting
+            grain_dur: Grain duration override, None uses internal setting
+            position_spread: Position spread override, None uses internal setting
+
+        Returns:
+            True if at least one grain was triggered
+        """
+        MIN_AMP_THRESHOLD = 0.01
+        amp_lower = amp * (1.0 - frac)
+        amp_upper = amp * frac
+
+        success = False
+        if amp_lower > MIN_AMP_THRESHOLD:
+            success |= self.trigger_grain(idx_lower, amp=amp_lower, pan=pan, grain_dur=grain_dur, position_spread=position_spread)
+        if amp_upper > MIN_AMP_THRESHOLD:
+            success |= self.trigger_grain(idx_upper, amp=amp_upper, pan=pan, grain_dur=grain_dur, position_spread=position_spread)
+        return success
+
     # --- Setters ---
     
     def set_trigger_rate(self, rate: float):
@@ -803,8 +944,11 @@ class GrainStream:
     A single grain stream with independent timing and phase.
 
     Each stream fires grains at a regular interval, offset in time
-    from other streams to create overlapping coverage. 
+    from other streams to create overlapping coverage.
     A small random phase offset is added to avoid phase alignment artifacts.
+
+    For latent navigation mode, each stream maintains its own time anchor
+    to enable per-stream coherence bias in kNN sampling.
     """
 
     def __init__(
@@ -818,11 +962,41 @@ class GrainStream:
         self.pan_center = pan_center
         self.time_until_trigger = 0.0
 
+        # Time anchor for coherence in latent navigation
+        self.tau_s: float = 0.0        # Time anchor (latent frame position)
+        self.file_id_s: int = -1       # Anchored file ID
+        self.sigma_t: float = 0.1      # Time window width (seconds)
+
     def reset(self, interval: float):
         """Reset timing with phase offset applied and a small random phase jitter."""
         # Add small random phase offset to avoid phase alignment artifacts
         phase_jitter = np.random.uniform(0, 0.1)  # 0-0.1 fraction of interval
         self.time_until_trigger = (self.phase_offset + phase_jitter) * interval
+
+    def reset_time_anchor(self, t_lat: float = 0.0, file_id: int = -1, sigma_t: float = 0.1):
+        """Reset the time anchor for this stream.
+
+        Args:
+            t_lat: Latent time position to anchor to
+            file_id: File ID to anchor to (-1 for no preference)
+            sigma_t: Time window width in seconds
+        """
+        self.tau_s = float(t_lat)
+        self.file_id_s = int(file_id)
+        self.sigma_t = float(sigma_t)
+
+    def update_time_anchor(self, t_lat: float, file_id: int, alpha: float = 0.3):
+        """Smoothly update time anchor toward new position.
+
+        Args:
+            t_lat: New latent time position
+            file_id: New file ID
+            alpha: Update rate (0 = no update, 1 = instant)
+        """
+        self.tau_s = (1.0 - alpha) * self.tau_s + alpha * float(t_lat)
+        # File ID switches instantly when crossing file boundary
+        if file_id != self.file_id_s:
+            self.file_id_s = int(file_id)
 
 
 class GrainScheduler:
@@ -839,14 +1013,25 @@ class GrainScheduler:
     - When navigation moves slowly, grains overlap more = time-stretch
     - When navigation moves fast, grains advance quickly = fast-forward
 
+    For latent navigation mode:
+    - Each stream maintains its own time anchor for coherence
+    - sample_index_for_stream() applies time-window weighting to kNN weights
+    - Stochastic per-stream sampling from K neighbors
+
     Usage:
         scheduler = GrainScheduler(grain_player, num_streams=4)
         scheduler.start()
 
-        # In your main loop:
+        # In your main loop (index mode):
         while running:
             segment_idx = nav.pick_next_index()
             scheduler.set_playhead(segment_idx)
+            time.sleep(nav.get_trigger_interval())
+
+        # Or for latent mode:
+        while running:
+            indices, weights, times, file_ids = nav.get_render_weights()
+            scheduler.set_latent_render_data(indices, weights, times, file_ids)
             time.sleep(nav.get_trigger_interval())
     """
 
@@ -893,7 +1078,16 @@ class GrainScheduler:
 
         # Current playhead (segment index from navigation)
         self._playhead_segment = 0
+        self._fractional_state = None  # Fractional interpolation state
         self._playhead_lock = threading.Lock()
+
+        # Latent navigation render data (for stochastic per-stream sampling)
+        self._latent_mode = False
+        self._render_indices: Optional[np.ndarray] = None    # [K] kNN indices
+        self._render_weights: Optional[np.ndarray] = None    # [K] Gaussian weights
+        self._render_times: Optional[np.ndarray] = None      # [K] time positions
+        self._render_file_ids: Optional[np.ndarray] = None   # [K] file IDs
+        self._coherence: float = 0.0  # Coherence control for latent mode
 
         # Scheduler thread
         self._running = False
@@ -932,20 +1126,136 @@ class GrainScheduler:
         """Update the current playhead position (called from navigation)."""
         with self._playhead_lock:
             self._playhead_segment = segment_idx
+            self._fractional_state = None  # Clear fractional state when using discrete
+
+    def set_playhead_fractional(self, fractional_state: dict):
+        """Update the playhead with fractional interpolation state.
+
+        Args:
+            fractional_state: Dict with idx_lower, idx_upper, frac, same_file, file_id_lower, file_id_upper
+        """
+        with self._playhead_lock:
+            self._fractional_state = fractional_state.copy()
+            self._playhead_segment = fractional_state["idx_lower"]
 
     def get_playhead(self) -> int:
         """Get current playhead segment."""
         with self._playhead_lock:
             return self._playhead_segment
 
-    def _trigger_grain_for_stream(self, stream: GrainStream):
+    def get_fractional_state(self) -> dict:
+        """Get current fractional interpolation state."""
+        with self._playhead_lock:
+            return self._fractional_state.copy() if self._fractional_state else None
+
+    def set_latent_render_data(
+        self,
+        indices: np.ndarray,
+        weights: np.ndarray,
+        times: np.ndarray,
+        file_ids: np.ndarray,
+    ):
+        """Set render data from latent navigation for per-stream stochastic sampling.
+
+        Args:
+            indices: [K] kNN segment indices
+            weights: [K] Gaussian kernel weights
+            times: [K] latent time positions
+            file_ids: [K] source file IDs
+        """
+        with self._playhead_lock:
+            self._latent_mode = True
+            self._render_indices = np.asarray(indices, dtype=np.int32)
+            self._render_weights = np.asarray(weights, dtype=np.float32)
+            self._render_times = np.asarray(times, dtype=np.float32)
+            self._render_file_ids = np.asarray(file_ids, dtype=np.int32)
+            # Update playhead to nearest neighbor for compatibility
+            if len(indices) > 0:
+                self._playhead_segment = int(indices[0])
+
+    def sample_index_for_stream(
+        self,
+        stream: GrainStream,
+        coherence: float = 0.0,
+    ) -> int:
+        """Sample a segment index for a stream using time-window weighted kNN.
+
+        Applies per-stream time coherence by weighting neighbors based on
+        temporal distance from the stream's time anchor.
+
+        Args:
+            stream: GrainStream with time anchor state
+            coherence: Coherence control (0-1), higher = stronger time bias
+
+        Returns:
+            Segment index to trigger
+        """
+        with self._playhead_lock:
+            if not self._latent_mode or self._render_indices is None:
+                return self._playhead_segment
+
+            indices = self._render_indices
+            weights = self._render_weights.copy()
+            times = self._render_times
+            file_ids = self._render_file_ids
+
+        K = len(indices)
+        if K == 0:
+            return self._playhead_segment
+
+        # Apply time-window weighting based on stream's anchor
+        if coherence > 0 and stream.tau_s >= 0:
+            # Gaussian time window centered on stream's anchor
+            time_diff = times - stream.tau_s
+            sigma_t = stream.sigma_t * (1.0 + (1.0 - coherence) * 2.0)  # Wider window with low coherence
+            time_weights = np.exp(-time_diff**2 / (2 * sigma_t**2 + 1e-6))
+
+            # Same-file bonus
+            if stream.file_id_s >= 0:
+                same_file_mask = (file_ids == stream.file_id_s).astype(np.float32)
+                file_bonus = 1.0 + coherence * same_file_mask
+                time_weights *= file_bonus
+
+            # Combine with spatial weights
+            weights = weights * time_weights
+
+        # Normalize
+        weights = weights / (weights.sum() + 1e-8)
+
+        # Stochastic sample
+        idx = np.random.choice(K, p=weights)
+        selected_segment = int(indices[idx])
+        selected_time = float(times[idx])
+        selected_file = int(file_ids[idx])
+
+        # Update stream's time anchor
+        stream.update_time_anchor(selected_time, selected_file)
+
+        return selected_segment
+
+    def _trigger_grain_for_stream(self, stream: GrainStream, coherence: float = 0.0):
         """Trigger a grain for the given stream with randomizations.
 
         Uses GrainPlayer's settings as base values for grain parameters,
         applying scheduler's jitter on top.
+
+        If fractional state is available, uses interpolated/dual-grain triggering
+        for smooth transitions.
+
+        In latent mode, uses per-stream stochastic sampling from kNN neighbors.
+
+        Args:
+            stream: GrainStream to trigger grain for
+            coherence: Coherence control (0-1) for latent mode time-window bias
         """
         with self._playhead_lock:
+            latent_mode = self._latent_mode
             segment = self._playhead_segment
+            frac_state = self._fractional_state.copy() if self._fractional_state else None
+
+        # In latent mode, use per-stream stochastic sampling
+        if latent_mode:
+            segment = self.sample_index_for_stream(stream, coherence=coherence)
 
         # Get thread-safe parameter snapshot from player
         params = self.player.get_grain_params_snapshot()
@@ -976,14 +1286,26 @@ class GrainScheduler:
             pan_jitter = (np.random.random() - 0.5) * 2 * player_pan_spread
             pan = float(np.clip(pan + pan_jitter, 0.0, 1.0))
 
-        # Trigger the grain with player's base settings
-        self.player.trigger_grain(
-            segment,
-            amp=self._stream_amp,
-            pan=pan,
-            grain_dur=dur,
-            position_spread=position_spread,
-        )
+        # Use interpolated triggering if fractional state is available
+        if frac_state and frac_state.get("frac", 0.0) > 0.0:
+            self.player.trigger_grain_interpolated(
+                idx_lower=frac_state["idx_lower"],
+                idx_upper=frac_state["idx_upper"],
+                frac=frac_state["frac"],
+                amp=self._stream_amp,
+                pan=pan,
+                grain_dur=dur,
+                position_spread=position_spread,
+            )
+        else:
+            # Trigger the grain with discrete segment
+            self.player.trigger_grain(
+                segment,
+                amp=self._stream_amp,
+                pan=pan,
+                grain_dur=dur,
+                position_spread=position_spread,
+            )
 
     def _tick(self, dt: float):
         """
@@ -996,7 +1318,7 @@ class GrainScheduler:
             stream.time_until_trigger -= dt
 
             if stream.time_until_trigger <= 0:
-                self._trigger_grain_for_stream(stream)
+                self._trigger_grain_for_stream(stream, coherence=self._coherence)
 
                 # Reset timer with optional jitter
                 interval = self._stream_interval
@@ -1108,6 +1430,10 @@ class GrainScheduler:
         """Set navigation speed multiplier (0.1-10.0). 1.0 = normal, <1 = slower, >1 = faster."""
         self._nav_speed = float(np.clip(speed, 0.1, 10.0))
 
+    def set_coherence(self, coherence: float):
+        """Set coherence control for latent mode time-window bias (0-1)."""
+        self._coherence = float(np.clip(coherence, 0.0, 1.0))
+
     def get_nav_interval(self, base_interval: float) -> float:
         """
         Get navigation interval adjusted by nav_speed.
@@ -1128,6 +1454,9 @@ class GrainScheduler:
 
     def get_state(self) -> dict:
         """Get current scheduler state."""
+        with self._playhead_lock:
+            frac_state = self._fractional_state.copy() if self._fractional_state else None
+            latent_mode = self._latent_mode
         return {
             "num_streams": self.num_streams,
             "grain_dur": self._grain_dur,
@@ -1140,7 +1469,10 @@ class GrainScheduler:
             "hop_size": self._hop_size,
             "total_rate": self._total_rate,
             "playhead": self._playhead_segment,
+            "fractional": frac_state,
             "running": self._running,
+            "latent_mode": latent_mode,
+            "coherence": self._coherence,
         }
 
     @property

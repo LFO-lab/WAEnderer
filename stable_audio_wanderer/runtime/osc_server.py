@@ -30,7 +30,6 @@ def run_server(
             /policy/memory value      - Set memory control (0-1)
             /policy/coherence value   - Set coherence control (0-1)
             /policy/exploration value - Set exploration control (0-1)
-            /policy/regime_bias value - Set regime bias (0-2)
             /policy/reset             - Reset policy state
 
         Grain controls (basic):
@@ -146,12 +145,7 @@ def run_server(
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(exploration=v)
-    
-    def on_regime_bias(addr, *vals):
-        v = _as_scalar(vals)
-        if v is not None:
-            nav.set_policy_controls(regime_bias=v)
-    
+
     def on_reset(addr, *vals):
         nav.reset_policy()
     
@@ -318,7 +312,6 @@ def run_server(
     dispatcher.map("/policy/memory", on_memory)
     dispatcher.map("/policy/coherence", on_coherence)
     dispatcher.map("/policy/exploration", on_exploration)
-    dispatcher.map("/policy/regime_bias", on_regime_bias)
     dispatcher.map("/policy/reset", on_reset)
     
     # Grain controls (basic)
@@ -361,7 +354,7 @@ def run_server(
 
     print(f"OSC listening on {ip}:{port}")
     print("  /cursor d0 [d1 [d2 ...]] — set navigation cursor (values in [0..1])")
-    print("  Policy: /policy/width, /energy, /gravity, /memory, /coherence, /exploration, /regime_bias (0..1), /policy/reset")
+    print("  Policy: /policy/width, /energy, /gravity, /memory, /coherence, /exploration (0..1), /policy/reset")
     print("  Grain (basic): /grain/rate (nav speed), /grain/jitter (0..1), /grain/amp (0..2)")
     print("  Grain (synthesis):")
     print("    /grain/pitch (0.25-4), /grain/pitch_spread (0-12 semitones)")

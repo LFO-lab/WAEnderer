@@ -14,13 +14,11 @@ let activeControls = new Set();
 // Corpus data
 let corpusPoints = [];
 let corpusFileIds = [];
-let corpusRegimes = [];
 let totalCorpusPoints = 0;
 
 // Navigation state
 let currentPosition = [0.5, 0.5];
 let trajectory = [];
-let currentRegime = 0;
 let currentIndex = 0;
 let currentVelocity = 0;
 let currentFileId = 0;
@@ -37,11 +35,6 @@ const COLORS = {
     corpusPoint: [60, 60, 80, 100],
     trajectory: [74, 158, 255],
     cursor: [255, 255, 255],
-    regimes: [
-        [74, 255, 106],   // Drift - green
-        [255, 166, 74],   // Turn - orange
-        [74, 158, 255],   // Linger - blue
-    ],
     files: [],
 };
 
@@ -203,11 +196,11 @@ function drawTrajectory() {
 
     noFill();
     const len = trajectory.length;
-    const regimeColor = COLORS.regimes[currentRegime] || COLORS.trajectory;
+    const trajectoryColor = COLORS.trajectory;
 
     if (VIZ_CONFIG.smoothTrajectory && len >= 4) {
         // Draw smooth Catmull-Rom curve
-        drawSmoothTrajectory(regimeColor);
+        drawSmoothTrajectory(trajectoryColor);
     } else {
         // Draw standard line segments with exponential fade
         for (let i = 1; i < len; i++) {
@@ -218,7 +211,7 @@ function drawTrajectory() {
             const [x1, y1] = trajectory[i - 1];
             const [x2, y2] = trajectory[i];
 
-            stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
+            stroke(trajectoryColor[0], trajectoryColor[1], trajectoryColor[2], alpha);
             strokeWeight(weight);
 
             const sx1 = x1 * width;
@@ -232,7 +225,7 @@ function drawTrajectory() {
 }
 
 // Catmull-Rom spline interpolation for smooth trajectory
-function drawSmoothTrajectory(regimeColor) {
+function drawSmoothTrajectory(trajectoryColor) {
     const len = trajectory.length;
     const steps = 4; // interpolation steps between points
 
@@ -258,7 +251,7 @@ function drawSmoothTrajectory(regimeColor) {
             const pt1 = catmullRom(p0, p1, p2, p3, t1);
             const pt2 = catmullRom(p0, p1, p2, p3, t2);
 
-            stroke(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
+            stroke(trajectoryColor[0], trajectoryColor[1], trajectoryColor[2], alpha);
             strokeWeight(weight);
 
             const sx1 = pt1[0] * width;
@@ -300,7 +293,7 @@ function drawCursor() {
     const screenX = x * width;
     const screenY = (1 - y) * height;
 
-    const regimeColor = COLORS.regimes[currentRegime] || COLORS.cursor;
+    const cursorColor = COLORS.trajectory;
     const fileColor = COLORS.files[currentFileId % COLORS.files.length];
 
     // Calculate pulse effect
@@ -313,7 +306,7 @@ function drawCursor() {
     noStroke();
     for (let r = 30 * pulseScale; r > 0; r -= 5) {
         const alpha = map(r, 30 * pulseScale, 0, 10, 50);
-        fill(regimeColor[0], regimeColor[1], regimeColor[2], alpha);
+        fill(cursorColor[0], cursorColor[1], cursorColor[2], alpha);
         ellipse(screenX, screenY, r, r);
     }
 
@@ -323,8 +316,8 @@ function drawCursor() {
     strokeWeight(3);
     ellipse(screenX, screenY, 26 * pulseScale, 26 * pulseScale);
 
-    // Draw main regime-colored ring
-    stroke(regimeColor[0], regimeColor[1], regimeColor[2]);
+    // Draw main cursor ring
+    stroke(cursorColor[0], cursorColor[1], cursorColor[2]);
     strokeWeight(2);
     ellipse(screenX, screenY, 20 * pulseScale, 20 * pulseScale);
 
@@ -494,7 +487,6 @@ function handleMessage(data) {
     if (data.type === 'corpus') {
         corpusPoints = data.positions_2d || [];
         corpusFileIds = data.file_ids || [];
-        corpusRegimes = data.regimes || [];
         totalCorpusPoints = data.total_points || 0;
 
         // Pre-compute and cache colors for all corpus points (performance optimization)
@@ -506,9 +498,8 @@ function handleMessage(data) {
 
     } else if (data.type === 'state') {
         const nav = data.navigation || {};
-        
+
         currentPosition = nav.position_2d || currentPosition;
-        currentRegime = nav.regime || 0;
         currentIndex = nav.index || 0;
         currentVelocity = nav.velocity || 0;
         currentFileId = nav.file_id || 0;
@@ -549,17 +540,10 @@ function updateConnectionStatus(connected) {
 
 function updateInfoDisplay(data) {
     const nav = data.navigation || {};
-    
+
     document.getElementById('info-index').textContent = nav.index || 0;
     document.getElementById('info-velocity').textContent = (nav.velocity || 0).toFixed(2);
     document.getElementById('info-file').textContent = nav.file_id || 0;
-    
-    const regimeNames = ['Drift', 'Turn', 'Linger'];
-    document.getElementById('info-regime').textContent = regimeNames[nav.regime] || 'Unknown';
-    
-    document.getElementById('regime-drift').className = 'regime-dot' + (nav.regime === 0 ? ' active-drift' : '');
-    document.getElementById('regime-turn').className = 'regime-dot' + (nav.regime === 1 ? ' active-turn' : '');
-    document.getElementById('regime-linger').className = 'regime-dot' + (nav.regime === 2 ? ' active-linger' : '');
 }
 
 function updateControlDisplays(prefix, values) {
@@ -611,7 +595,7 @@ function updateControlDisplays(prefix, values) {
 // UI Control handlers
 function setupControls() {
     // Policy controls
-    const policyControls = ['width', 'energy', 'gravity', 'memory', 'coherence', 'exploration', 'regime_bias'];
+    const policyControls = ['width', 'energy', 'gravity', 'memory', 'coherence', 'exploration'];
     
     policyControls.forEach(ctrl => {
         const input = document.getElementById(`ctrl-${ctrl}`);
