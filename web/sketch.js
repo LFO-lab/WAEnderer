@@ -578,8 +578,10 @@ function updateControlDisplays(prefix, values) {
         if (display && typeof value === 'number') {
             if (key === 'filter_freq') {
                 display.textContent = value.toFixed(0);
-            } else if (key === 'num_streams') {
+            } else if (key === 'num_streams' || key.startsWith('voices_')) {
                 display.textContent = value.toFixed(0);
+            } else if (key === 'drops_per_sec') {
+                display.textContent = value.toFixed(1);
             } else {
                 display.textContent = value.toFixed(2);
             }

@@ -79,10 +79,8 @@ def render_grains(
     sr: int,
     progress: JSONProgress,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
-    """Render pre-baked grains with Hann envelope."""
+    """Render raw grains to disk (no envelope - enveloping happens at playback)."""
     grain_len_samp = int(round(grain_sec * sr))
-    envelope = np.hanning(grain_len_samp).astype(np.float32)
-    envelope = envelope[:, None]
 
     # Group segments by file
     file_segments: Dict[int, List[Tuple[int, int]]] = {}
@@ -120,7 +118,7 @@ def render_grains(
                 pad = np.zeros((pad_len, grain.shape[1]), dtype=np.float32)
                 grain = np.concatenate([grain, pad], axis=0)
 
-            grain = grain * envelope
+            # No envelope applied here - GrainPlayer applies TrigEnv at playback
 
             offsets_list.append(current_offset)
             lengths_list.append(grain.shape[0])

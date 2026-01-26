@@ -102,8 +102,13 @@ class LooperVoice:
     """
     A grain voice using Looper for position-accurate playback.
     Looper supports start position and duration control.
+
+    Voice state tracking enables proper voice stealing:
+    - _trigger_time: When the current grain started (time.perf_counter)
+    - _expected_end: When the current grain envelope should finish
+    - is_idle property: True if voice has finished playing
     """
-    
+
     def __init__(
         self,
         server: pyo.Server,
@@ -119,6 +124,11 @@ class LooperVoice:
         self._mul = mul
         self._table_dur = table.getDur()
         self._table_size = table.getSize()
+
+        # Voice state tracking for intelligent voice stealing
+        self._trigger_time: float = 0.0  # When grain was triggered
+        self._expected_end: float = 0.0  # When envelope should finish
+        self._current_dur: float = 0.0   # Current grain duration
 
         # Cache table samples for zero-crossing detection
         self._table_samples = np.array(table.getTable())
@@ -162,7 +172,17 @@ class LooperVoice:
         
         # Pan
         self._panner = pyo.Pan(self._filter, outs=2, pan=0.5)
-        
+
+    @property
+    def is_idle(self) -> bool:
+        """Check if voice has finished playing its current grain."""
+        return time.perf_counter() >= self._expected_end
+
+    def time_remaining(self) -> float:
+        """Get time remaining on current grain (0 if idle)."""
+        remaining = self._expected_end - time.perf_counter()
+        return max(0.0, remaining)
+
     def trigger(
         self,
         start_sec: float,
@@ -247,22 +267,14 @@ class LooperVoice:
         # Set pan
         self._panner.setPan(pan)
 
-        # Check if envelope is still active before retriggering.
-        # If envelope > 10% of peak, fade out quickly before restarting.
-        env_val = self._env.get(True)
-        # get(True) returns the current value of the envelope generator
-        should_fade = False
-        try:
-            env_curr = float(env_val)
-            should_fade = env_curr > 0.1
-        except Exception:
-            should_fade = False
-        if should_fade:
-            # Fade out quickly
-            self._env.setDur(0.01)
-            self._env.play()
-            time.sleep(0.012)
-        
+        # Track voice state for intelligent voice stealing.
+        # No blocking fade - callers should use is_idle/time_remaining to pick voices.
+        now = time.perf_counter()
+        self._trigger_time = now
+        self._current_dur = dur_sec
+        # Add small buffer (5ms) for envelope release
+        self._expected_end = now + dur_sec + 0.005
+
         self._looper.play()
         self._trig.stop()
         self._trig.play()
@@ -575,7 +587,63 @@ class GrainPlayer:
 
         # Ensure all values are Python native floats for pyo compatibility
         return {"pitch": float(pitch), "dur": float(dur), "pan": float(pan)}
-        
+
+    def _select_voice_for_file(self, file_id: int) -> Optional["LooperVoice"]:
+        """Select best voice for triggering using intelligent voice stealing.
+
+        Priority order:
+        1. Idle voice for the same file_id
+        2. Any idle voice (fallback)
+        3. Voice closest to finishing (soft steal)
+
+        This eliminates clicks from retriggering active voices by preferring
+        voices that have completed their envelope.
+
+        Args:
+            file_id: The file ID we want to play from
+
+        Returns:
+            LooperVoice to use, or None if no voices available
+        """
+        if not self._voices:
+            return None
+
+        # Separate voices by file match
+        matching = [(fid, v) for fid, v in self._voices if fid == file_id]
+        non_matching = [(fid, v) for fid, v in self._voices if fid != file_id]
+
+        # Priority 1: Idle voice for same file
+        for _, voice in matching:
+            if voice.is_idle:
+                return voice
+
+        # Priority 2: Any idle voice (will work but may have wrong table -
+        # for cross-file this is expected behavior)
+        for _, voice in non_matching:
+            if voice.is_idle:
+                return voice
+
+        # Priority 3: Soft steal - pick voice closest to finishing
+        # Prefer matching file if stealing is necessary
+        best_voice = None
+        best_remaining = float("inf")
+
+        for _, voice in matching:
+            remaining = voice.time_remaining()
+            if remaining < best_remaining:
+                best_remaining = remaining
+                best_voice = voice
+
+        # Only fall back to non-matching if no matching voices at all
+        if best_voice is None:
+            for _, voice in non_matching:
+                remaining = voice.time_remaining()
+                if remaining < best_remaining:
+                    best_remaining = remaining
+                    best_voice = voice
+
+        return best_voice
+
     def trigger_grain(
         self,
         segment_idx: int,
@@ -622,17 +690,10 @@ class GrainPlayer:
                 jitter = (np.random.random() - 0.5) * 2 * max_jitter_sec
                 start_sec = float(max(0, start_sec + jitter))
 
-            # Find voice for this file
-            matching = [(i, fid, v) for i, (fid, v) in enumerate(self._voices) if fid == file_id]
-
-            if not matching:
-                if not self._voices:
-                    return False
-                idx = self._voice_idx % len(self._voices)
-                _, voice = self._voices[idx]
-            else:
-                voice_idx = self._voice_idx % len(matching)
-                _, _, voice = matching[voice_idx]
+            # Intelligent voice stealing: prefer idle voices, soft-steal if needed
+            voice = self._select_voice_for_file(file_id)
+            if voice is None:
+                return False
 
             params = self._compute_grain_params(grain_dur_override=grain_dur)
 
@@ -728,17 +789,10 @@ class GrainPlayer:
                 jitter = (np.random.random() - 0.5) * 2 * max_jitter_sec
                 start_sec = float(max(0, start_sec + jitter))
 
-            # Find voice for this file
-            matching = [(i, fid, v) for i, (fid, v) in enumerate(self._voices) if fid == file_id_lower]
-
-            if not matching:
-                if not self._voices:
-                    return False
-                idx = self._voice_idx % len(self._voices)
-                _, voice = self._voices[idx]
-            else:
-                voice_idx = self._voice_idx % len(matching)
-                _, _, voice = matching[voice_idx]
+            # Intelligent voice stealing: prefer idle voices, soft-steal if needed
+            voice = self._select_voice_for_file(file_id_lower)
+            if voice is None:
+                return False
 
             params = self._compute_grain_params(grain_dur_override=grain_dur)
 
