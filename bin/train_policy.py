@@ -263,7 +263,7 @@ def main():
     ap.add_argument("--val_split", type=float, default=0.1)
 
     ap.add_argument("--batch_size", type=int, default=64)
-    ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument("--epochs", type=int, default=2000)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--weight_decay", type=float, default=1e-4)
 

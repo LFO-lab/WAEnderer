@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse
+import queue
 import threading
 import time
 import numpy as np
@@ -118,6 +119,11 @@ def main():
     ap.add_argument("--ctrl_exploration", type=float, default=0.0,
                     help="Initial exploration control (0-1): entropy injection.")
 
+    # Window size for batched decoding
+    ap.add_argument("--window_size", type=int, default=1,
+                    help="Number of latent frames to decode together (1-16). "
+                         "Higher values increase audio coherence but add latency.")
+
     args = ap.parse_args()
 
     corpus_npz = find_corpus_file(args.corpus_dir)
@@ -156,27 +162,109 @@ def main():
     vae = load_vae(args.pretrained)
 
     decoder = DecoderPlayer(gain=args.output_gain, smoothing=args.smoothing)
-    decoder.start()
+
+    # Queue for latent batches (navigation -> decode)
+    latent_queue = queue.Queue(maxsize=4)  # Buffer up to 4 windows ahead
 
     running = threading.Event()
     running.set()
 
-    def decode_loop():
-        print("[info] Decode loop started")
+    window_size = max(1, min(args.window_size, 16))
+    if window_size > 1:
+        print(f"[info] Using window_size={window_size} for batched decoding")
+
+    # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
+    print("[info] Pre-buffering audio...")
+    pre_buffer_windows = max(4, int(1.0 / (0.0465 * window_size)) + 1)  # ~1 sec of audio
+    for i in range(pre_buffer_windows):
+        frame_buffer = []
+        for _ in range(window_size):
+            frame = nav.step()
+            frame_buffer.append(frame)
+        z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+        z_batch_raw = z_batch_norm * Z_std + Z_mean
+        audio = decode_latents(vae, z_batch_raw)
+        decoder.write_frame(audio)
+    print(f"[info] Pre-buffered {pre_buffer_windows} windows ({decoder.buffer_duration():.2f}s)")
+
+    # Pre-fill the latent queue so decode thread has work immediately
+    print("[info] Pre-filling latent queue...")
+    for _ in range(latent_queue.maxsize):
+        frame_buffer = []
+        for _ in range(window_size):
+            frame = nav.step()
+            frame_buffer.append(frame)
+        z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+        z_batch_raw = z_batch_norm * Z_std + Z_mean
+        latent_queue.put(z_batch_raw)
+    print(f"[info] Latent queue filled ({latent_queue.qsize()} batches)")
+
+    def nav_loop():
+        """Navigation thread: generates latent batches ahead of decode."""
+        print("[info] Navigation loop started")
+        frame_buffer = []
+
         try:
             while running.is_set():
-                t0 = time.perf_counter()
+                # Accumulate frames
                 frame = nav.step()
-                z_decode_norm = manifold.generate(frame, exploration=nav.ctrl_exploration)
-                z_decode_raw = z_decode_norm * Z_std + Z_mean
-                audio = decode_latents(vae, z_decode_raw)
+                frame_buffer.append(frame)
+
+                # Generate latents when window is full
+                if len(frame_buffer) >= window_size:
+                    # Batch manifold constraint (fast: ~2-5ms)
+                    z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+                    z_batch_raw = z_batch_norm * Z_std + Z_mean  # [N, 64]
+
+                    # Queue for decode thread - blocks when queue is full (backpressure)
+                    # This naturally paces navigation to stay ~4 windows ahead
+                    try:
+                        latent_queue.put(z_batch_raw, timeout=1.0)
+                    except queue.Full:
+                        pass  # Drop if decode can't keep up
+
+                    frame_buffer.clear()
+        except Exception as e:
+            print(f"[error] Navigation loop exception: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[info] Navigation loop stopped")
+
+    # Target buffer duration: keep 0.5-1.0 seconds buffered
+    TARGET_BUFFER_LOW = 0.3   # Start decoding when buffer drops below this
+    TARGET_BUFFER_HIGH = 1.0  # Slow down when buffer exceeds this
+
+    def decode_loop():
+        """Decode thread: VAE decode to audio, feeds the dual-buffer."""
+        print("[info] Decode loop started")
+        frame_duration = 0.0465  # Will be updated after first decode
+
+        try:
+            while running.is_set():
+                # Check buffer level and pace accordingly
+                buf_dur = decoder.buffer_duration()
+
+                if buf_dur > TARGET_BUFFER_HIGH:
+                    # Buffer is healthy - sleep a bit to avoid overproduction
+                    time.sleep(0.05)
+                    continue
+
+                # Get next latent batch
+                try:
+                    z_batch = latent_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                # VAE decode (~12ms per frame in batch, ~48ms for window_size=4)
+                audio = decode_latents(vae, z_batch)
+
+                # Write to dual-buffer (fast, lock-free append)
                 decoder.write_frame(audio)
 
-                if decoder.frame_duration is not None:
-                    elapsed = time.perf_counter() - t0
-                    sleep_time = decoder.frame_duration - elapsed
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+                # Update frame duration if available
+                if decoder.frame_duration:
+                    frame_duration = decoder.frame_duration
         except Exception as e:
             print(f"[error] Decode loop exception: {e}")
             import traceback
@@ -184,7 +272,13 @@ def main():
         finally:
             print("[info] Decode loop stopped")
 
+    # Now start the audio stream (after buffer is pre-filled)
+    decoder.start()
+
+    # Start threads
+    nav_thread = threading.Thread(target=nav_loop, daemon=True)
     decode_thread = threading.Thread(target=decode_loop, daemon=True)
+    nav_thread.start()
     decode_thread.start()
 
     ws_server = None
@@ -208,6 +302,8 @@ def main():
     print(
         f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
     )
+    if args.window_size > 1:
+        print(f"[info] Window size: {args.window_size} frames (batched decoding)")
 
     try:
         run_server(nav, decoder, ip=args.osc_ip, port=args.osc_port)
@@ -215,6 +311,7 @@ def main():
         print("\n[info] Shutting down...")
     finally:
         running.clear()
+        nav_thread.join(timeout=1.0)
         decode_thread.join(timeout=1.0)
         decoder.stop()
         decoder.close()

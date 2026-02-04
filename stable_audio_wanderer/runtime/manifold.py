@@ -109,3 +109,16 @@ class ManifoldConstrainedGenerator:
 
         delta_valid = self._apply_magnitude_control(delta_valid, frame.local_sigma, exploration)
         return anchor + delta_valid
+
+    def generate_batch(self, frames: list, exploration: float = 0.5) -> np.ndarray:
+        """
+        Generate manifold-constrained latents for multiple frames.
+
+        Args:
+            frames: List of NavFrame objects from the navigation engine
+            exploration: [0,1] control mapping to perturbation magnitude
+
+        Returns:
+            np.ndarray of shape [N, 64] containing latents for each frame
+        """
+        return np.stack([self.generate(f, exploration) for f in frames], axis=0)
