@@ -1,77 +1,159 @@
 #!/usr/bin/env python3
-import os, argparse, threading, torch
-import numpy as np
-from stable_audio_wanderer.config import SR, DEVICE
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, load_latents_bundle
-from stable_audio_wanderer.vae.sae import load_vae, encode_full, load_wav
-from stable_audio_wanderer.runtime.player import Player
-from stable_audio_wanderer.runtime.osc_server import run_server
-from stable_audio_wanderer.models.latent_ar import load_ar_model_with_projector
+"""
+Real-time manifold-constrained decoding with OSC control.
+"""
+import os
+# Fix OpenMP duplicate library issue on macOS (must be set before any imports that use OpenMP)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-def make_bundle_loader(bundle_path, ae):
-    lat_bundle = None
-    def loader(file_id: int, wav_path: str):
-        nonlocal lat_bundle
-        if lat_bundle is None and bundle_path is not None:
-            lat_bundle = load_latents_bundle(bundle_path)
-        if lat_bundle is not None:
-            key = f"z_{file_id}"
-            if key in lat_bundle.files:
-                return lat_bundle[key]
-        # fallback: encode from WAV
-        return encode_full(ae, load_wav(wav_path))
-    return loader
+import argparse
+import queue
+import threading
+import time
+import numpy as np
+
+from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.runtime.player import LatentNavigationEngine
+from stable_audio_wanderer.runtime.manifold import ManifoldConstrainedGenerator, ManifoldConfig
+from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
+from stable_audio_wanderer.runtime.osc_server import run_server
+from stable_audio_wanderer.policy.latent_geometry import load_geometry_from_dict
+from stable_audio_wanderer.vae.sae import load_vae
+from stable_audio_wanderer.vae.decoder import decode_latents
+
+
+def find_corpus_file(corpus_dir: str):
+    """Find corpus in directory."""
+    try:
+        return find_latest(corpus_dir, "*_corpus_*.npz")
+    except FileNotFoundError:
+        corpus_npz = os.path.join(corpus_dir, "corpus.npz")
+        if not os.path.exists(corpus_npz):
+            raise FileNotFoundError(
+                f"No corpus file found in {corpus_dir}. Expected 'corpus.npz'."
+            )
+        return corpus_npz
+
+
+# Valid window sizes (must match policy config)
+VALID_WINDOW_SIZES = (1, 2, 4, 8, 16)
+
+
+def smooth_window_size(current: float, target: int, alpha: float = 0.3) -> float:
+    """Smooth window size transitions to avoid rapid jumps."""
+    return (1.0 - alpha) * current + alpha * float(target)
+
+
+def nearest_valid_size(value: float) -> int:
+    """Round to nearest valid window size class."""
+    value = max(1, min(16, value))
+    # Find closest valid size
+    return min(VALID_WINDOW_SIZES, key=lambda x: abs(x - value))
+
+
+def load_navigation_engine(
+    data: dict,
+    policy_path: str = None,
+    policy_temperature: float = 1.0,
+    policy_sample: bool = True,
+    control_width: float = 0.5,
+    control_energy: float = 0.5,
+    control_gravity: float = 0.5,
+    control_memory: float = 0.0,
+    control_coherence: float = 0.0,
+    control_exploration: float = 0.0,
+):
+    """Factory function to create the LatentNavigationEngine."""
+    geometry = load_geometry_from_dict(data)
+    if geometry is None:
+        raise RuntimeError(
+            "Corpus is missing latent geometry. Re-run preprocess.py to generate geometry-enabled corpora."
+        )
+
+    print("[info] Using LatentNavigationEngine (64D latent navigation)")
+    GG = data["GG"].astype(np.float32)
+    meta = data["meta"]
+
+    return LatentNavigationEngine(
+        GG=GG,
+        meta=meta,
+        geometry=geometry,
+        policy_path=policy_path,
+        policy_temperature=policy_temperature,
+        policy_sample=policy_sample,
+        control_width=control_width,
+        control_energy=control_energy,
+        control_gravity=control_gravity,
+        control_memory=control_memory,
+        control_coherence=control_coherence,
+        control_exploration=control_exploration,
+    )
+
 
 def main():
-    ap = argparse.ArgumentParser(description="Player temps réel (OSC → VAE decode).")
-    ap.add_argument("--corpus_dir", required=True, help="Dossier contenant le corpus & latents")
+    ap = argparse.ArgumentParser(
+        description="Real-time manifold-constrained decoding (OSC-controlled)."
+    )
+    ap.add_argument("--corpus_dir", required=True, help="Directory containing corpus.npz")
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
     ap.add_argument("--osc_ip", default="127.0.0.1")
     ap.add_argument("--osc_port", type=int, default=9000)
-    ap.add_argument("--win_sec", type=float, default=0.2,
-                    help="Durée fenêtre décodée (grain).")
-    ap.add_argument("--hop_sec", type=float, default=0.05,
-                    help="Pas de sortie (latence/cadence).")
-    ap.add_argument("--beta_target", type=float, default=0.2,
-                    help="Gravité temporelle vers cible kNN (0..1).")
-    ap.add_argument("--jump_thresh", type=int, default=64,
-                    help="Seuil (frames latentes) de saut immédiat.")
-    ap.add_argument("--micro_jitter", type=int, default=0,
-                    help="±1 frame de jitter pour réduire artefacts de bouclage (0/1).")
-    ap.add_argument("--kernel_blend", action="store_true",
-                    help="Active le blending local (noyau gaussien) dans l'espace latent VAE.")
-    ap.add_argument("--kernel_k", type=int, default=4,
-                    help="Nombre de voisins en géométrie de projection pour le blending (k).")
-    ap.add_argument("--kernel_sigma", type=float, default=-1.0,
-                    help="Sigma du noyau gaussien dans l'espace de projection (<=0 pour sigma auto local).")
-    ap.add_argument("--kernel_sigma_scale", type=float, default=1.0,
-                    help="Facteur multiplicatif appliqué au sigma auto (si utilisé).")
-    ap.add_argument("--kernel_target_norm", type=float, default=0.0,
-                    help="Norme L2 cible dans l'espace latent normalisé (<=0 pour désactiver la renormalisation).")
-    ap.add_argument("--ar_drive", action="store_true",
-                    help="Génère l'audio via le modèle AR latent entraîné (si présent dans le corpus).")
-    ap.add_argument("--ar_noise", type=float, default=0.0,
-                    help="Ecart-type du bruit gaussien ajouté aux prédictions AR (>=0).")
-    # Inference stabilization options
-    ap.add_argument("--ar_use_projection", action=argparse.BooleanOptionalAction, default=True,
-                    help="Utilise le projecteur de manifold pour corriger la dérive (default: on si disponible).")
-    ap.add_argument("--ar_clamp_std", type=float, default=3.0,
-                    help="Seuil de clampage adaptatif en écarts-types (0 pour désactiver).")
-    ap.add_argument("--ar_target_norm", type=float, default=0.0,
-                    help="Norme cible pour projection sphérique (0 pour désactiver).")
-    ap.add_argument("--ar_reanchor_interval", type=int, default=0,
-                    help="Intervalle (frames) pour re-ancrage au corpus (0 pour désactiver).")
+    ap.add_argument("--ws_port", type=int, default=8765,
+                    help="WebSocket port for visualization (0 to disable).")
+
+    # Decoder controls
+    ap.add_argument("--output_gain", type=float, default=1.0,
+                    help="Initial output gain (0-2).")
+    ap.add_argument("--smoothing", type=float, default=0.1,
+                    help="Crossfade smoothing between frames (0-1).")
+
+    # Manifold parameters
+    ap.add_argument("--manifold_k", type=int, default=16)
+    ap.add_argument("--manifold_n_local", type=int, default=8)
+    ap.add_argument("--manifold_n_global", type=int, default=32)
+    ap.add_argument("--manifold_sparse_quantile", type=float, default=0.75)
+
+    # Policy controls
+    ap.add_argument("--policy_path", default=None,
+                    help="Checkpoint .pt for navigation policy.")
+    ap.add_argument("--policy_temperature", type=float, default=1.0,
+                    help="Base temperature for policy sampling.")
+    ap.add_argument("--policy_sample", action=argparse.BooleanOptionalAction, default=True,
+                    help="Stochastically sample from policy (default: yes).")
+
+    # Control parameters (6 dimensions)
+    ap.add_argument("--ctrl_width", type=float, default=0.5,
+                    help="Initial width control (0-1): temperature scaling.")
+    ap.add_argument("--ctrl_energy", type=float, default=0.5,
+                    help="Initial energy control (0-1): displacement magnitude.")
+    ap.add_argument("--ctrl_gravity", type=float, default=0.5,
+                    help="Initial gravity control (0-1): forward/backward bias.")
+    ap.add_argument("--ctrl_memory", type=float, default=0.0,
+                    help="Initial memory control (0-1): pull toward recent positions.")
+    ap.add_argument("--ctrl_coherence", type=float, default=0.0,
+                    help="Initial coherence control (0-1): stay within same file.")
+    ap.add_argument("--ctrl_exploration", type=float, default=0.0,
+                    help="Initial exploration control (0-1): entropy injection.")
+
+    # Window size for batched decoding
+    ap.add_argument("--window_size", type=int, default=1,
+                    help="Number of latent frames to decode together (1-16). "
+                         "Higher values increase audio coherence but add latency.")
+    ap.add_argument("--adaptive_window", action="store_true",
+                    help="Enable adaptive window sizing based on policy prediction. "
+                         "Overrides --window_size with dynamic per-frame predictions.")
+
     args = ap.parse_args()
 
-    # Resolve files from folder
-    corpus_npz = find_latest(args.corpus_dir, "*_corpus_*.npz")
+    corpus_npz = find_corpus_file(args.corpus_dir)
     print(f"[info] Using corpus: {corpus_npz}")
-    data = load_corpus(corpus_npz)
 
-    ZZ    = data["ZZ"].astype(np.float32)
-    meta  = data["meta"]
-    paths = list(map(str, data["paths"]))
-    Z_mean= data["Z_mean"].astype(np.float32)
+    data = load_corpus(corpus_npz)
+    geometry = load_geometry_from_dict(data)
+    if geometry is None:
+        raise RuntimeError("Corpus missing latent geometry. Re-run preprocess.py.")
+
+    Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
     ar_model = None
     ar_projector = None
@@ -116,51 +198,252 @@ def main():
                         ar_target_norm = float(ar_meta["target_norm"])
                         print(f"[info] Utilisation de la norme cible d'entraînement: {ar_target_norm:.4f}")
 
-    # Bundle path (fallback to latest latents file in folder)
-    if "latent_bundle_path" in data.files and os.path.isfile(str(data["latent_bundle_path"])):
-        bundle_path = str(data["latent_bundle_path"])
-    else:
-        bundle_path = find_latest(os.path.dirname(corpus_npz), "*_latents_*.npz")
-
-    print(f"[info] Using latents bundle: {bundle_path}")
-
-    ae = load_vae(args.pretrained)
-    loader = make_bundle_loader(bundle_path, ae)
-
-    player = Player(
-        ae, ZZ, meta, paths, Z_mean, Z_std,
-        latent_bundle_loader=loader,
-        beta_target=args.beta_target,
-        jump_thresh=args.jump_thresh,
-        micro_jitter=args.micro_jitter,
-        win_sec=args.win_sec,
-        hop_sec=args.hop_sec,
-        kernel_blend=args.kernel_blend,
-        kernel_k=args.kernel_k,
-        kernel_sigma=args.kernel_sigma,
-        kernel_sigma_scale=args.kernel_sigma_scale,
-        kernel_target_norm=args.kernel_target_norm,
-        ar_model=ar_model,
-        ar_context=ar_context,
-        ar_drive=args.ar_drive,
-        ar_noise_std=ar_noise_std,
-        # Inference stabilization
-        ar_projector=ar_projector,
-        ar_use_projection=bool(args.ar_use_projection),
-        ar_clamp_std=ar_clamp_std,
-        ar_reanchor_interval=ar_reanchor_interval,
-        ar_target_norm=ar_target_norm,
+    nav = load_navigation_engine(
+        data=data,
+        policy_path=args.policy_path,
+        policy_temperature=args.policy_temperature,
+        policy_sample=bool(args.policy_sample),
+        control_width=args.ctrl_width,
+        control_energy=args.ctrl_energy,
+        control_gravity=args.ctrl_gravity,
+        control_memory=args.ctrl_memory,
+        control_coherence=args.ctrl_coherence,
+        control_exploration=args.ctrl_exploration,
     )
 
-    t = threading.Thread(target=player.run, daemon=True)
-    t.start()
+    manifold_cfg = ManifoldConfig(
+        k=args.manifold_k,
+        n_local=args.manifold_n_local,
+        n_global=args.manifold_n_global,
+        sparse_quantile=args.manifold_sparse_quantile,
+    )
+    manifold = ManifoldConstrainedGenerator(nav.GG, geometry, manifold_cfg)
+
+    print("[info] Loading VAE decoder...")
+    vae = load_vae(args.pretrained)
+
+    decoder = DecoderPlayer(
+        gain=args.output_gain,
+        smoothing=args.smoothing,
+        adaptive_crossfade=args.adaptive_window,
+    )
+
+    # Queue for latent batches (navigation -> decode)
+    latent_queue = queue.Queue(maxsize=4)  # Buffer up to 4 windows ahead
+
+    running = threading.Event()
+    running.set()
+
+    adaptive_mode = args.adaptive_window
+    window_size = max(1, min(args.window_size, 16))
+    hop_size = (window_size + 1) // 2  # 50% overlap (rounded up)
+
+    if adaptive_mode:
+        print("[info] Using adaptive window sizing (policy-predicted)")
+    elif window_size > 1:
+        print(f"[info] Using window_size={window_size}, hop_size={hop_size} (overlap-add mode)")
+
+    # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
+    # With overlap-add, each hop outputs hop_size frames worth of audio
+    print("[info] Pre-buffering audio (overlap-add)...")
+    audio_per_hop = hop_size * 0.0465  # seconds per hop
+    num_hops = max(4, int(1.0 / audio_per_hop) + 1)
+
+    # First window: no prev_half yet, decode full window_size frames
+    frame_buffer = [nav.step() for _ in range(window_size)]
+    z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+    z_batch_raw = z_batch_norm * Z_std + Z_mean
+    audio = decode_latents(vae, z_batch_raw)
+    decoder.write_frame(audio)
+    prev_half = frame_buffer[hop_size:]  # Save second half for overlap
+
+    # Subsequent windows with overlap
+    for _ in range(num_hops - 1):
+        new_frames = [nav.step() for _ in range(hop_size)]
+        full_window = prev_half + new_frames
+        z_batch_norm = manifold.generate_batch(full_window, exploration=nav.ctrl_exploration)
+        z_batch_raw = z_batch_norm * Z_std + Z_mean
+        audio = decode_latents(vae, z_batch_raw)
+        decoder.write_frame(audio)
+        prev_half = full_window[hop_size:]
+
+    print(f"[info] Pre-buffered {num_hops} windows ({decoder.buffer_duration():.2f}s)")
+
+    # Pre-fill the latent queue so decode thread has work immediately
+    print("[info] Pre-filling latent queue...")
+    for _ in range(latent_queue.maxsize):
+        new_frames = [nav.step() for _ in range(hop_size)]
+        full_window = prev_half + new_frames
+        z_batch_norm = manifold.generate_batch(full_window, exploration=nav.ctrl_exploration)
+        z_batch_raw = z_batch_norm * Z_std + Z_mean
+        latent_queue.put(z_batch_raw)
+        prev_half = full_window[hop_size:]
+    print(f"[info] Latent queue filled ({latent_queue.qsize()} batches)")
+
+    # Store prev_half in a mutable container for nav_loop access
+    nav_state = {
+        "prev_half": prev_half,
+        "current_window_size": float(window_size),
+        "adaptive_mode": adaptive_mode,
+    }
+
+    def nav_loop():
+        """Navigation thread with overlap context (fixed or adaptive)."""
+        mode_str = "adaptive" if nav_state["adaptive_mode"] else "overlap-add"
+        print(f"[info] Navigation loop started ({mode_str} mode)")
+        frame_buffer = []
+        prev_half = nav_state["prev_half"]
+        current_window_float = nav_state["current_window_size"]
+
+        try:
+            while running.is_set():
+                # Get current window/hop sizes
+                if nav_state["adaptive_mode"]:
+                    current_window = nearest_valid_size(current_window_float)
+                    current_hop = (current_window + 1) // 2
+                else:
+                    current_window = window_size
+                    current_hop = hop_size
+
+                # Accumulate new frames
+                frame = nav.step()
+                frame_buffer.append(frame)
+
+                # Update smoothed window size from policy prediction
+                if nav_state["adaptive_mode"]:
+                    target_window = frame.predicted_window_size
+                    current_window_float = smooth_window_size(current_window_float, target_window)
+
+                # Need current_hop new frames to complete next window
+                if len(frame_buffer) >= current_hop:
+                    # Adjust prev_half to match current window requirements
+                    # If window size changed, we may need to pad/truncate prev_half
+                    target_prev_len = current_window - current_hop
+                    if len(prev_half) < target_prev_len:
+                        # Pad by repeating last frames
+                        while len(prev_half) < target_prev_len:
+                            prev_half.append(prev_half[-1] if prev_half else frame_buffer[0])
+                    elif len(prev_half) > target_prev_len:
+                        # Truncate from the front
+                        prev_half = prev_half[-target_prev_len:]
+
+                    # Combine: prev_half + new frames = full window
+                    full_window = prev_half + frame_buffer[:current_hop]
+
+                    # Batch manifold constraint (fast: ~2-5ms)
+                    z_batch_norm = manifold.generate_batch(
+                        full_window,
+                        exploration=nav.ctrl_exploration
+                    )
+                    z_batch_raw = z_batch_norm * Z_std + Z_mean  # [N, 64]
+
+                    # Queue for decode thread - blocks when queue is full (backpressure)
+                    try:
+                        latent_queue.put(z_batch_raw, timeout=1.0)
+                    except queue.Full:
+                        pass  # Drop if decode can't keep up
+
+                    # Second half becomes first half of next window
+                    prev_half = full_window[current_hop:]
+                    frame_buffer = frame_buffer[current_hop:]
+        except Exception as e:
+            print(f"[error] Navigation loop exception: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[info] Navigation loop stopped")
+
+    # Target buffer duration: keep 0.5-1.0 seconds buffered
+    TARGET_BUFFER_LOW = 0.3   # Start decoding when buffer drops below this
+    TARGET_BUFFER_HIGH = 1.0  # Slow down when buffer exceeds this
+
+    def decode_loop():
+        """Decode thread: VAE decode to audio, feeds the dual-buffer."""
+        print("[info] Decode loop started")
+        frame_duration = 0.0465  # Will be updated after first decode
+
+        try:
+            while running.is_set():
+                # Check buffer level and pace accordingly
+                buf_dur = decoder.buffer_duration()
+
+                if buf_dur > TARGET_BUFFER_HIGH:
+                    # Buffer is healthy - sleep a bit to avoid overproduction
+                    time.sleep(0.05)
+                    continue
+
+                # Get next latent batch
+                try:
+                    z_batch = latent_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                # VAE decode (~12ms per frame in batch, ~48ms for window_size=4)
+                audio = decode_latents(vae, z_batch)
+
+                # Write to dual-buffer (fast, lock-free append)
+                decoder.write_frame(audio)
+
+                # Update frame duration if available
+                if decoder.frame_duration:
+                    frame_duration = decoder.frame_duration
+        except Exception as e:
+            print(f"[error] Decode loop exception: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[info] Decode loop stopped")
+
+    # Now start the audio stream (after buffer is pre-filled)
+    decoder.start()
+
+    # Start threads
+    nav_thread = threading.Thread(target=nav_loop, daemon=True)
+    decode_thread = threading.Thread(target=decode_loop, daemon=True)
+    nav_thread.start()
+    decode_thread.start()
+
+    ws_server = None
+    ws_thread = None
+    if args.ws_port > 0:
+        try:
+            from stable_audio_wanderer.runtime.ws_server import start_ws_server
+            ws_server, ws_thread = start_ws_server(nav, decoder, port=args.ws_port)
+            print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
+        except ImportError:
+            print("[warn] WebSocket server not available (missing dependencies)")
+        except Exception as e:
+            print(f"[warn] Failed to start WebSocket server: {e}")
+
+    print(f"[info] Running with {nav.N} segments")
+    print("[info] Navigation mode: latent (64D)")
+    print(
+        f"[info] Controls: width={args.ctrl_width}, energy={args.ctrl_energy}, "
+        f"gravity={args.ctrl_gravity}, memory={args.ctrl_memory}"
+    )
+    print(
+        f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
+    )
+    if args.adaptive_window:
+        print("[info] Window size: adaptive (policy-predicted, 1-16 frames)")
+    elif args.window_size > 1:
+        print(f"[info] Window size: {args.window_size} frames (batched decoding)")
+
     try:
-        run_server(player, ip=args.osc_ip, port=args.osc_port)
+        run_server(nav, decoder, ip=args.osc_ip, port=args.osc_port)
     except KeyboardInterrupt:
-        pass
+        print("\n[info] Shutting down...")
     finally:
-        player.stop()
-        t.join()
+        running.clear()
+        nav_thread.join(timeout=1.0)
+        decode_thread.join(timeout=1.0)
+        decoder.stop()
+        decoder.close()
+        if ws_server is not None:
+            ws_server.shutdown()
+
+    print("[info] Done.")
+
 
 if __name__ == "__main__":
     main()

@@ -1,419 +1,525 @@
-import numpy as np, sounddevice as sd
+"""
+64D latent navigation engine for corpus exploration.
+Produces continuous latent trajectories for downstream decoding.
+"""
+import os
+# Fix OpenMP duplicate library issue on macOS (must be set before importing faiss)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+import numpy as np
+import threading
+from dataclasses import dataclass
+from collections import deque
+from typing import Optional, Tuple
 from scipy.spatial import cKDTree
-from ..config import SR, LATENT_HZ, NORM_CLAMP
-from ..vae.sae import decode_window
-from ..models.latent_ar import InferenceBuffer, ManifoldProjector, spherical_projection, adaptive_clamping
 import torch
 
-class Player:
-    def __init__(self, ae, ZZ, meta, paths, Z_mean, Z_std,
-                 latent_bundle_loader,
-                 beta_target=0.2, jump_thresh=64, micro_jitter=0,
-                 win_sec=0.2, hop_sec=0.05,
-                 kernel_blend=False, kernel_k=4, kernel_sigma=None,
-                 kernel_sigma_scale=1.0, kernel_target_norm=None,
-                 ar_model=None, ar_context=None, ar_drive=False, ar_noise_std=0.0,
-                 # Inference stabilization options
-                 ar_projector=None, ar_use_projection=True,
-                 ar_clamp_std=3.0, ar_reanchor_interval=0, ar_target_norm=None):
-        self.ae = ae
-        self.ZZ = ZZ.astype(np.float32)                  # [N_seg, D]
-        self.nav_dim = int(self.ZZ.shape[1])
-        print(f"[info] Navigation dimensions detected in corpus: D = {self.nav_dim}")
-        self.meta = meta                                 # [N_seg, 3]
-        self.paths = list(map(str, paths))
-        self.Z_mean = Z_mean.astype(np.float32)
-        self.Z_std  = Z_std.astype(np.float32)
-        self.latent_dim = int(self.Z_mean.shape[0])
-        self._latent_bundle_loader = latent_bundle_loader
+from ..config import DEVICE
+from ..policy.latent_geometry import LatentGeometry
+from ..policy.latent_policy import LatentPolicy, LatentPolicyConfig, build_local_features
 
-        self.kdt = cKDTree(self.ZZ)
-        self.cursor = np.full((self.nav_dim,), 0.5, dtype=np.float32)
-        self._stop = False
-        self._latent_cache = {}   # file_id -> z_full [T_lat, 64]
 
-        self.play_file = None
-        self.play_tlat = 0.0
-        self.beta_target = float(beta_target)
-        self.jump_thresh = int(jump_thresh)
-        self.micro_jitter = int(micro_jitter)
+@dataclass
+class NavFrame:
+    """Navigation output for a single step."""
+    z_nav: np.ndarray           # [64] current latent position after step
+    indices: np.ndarray         # [K] kNN indices around z_nav
+    distances: np.ndarray       # [K] cosine distances to kNN indices
+    nearest_idx: int            # nearest neighbor index
+    local_sigma: float          # local sigma at nearest neighbor
+    time_gradient: np.ndarray   # [64] time gradient at nearest neighbor
+    t_lat: float                # latent time index for nearest neighbor
+    file_id: int                # file id for nearest neighbor
+    predicted_window_size: int = 4  # Predicted window size in latent frames (1, 2, 4, 8, 16)
 
-        self.win_sec = float(win_sec)
-        self.hop_sec = float(hop_sec)
 
-        self.kernel_blend = bool(kernel_blend)
-        self.kernel_k = max(1, min(int(kernel_k), self.ZZ.shape[0]))
-        self.kernel_sigma = float(kernel_sigma) if (kernel_sigma is not None and float(kernel_sigma) > 0.0) else None
-        self.kernel_sigma_scale = max(float(kernel_sigma_scale), 1e-6)
-        target_norm = None
-        if kernel_target_norm is not None and float(kernel_target_norm) > 0.0:
-            target_norm = float(kernel_target_norm)
-        self.kernel_target_norm = target_norm
-        if self.kernel_blend:
-            print(
-                f"[info] Kernel blending enabled (k={self.kernel_k}, sigma="
-                f"{self.kernel_sigma if self.kernel_sigma is not None else 'auto'}"
-                f", target_norm={self.kernel_target_norm if self.kernel_target_norm is not None else 'none'})"
-            )
-        self.ar_model = ar_model
-        self.ar_context = int(ar_context) if ar_context is not None else None
-        self.ar_drive = bool(ar_drive and self.ar_model is not None and self.ar_context is not None)
-        self.ar_noise_std = max(0.0, float(ar_noise_std))
-        self.ar_batch_size = 4  # Generate multiple frames at once for efficiency
-        self._ar_buffer = []
-        self._ar_pos = 0
-        self._ar_anchor_idx = None
-        self._ar_device = None
-        self._Z_mean_t = None
-        self._Z_std_t = None
-        self._inference_buffer: InferenceBuffer = None
-        
-        # Inference stabilization settings
-        self.ar_projector = ar_projector
-        self.ar_use_projection = bool(ar_use_projection and ar_projector is not None)
-        self.ar_clamp_std = float(ar_clamp_std) if ar_clamp_std is not None and ar_clamp_std > 0 else None
-        self.ar_reanchor_interval = max(0, int(ar_reanchor_interval)) if ar_reanchor_interval else 0
-        self.ar_target_norm = float(ar_target_norm) if ar_target_norm is not None and ar_target_norm > 0 else None
-        self._ar_step_counter = 0  # For re-anchoring
-        
-        # Running statistics for adaptive clamping
-        self._running_mean = None
-        self._running_var = None
-        self._running_momentum = 0.99
-        
-        if self.ar_drive:
-            self.ar_model.eval()
-            self._ar_device = next(self.ar_model.parameters()).device
-            # Pre-allocate normalization tensors on device (avoid repeated CPU->GPU transfers)
-            self._Z_mean_t = torch.from_numpy(self.Z_mean).to(self._ar_device)
-            self._Z_std_t = torch.from_numpy(self.Z_std).to(self._ar_device)
-            # Pre-allocate inference buffer for efficient generation
-            self._inference_buffer = InferenceBuffer(
-                context_len=self.ar_context,
-                latent_dim=self.latent_dim,
-                device=self._ar_device,
-                dtype=torch.float32,
-            )
-            # Pre-allocate context tensor buffer (avoids repeated allocations)
-            self._ctx_tensor = torch.zeros(
-                1, self.ar_context, self.latent_dim, 
-                device=self._ar_device, dtype=torch.float32
-            )
-            
-            # Initialize running stats to training stats (normalized to N(0,1))
-            self._running_mean = torch.zeros(self.latent_dim, device=self._ar_device)
-            self._running_var = torch.ones(self.latent_dim, device=self._ar_device)
-            
-            # Move projector to device if available
-            if self.ar_projector is not None:
-                self.ar_projector.to(self._ar_device)
-                self.ar_projector.eval()
-            
-            stab_info = []
-            if self.ar_use_projection:
-                stab_info.append("projection")
-            if self.ar_clamp_std is not None:
-                stab_info.append(f"clamp±{self.ar_clamp_std}σ")
-            if self.ar_target_norm is not None:
-                stab_info.append(f"norm→{self.ar_target_norm}")
-            if self.ar_reanchor_interval > 0:
-                stab_info.append(f"reanchor@{self.ar_reanchor_interval}")
-            stab_str = ", ".join(stab_info) if stab_info else "none"
-            
-            print(
-                f"[info] Autoregressive drive enabled (context={self.ar_context}, "
-                f"noise_std={self.ar_noise_std}, batch_size={self.ar_batch_size}, "
-                f"stabilization=[{stab_str}])"
-            )
+class LatentNavigationEngine:
+    """
+    64D latent space navigation engine for corpus exploration.
 
-    # --- OSC cursor ---
-    def set_cursor_nd(self, coords):
-        n = min(len(coords), self.nav_dim)
-        if n > 0:
-            self.cursor[:n] = np.asarray(coords[:n], dtype=np.float32)
-        if self.nav_dim > n:
-            self.cursor[n:] = 0.5
+    Maintains continuous position z in 64D embedding space.
+    Uses FAISS for fast kNN search and Gaussian kernel weights for interpolation.
 
-    # --- latents ---
-    def _load_full_latents(self, file_id: int):
-        if file_id in self._latent_cache:
-            return self._latent_cache[file_id]
-        z = self._latent_bundle_loader(file_id, self.paths[file_id])
-        self._latent_cache[file_id] = z
-        return z
+    Control parameters (6 total):
+        - width (0-1): Temperature scaling for exploration breadth
+        - energy (0-1): Scaling factor for displacement magnitude
+        - gravity (0-1): Bias toward forward (>0.5) or backward (<0.5) movement
+        - memory (0-1): Pull toward recently visited positions
+        - coherence (0-1): Bias toward staying within same source file
+        - exploration (0-1): Direct entropy injection for diversity
+    """
 
-    def _slice_latent_window(self, file_id: int, start_lat: int, win_lat: int):
-        z_full = self._load_full_latents(file_id)
-        start = int(start_lat)
-        end = min(z_full.shape[0], start + win_lat)
-        z_win = z_full[start:end]
-        if z_win.shape[0] == 0:
-            z_win = np.repeat(z_full[:1], win_lat, axis=0)
-        elif z_win.shape[0] < win_lat:
-            pad = np.repeat(z_win[-1:], win_lat - z_win.shape[0], axis=0)
-            z_win = np.concatenate([z_win, pad], axis=0)
-        elif z_win.shape[0] > win_lat:
-            z_win = z_win[:win_lat]
-        return np.ascontiguousarray(z_win.astype(np.float32))
+    # Dynamics constants
+    VELOCITY_DECAY = 0.95      # α: velocity decay factor
+    MANIFOLD_ATTRACTION = 0.1  # β: pull toward kNN centroid
 
-    def _decode_latent_window(self, z_win_np):
-        z = (z_win_np - self.Z_mean) / self.Z_std
-        z = np.clip(z, -NORM_CLAMP, NORM_CLAMP)
-        z = z * self.Z_std + self.Z_mean
-        return decode_window(self.ae, z)
+    def __init__(
+        self,
+        GG: np.ndarray,
+        meta: np.ndarray,
+        geometry: LatentGeometry,
+        policy_path: str = None,
+        policy_temperature: float = 1.0,
+        policy_sample: bool = True,
+        control_width: float = 0.5,
+        control_energy: float = 0.5,
+        control_gravity: float = 0.5,
+        control_memory: float = 0.0,
+        control_coherence: float = 0.0,
+        control_exploration: float = 0.0,
+    ):
+        """
+        Initialize latent navigation engine.
 
-    def _renormalize_window(self, z_win_np: np.ndarray, target_norm: float):
-        z_norm = (z_win_np - self.Z_mean) / (self.Z_std + 1e-8)
-        norms = np.linalg.norm(z_norm, axis=1, keepdims=True)
-        scales = target_norm / np.maximum(norms, 1e-6)
-        z_scaled = z_norm * scales
-        return z_scaled * self.Z_std + self.Z_mean
+        Args:
+            GG: Corpus embeddings [N_seg, 64] (L2-normalized VAE latents)
+            meta: Segment metadata [N_seg, 3] with (file_id, t_lat, win_lat)
+            geometry: LatentGeometry with precomputed kNN and local features
+            policy_path: Path to trained LatentPolicy checkpoint (optional)
+            policy_temperature: Base temperature for policy sampling
+            policy_sample: Whether to sample from policy (True) or use mode (False)
+            control_*: Initial control parameters (0-1)
+        """
+        self.GG = GG.astype(np.float32)
+        self.meta = meta
+        self.geometry = geometry
+        self.N = self.GG.shape[0]
+        self.latent_dim = self.GG.shape[1]
 
-    # --- navigation ---
-    def _nearest_primary(self):
-        _, i = self.kdt.query(self.cursor, k=1)
-        return int(i)
+        # L2-normalize GG for cosine similarity
+        norms = np.linalg.norm(self.GG, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-6)
+        self.GG_l2 = (self.GG / norms).astype(np.float32)
 
-    def _blend_latent_window(self, win_lat: int):
-        dist, idx = self.kdt.query(self.cursor, k=self.kernel_k)
-        idx_arr = np.atleast_1d(idx).astype(int)
-        dist_arr = np.atleast_1d(dist).astype(np.float32)
-
-        mask = np.isfinite(dist_arr)
-        idx_arr = idx_arr[mask]
-        dist_arr = dist_arr[mask]
-        if idx_arr.size == 0:
-            idx_arr = np.array([self._nearest_primary()], dtype=int)
-            dist_arr = np.array([0.0], dtype=np.float32)
-
-        sigma = self.kernel_sigma
-        if sigma is None:
-            positive = dist_arr[dist_arr > 1e-6]
-            if positive.size == 0:
-                base = float(dist_arr.max()) if dist_arr.size else 1.0
-            else:
-                base = float(np.median(positive))
-            if not np.isfinite(base) or base <= 0.0:
-                base = 1e-3
-            sigma = max(base * self.kernel_sigma_scale, 1e-4)
-
-        weights = np.exp(-(dist_arr ** 2) / (2.0 * sigma * sigma))
-        if not np.isfinite(weights).all() or weights.sum() <= 0.0:
-            weights = np.ones_like(dist_arr)
-        weights = weights / np.maximum(weights.sum(), 1e-12)
-
-        acc = None
-        for w, j in zip(weights.tolist(), idx_arr.tolist()):
-            fid, t0, _ = self.meta[j]
-            z_win = self._slice_latent_window(int(fid), int(t0), win_lat)
-            acc = z_win * w if acc is None else acc + z_win * w
-
-        if acc is None:
-            acc = np.zeros((win_lat, self.latent_dim), dtype=np.float32)
-        else:
-            acc = np.ascontiguousarray(acc.astype(np.float32))
-
-        if self.kernel_target_norm is not None and self.kernel_target_norm > 0.0:
-            acc = self._renormalize_window(acc, target_norm=self.kernel_target_norm)
-        return acc
-
-    # --- autoregressive ---
-    def _reseed_ar_buffer(self, idx_primary: int, win_lat: int):
-        if not self.ar_drive:
-            return
-        seed_len = max(win_lat, self.ar_context)
-        fid, t0, _ = self.meta[idx_primary]
-        start = max(0, int(t0) - seed_len // 2)
-        seed = self._slice_latent_window(int(fid), start, seed_len)
-        self._ar_buffer = [row.astype(np.float32) for row in seed]
-        self._ar_pos = 0
-        self._ar_anchor_idx = idx_primary
-        self.play_file = int(fid)
-        self.play_tlat = float(start)
-
-    def _ensure_ar_ready(self, win_lat: int):
-        idx_primary = self._nearest_primary()
-        if not self._ar_buffer or self._ar_anchor_idx != idx_primary:
-            self._reseed_ar_buffer(idx_primary, win_lat)
-        return idx_primary
-
-    def _stabilize_prediction(self, pred_norm: torch.Tensor) -> torch.Tensor:
-        """Apply stabilization techniques to a normalized prediction."""
-        # 1. Apply manifold projection if available
-        if self.ar_use_projection and self.ar_projector is not None:
-            pred_norm = self.ar_projector(pred_norm)
-        
-        # 2. Apply adaptive clamping based on running statistics
-        if self.ar_clamp_std is not None and self._running_var is not None:
-            running_std = torch.sqrt(self._running_var + 1e-8)
-            pred_norm = adaptive_clamping(
-                pred_norm, self._running_mean, running_std, n_std=self.ar_clamp_std
-            )
-        
-        # 3. Apply spherical projection (norm constraint)
-        if self.ar_target_norm is not None:
-            pred_norm = spherical_projection(pred_norm, self.ar_target_norm, soft=True)
-        
-        # 4. Update running statistics (EMA)
-        if self._running_mean is not None:
-            with torch.no_grad():
-                batch_mean = pred_norm.mean(dim=0) if pred_norm.dim() > 1 else pred_norm
-                batch_var = pred_norm.var(dim=0) if pred_norm.dim() > 1 and pred_norm.size(0) > 1 else self._running_var
-                self._running_mean = self._running_momentum * self._running_mean + (1 - self._running_momentum) * batch_mean
-                self._running_var = self._running_momentum * self._running_var + (1 - self._running_momentum) * batch_var
-        
-        return pred_norm
-    
-    def _generate_ar_latents(self, num_needed: int):
-        """Generate AR latents using batched inference for efficiency."""
-        if not self.ar_drive or num_needed <= 0:
-            return
-        
-        # Check for re-anchoring
-        if self.ar_reanchor_interval > 0:
-            self._ar_step_counter += num_needed
-            if self._ar_step_counter >= self.ar_reanchor_interval:
-                idx_primary = self._nearest_primary()
-                self._reseed_ar_buffer(idx_primary, max(1, int(round(self.win_sec * LATENT_HZ))))
-                self._ar_step_counter = 0
-                return
-        
-        # Generate in batches for better throughput
-        remaining = num_needed
-        while remaining > 0:
-            batch_size = min(remaining, self.ar_batch_size)
-            
-            # Prepare context from buffer
-            ctx = self._ar_buffer[-self.ar_context:]
-            if len(ctx) == 0:
-                break
-            if len(ctx) < self.ar_context:
-                ctx = ctx + [ctx[-1]] * (self.ar_context - len(ctx))
-            
-            # Use pre-allocated tensor buffer (avoids repeated allocations)
-            ctx_arr = np.stack(ctx, axis=0).astype(np.float32)
-            self._ctx_tensor.copy_(torch.from_numpy(ctx_arr).unsqueeze(0))
-            ctx_norm = (self._ctx_tensor - self._Z_mean_t) / (self._Z_std_t + 1e-8)
-            
-            with torch.inference_mode():
-                # Use batched generation if model supports it
-                if hasattr(self.ar_model, 'generate_batch') and batch_size > 1:
-                    # Generate multiple frames at once
-                    noise = self.ar_noise_std / (self.Z_std.mean() + 1e-8) if self.ar_noise_std > 0 else 0.0
-                    preds_norm = self.ar_model.generate_batch(
-                        ctx_norm, num_frames=batch_size, noise_std=noise
-                    ).squeeze(0)  # [batch_size, D]
-                    
-                    # Apply stabilization to each prediction
-                    stabilized_preds = []
-                    for i in range(preds_norm.size(0)):
-                        stab_pred = self._stabilize_prediction(preds_norm[i:i+1])
-                        stabilized_preds.append(stab_pred)
-                    preds_norm = torch.cat(stabilized_preds, dim=0)
-                    
-                    # Convert all predictions to numpy at once (single transfer)
-                    preds_np = preds_norm.cpu().numpy().astype(np.float32)
-                    
-                    # Denormalize and add to buffer
-                    for i in range(batch_size):
-                        pred = preds_np[i] * self.Z_std + self.Z_mean
-                        self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
-                else:
-                    # Single-frame fallback
-                    out = self.ar_model(ctx_norm, return_aux=False, return_delta=False)
-                    pred_norm = out["pred"] if isinstance(out, dict) else out
-                    
-                    # Apply stabilization
-                    pred_norm = self._stabilize_prediction(pred_norm)
-                    
-                    pred_norm = pred_norm.squeeze(0).cpu().numpy().astype(np.float32)
-                    pred = pred_norm * self.Z_std + self.Z_mean
-                    if self.ar_noise_std > 0.0:
-                        pred = pred + np.random.randn(*pred.shape).astype(np.float32) * self.ar_noise_std
-                    self._ar_buffer.append(np.ascontiguousarray(pred.astype(np.float32)))
-                    batch_size = 1  # Only generated one
-            
-            remaining -= batch_size
-
-    def _next_ar_window(self, win_lat: int, hop_lat: int):
-        self._ensure_ar_ready(win_lat)
-        needed = self._ar_pos + win_lat
-        if len(self._ar_buffer) < needed:
-            self._generate_ar_latents(needed - len(self._ar_buffer))
-        if len(self._ar_buffer) < needed:
-            return self._blend_latent_window(win_lat) if self.kernel_blend else self._slice_latent_window(
-                self.play_file if self.play_file is not None else 0, max(int(self.play_tlat), 0), win_lat
-            )
-        z_win = np.stack(self._ar_buffer[self._ar_pos : self._ar_pos + win_lat], axis=0).astype(np.float32)
-        self._ar_pos += hop_lat
-        if self._ar_pos > self.ar_context * 4 and len(self._ar_buffer) > (self.ar_context * 6):
-            drop = min(self._ar_pos - self.ar_context * 2, len(self._ar_buffer) - win_lat)
-            if drop > 0:
-                self._ar_buffer = self._ar_buffer[drop:]
-                self._ar_pos -= drop
-        return z_win
-
-    def _ensure_playhead_initialized(self, idx_primary, win_lat):
-        fid, t0, _ = int(self.meta[idx_primary, 0]), int(self.meta[idx_primary, 1]), int(self.meta[idx_primary, 2])
-        if self.play_file is None:
-            self.play_file = fid
-            self.play_tlat = max(0.0, float(t0) - win_lat * 0.5)
-
-    def _advance_playhead(self, hop_lat, idx_primary, win_lat):
-        target_fid, target_t = int(self.meta[idx_primary, 0]), float(self.meta[idx_primary, 1])
-        if self.play_file != target_fid:
-            self.play_file = target_fid
-
-        if abs(self.play_tlat - target_t) > self.jump_thresh:
-            self.play_tlat = target_t - win_lat * 0.5
-        else:
-            self.play_tlat = (1.0 - self.beta_target) * self.play_tlat + self.beta_target * (target_t - win_lat * 0.5)
-
-        self.play_tlat += hop_lat
-        if self.micro_jitter:
-            self.play_tlat += np.random.randint(-1, 2)
-
-        z_full = self._load_full_latents(self.play_file)
-        max_start = max(0, z_full.shape[0] - win_lat)
-        self.play_tlat = float(np.clip(self.play_tlat, 0, max_start))
-        return self.play_file, int(round(self.play_tlat))
-
-    # --- audio loop ---
-    def run(self):
-        win_lat   = max(1, int(round(self.win_sec * LATENT_HZ)))
-        hop_samps = int(round(self.hop_sec * SR))
-        hop_lat   = max(1, int(round(self.hop_sec * LATENT_HZ)))
-
-        fade = np.ascontiguousarray(np.hanning(2 * hop_samps).astype(np.float32))
-        fade_in, fade_out = fade[:hop_samps], fade[hop_samps:]
-
-        stream = sd.OutputStream(samplerate=SR, channels=2, dtype='float32', blocksize=hop_samps)
-        stream.start()
-        carry = np.ascontiguousarray(np.zeros((hop_samps, 2), np.float32))
-
+        # Build FAISS index
         try:
-            while not self._stop:
-                idx_primary = self._nearest_primary()
-                self._ensure_playhead_initialized(idx_primary, win_lat)
-                fid, s_lat = self._advance_playhead(hop_lat, idx_primary, win_lat)
+            import faiss
+            self.faiss_index = faiss.IndexFlatIP(self.latent_dim)
+            self.faiss_index.add(self.GG_l2)
+            self._has_faiss = True
+        except ImportError:
+            print("[warn] FAISS not available, falling back to scipy cKDTree")
+            self.faiss_index = None
+            self._kdt = cKDTree(self.GG_l2)
+            self._has_faiss = False
 
-                z_full = self._load_full_latents(fid)
-                e_lat = min(z_full.shape[0], s_lat + win_lat)
-                z_win = z_full[s_lat:e_lat]
-                if z_win.shape[0] < win_lat:
-                    pad = np.repeat(z_win[-1:], win_lat - z_win.shape[0], axis=0)
-                    z_win = np.concatenate([z_win, pad], axis=0)
+        # Navigation state
+        self.z = self.GG[0].copy()  # Start at first segment
+        self.v = np.zeros(self.latent_dim, dtype=np.float32)  # Velocity
 
-                audio = self._decode_latent_window(z_win)
-                a0 = audio[:hop_samps]
-                a1 = audio[hop_samps:2 * hop_samps] if audio.shape[0] >= 2 * hop_samps else np.zeros_like(a0)
+        # Policy state
+        self.policy: Optional[LatentPolicy] = None
+        self.policy_cfg: Optional[LatentPolicyConfig] = None
+        self.policy_hidden = None
+        self.policy_device = torch.device(DEVICE)
+        self.policy_ready = False
+        self.policy_temperature = max(1e-3, float(policy_temperature))
+        self.policy_sample = bool(policy_sample)
 
-                out = carry * fade_out[:, None] + a0 * fade_in[:, None]
-                out = np.ascontiguousarray(out, dtype=np.float32)
-                stream.write(out)
-                carry = np.ascontiguousarray(a1, dtype=np.float32)
-        finally:
-            stream.stop(); stream.close()
+        # Control parameters (6 dimensions)
+        self.ctrl_width = float(np.clip(control_width, 0.0, 1.0))
+        self.ctrl_energy = float(np.clip(control_energy, 0.0, 1.0))
+        self.ctrl_gravity = float(np.clip(control_gravity, 0.0, 1.0))
+        self.ctrl_memory = float(np.clip(control_memory, 0.0, 1.0))
+        self.ctrl_coherence = float(np.clip(control_coherence, 0.0, 1.0))
+        self.ctrl_exploration = float(np.clip(control_exploration, 0.0, 1.0))
 
-    def stop(self):
-        self._stop = True
+        # Tracking state
+        self._current_file_id = int(self.geometry.file_ids[0])
+        self._recent_z = deque(maxlen=128)
+        self._recent_indices = deque(maxlen=128)
+
+        # Thread safety
+        self._lock = threading.Lock()
+
+        # Load policy if specified
+        if policy_path is not None:
+            try:
+                self._setup_policy(policy_path)
+            except Exception as e:
+                print(f"[warn] Failed to load policy '{policy_path}': {e}")
+
+    def _setup_policy(self, policy_path: str):
+        """Load and initialize policy model."""
+        ckpt = torch.load(policy_path, map_location="cpu", weights_only=False)
+        cfg_dict = ckpt.get("config", {})
+        cfg = LatentPolicyConfig(**cfg_dict) if isinstance(cfg_dict, dict) else LatentPolicyConfig()
+        self.policy_cfg = cfg
+
+        self.policy = LatentPolicy(cfg).to(self.policy_device)
+        self.policy.load_state_dict(ckpt["state_dict"])
+        self.policy.eval()
+
+        self.policy_ready = True
+        self._reset_policy_state()
+
+    def _reset_policy_state(self):
+        """Reset policy state to initial conditions."""
+        self.policy_hidden = None
+        self._recent_z.clear()
+        self._recent_indices.clear()
+
+    # --- Cursor control (for 2D visualization interaction) ---
+    def set_cursor_nd(self, coords):
+        """Set navigation cursor position from 2D visualization."""
+        with self._lock:
+            # Project 2D coords back to 64D using stored PCA
+            if len(coords) >= 2:
+                coords_2d = np.array(coords[:2], dtype=np.float32)
+                # Inverse project: 2D -> 64D (approximate via pseudo-inverse)
+                pca_pinv = np.linalg.pinv(self.geometry.pca_components_2d)  # [64, 2]
+                z_centered = coords_2d @ pca_pinv.T
+                self.z = (z_centered + self.geometry.pca_mean).astype(np.float32)
+                # Reset velocity when cursor is set
+                self.v = np.zeros(self.latent_dim, dtype=np.float32)
+
+    # --- Policy controls ---
+    def set_policy_controls(
+        self,
+        width=None,
+        energy=None,
+        gravity=None,
+        memory=None,
+        coherence=None,
+        exploration=None,
+    ):
+        """
+        Set policy control parameters.
+
+        Args:
+            width: Temperature scaling (0-1), higher = more random
+            energy: Displacement magnitude (0-1), higher = bigger jumps
+            gravity: Forward/backward bias (0-1), 0.5=neutral, >0.5=forward
+            memory: Pull toward recent positions (0-1)
+            coherence: Stay within same file (0-1)
+            exploration: Direct entropy injection (0-1)
+        """
+        with self._lock:
+            if width is not None:
+                self.ctrl_width = float(np.clip(width, 0.0, 1.0))
+            if energy is not None:
+                self.ctrl_energy = float(np.clip(energy, 0.0, 1.0))
+            if gravity is not None:
+                self.ctrl_gravity = float(np.clip(gravity, 0.0, 1.0))
+            if memory is not None:
+                self.ctrl_memory = float(np.clip(memory, 0.0, 1.0))
+            if coherence is not None:
+                self.ctrl_coherence = float(np.clip(coherence, 0.0, 1.0))
+            if exploration is not None:
+                self.ctrl_exploration = float(np.clip(exploration, 0.0, 1.0))
+
+    def reset_policy(self, idx=None):
+        """Reset policy state, optionally starting at a specific index."""
+        with self._lock:
+            if idx is not None:
+                idx = int(np.clip(idx, 0, self.N - 1))
+                self.z = self.GG[idx].copy()
+            self.v = np.zeros(self.latent_dim, dtype=np.float32)
+            self._reset_policy_state()
+
+    # --- Control vector for policy ---
+    def _control_vector(self) -> np.ndarray:
+        """Build 6-dimensional control vector for policy."""
+        return np.array([
+            self.ctrl_width,
+            self.ctrl_energy,
+            self.ctrl_gravity,
+            self.ctrl_memory,
+            self.ctrl_coherence,
+            self.ctrl_exploration,
+        ], dtype=np.float32)
+
+    # --- kNN search ---
+    def _query_knn(self, z: np.ndarray, k: int = 32) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Query k nearest neighbors for a latent position.
+
+        Returns:
+            (indices, distances) arrays of shape [k]
+        """
+        # L2 normalize query
+        z_norm = z / (np.linalg.norm(z) + 1e-6)
+        z_norm = z_norm.astype(np.float32)
+
+        if self._has_faiss:
+            z_query = z_norm.reshape(1, -1)
+            distances, indices = self.faiss_index.search(z_query, k)
+            # Convert inner product to cosine distance
+            return indices[0], (1.0 - distances[0])
+        else:
+            dists, inds = self._kdt.query(z_norm, k=k)
+            return inds.astype(np.int32), dists.astype(np.float32)
+
+    def _compute_gaussian_weights(
+        self,
+        distances: np.ndarray,
+        sigma: float,
+    ) -> np.ndarray:
+        """Compute Gaussian kernel weights from distances."""
+        weights = np.exp(-distances**2 / (2 * sigma**2))
+        return weights / (weights.sum() + 1e-8)
+
+    # --- Navigation step ---
+    def _navigation_step(self) -> NavFrame:
+        """
+        Execute one navigation step using policy or stochastic dynamics.
+
+        Returns:
+            NavFrame for the updated latent position
+        """
+        # Get kNN around current position
+        k = self.geometry.K
+        indices, distances = self._query_knn(self.z, k=k)
+
+        # Get local geometry features
+        nearest_idx = indices[0]
+        local_sigma = float(self.geometry.local_sigma[nearest_idx])
+        local_density = float(self.geometry.local_density[nearest_idx])
+        time_gradient = self.geometry.time_gradients[nearest_idx]
+        t_lat = float(self.geometry.t_lat[nearest_idx])
+        file_id = int(self.geometry.file_ids[nearest_idx])
+
+        # Compute kNN centroid
+        knn_centroid = self.GG[indices].mean(axis=0)
+
+        # Compute displacement delta_z
+        if self.policy_ready and self.policy is not None:
+            # Build local features
+            local_features = build_local_features(
+                self.z, local_sigma, local_density, time_gradient,
+                t_lat, file_id, knn_centroid
+            )
+
+            # Build tensors
+            z_tensor = torch.tensor(self.z, device=self.policy_device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+            v_tensor = torch.tensor(self.v, device=self.policy_device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+            ctrl_tensor = torch.tensor(self._control_vector(), device=self.policy_device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+            local_tensor = torch.tensor(local_features, device=self.policy_device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+
+            # Run policy
+            delta_mean, delta_log_std, delta_weights, vel_delta, window_logits, self.policy_hidden = self.policy.step(
+                z_tensor, v_tensor, ctrl_tensor, local_tensor, self.policy_hidden
+            )
+
+            # Sample or use mode
+            temperature = self.policy_temperature * (1.0 + 2.0 * self.ctrl_width + 2.0 * self.ctrl_exploration)
+            if self.policy_sample or self.ctrl_exploration > 0:
+                delta_z = self.policy.sample_delta(delta_mean, delta_log_std, delta_weights, temperature)
+            else:
+                delta_z = self.policy.get_mixture_mode(delta_mean, delta_weights)
+
+            delta_z = delta_z.squeeze(0).cpu().numpy()
+            dv = vel_delta.squeeze(0).cpu().numpy()
+
+            # Get predicted window size
+            predicted_window = self.policy.get_window_size(window_logits.squeeze(0), temperature=1.0, sample=False)
+        else:
+            # Stochastic dynamics without learned policy
+            # Direction toward time gradient with gravity bias
+            gravity = (self.ctrl_gravity - 0.5) * 2.0
+            direction = time_gradient * gravity
+
+            # Add exploration noise
+            noise = np.random.randn(self.latent_dim).astype(np.float32)
+            noise *= local_sigma * (0.1 + self.ctrl_exploration)
+
+            delta_z = direction * local_sigma * (0.5 + self.ctrl_energy) + noise
+            dv = np.zeros(self.latent_dim, dtype=np.float32)
+
+            # Use heuristic for window size when no policy
+            predicted_window = self._heuristic_window_size(local_sigma)
+
+        # Apply energy scaling
+        energy_scale = 0.5 + self.ctrl_energy
+        delta_z *= energy_scale
+
+        # Update velocity with decay
+        self.v = self.VELOCITY_DECAY * self.v + dv
+
+        # Update position
+        z_new = self.z + self.v + delta_z
+
+        # Apply manifold attraction (pull toward kNN centroid)
+        z_new += self.MANIFOLD_ATTRACTION * (knn_centroid - z_new)
+
+        # Apply memory control (pull toward recent positions)
+        if self.ctrl_memory > 0 and len(self._recent_z) > 0:
+            recent_mean = np.mean(list(self._recent_z), axis=0)
+            z_new = (1.0 - self.ctrl_memory) * z_new + self.ctrl_memory * recent_mean
+
+        # Apply coherence control (bias toward same file)
+        if self.ctrl_coherence > 0:
+            same_file_mask = self.geometry.file_ids[indices] == self._current_file_id
+            if same_file_mask.sum() > 0:
+                same_file_centroid = self.GG[indices[same_file_mask]].mean(axis=0)
+                z_new = (1.0 - self.ctrl_coherence) * z_new + self.ctrl_coherence * same_file_centroid
+
+        # Update state
+        self.z = z_new.astype(np.float32)
+        self._recent_z.append(self.z.copy())
+
+        # Re-query kNN at new position for updated neighborhood
+        indices, distances = self._query_knn(self.z, k=k)
+
+        nearest_idx = int(indices[0])
+        local_sigma = float(self.geometry.local_sigma[nearest_idx])
+        time_gradient = self.geometry.time_gradients[nearest_idx]
+        t_lat = float(self.geometry.t_lat[nearest_idx])
+        file_id = int(self.geometry.file_ids[nearest_idx])
+
+        # Track state
+        self._recent_indices.append(nearest_idx)
+        self._current_file_id = file_id
+
+        return NavFrame(
+            z_nav=self.z.copy(),
+            indices=indices.astype(np.int32),
+            distances=distances.astype(np.float32),
+            nearest_idx=nearest_idx,
+            local_sigma=local_sigma,
+            time_gradient=time_gradient.copy(),
+            t_lat=t_lat,
+            file_id=file_id,
+            predicted_window_size=predicted_window,
+        )
+
+    # --- Main API ---
+    def step(self) -> NavFrame:
+        """Advance navigation by one step and return NavFrame."""
+        with self._lock:
+            return self._navigation_step()
+
+    def get_segment_info(self, segment_idx: int) -> dict:
+        """Get metadata for a segment."""
+        if segment_idx < 0 or segment_idx >= len(self.meta):
+            return {"file_id": 0, "t_lat": 0, "win_lat": 0}
+        return {
+            "file_id": int(self.meta[segment_idx, 0]),
+            "t_lat": int(self.meta[segment_idx, 1]),
+            "win_lat": int(self.meta[segment_idx, 2]),
+        }
+
+    def get_fractional_state(self) -> dict:
+        """Get fractional interpolation state for smooth transitions."""
+        with self._lock:
+            # In latent mode, we don't have discrete indices, so return current state
+            indices, distances = self._query_knn(self.z, k=2)
+            idx_lower = int(indices[0])
+            idx_upper = int(indices[1]) if len(indices) > 1 else idx_lower
+
+            # Get file IDs for the nearest neighbors
+            file_ids = self.geometry.file_ids[indices]
+
+            # Compute weights from distances
+            sigma = float(self.geometry.local_sigma[idx_lower])
+            weights = self._compute_gaussian_weights(distances, sigma)
+            frac = float(weights[1]) / (float(weights[0]) + float(weights[1]) + 1e-8) if len(weights) > 1 else 0.0
+
+            return {
+                "idx_lower": idx_lower,
+                "idx_upper": idx_upper,
+                "frac": frac,
+                "same_file": int(file_ids[0]) == int(file_ids[1]) if len(file_ids) > 1 else True,
+                "file_id_lower": int(file_ids[0]),
+                "file_id_upper": int(file_ids[1]) if len(file_ids) > 1 else int(file_ids[0]),
+            }
+
+    def get_state(self) -> dict:
+        """Get current navigation state for visualization."""
+        with self._lock:
+            # Project z to 2D for visualization (raw, unnormalized)
+            # Let ws_server handle normalization for consistency with corpus display
+            pos_2d = self.geometry.project_to_2d(self.z)
+
+            # Query kNN for nearest index and fractional state
+            indices, distances = self._query_knn(self.z, k=2)
+            nearest_idx = int(indices[0])
+
+            # Get file IDs for the nearest neighbors
+            file_ids = self.geometry.file_ids[indices]
+
+            # Compute weights from distances for fractional interpolation
+            sigma = float(self.geometry.local_sigma[nearest_idx])
+            weights = self._compute_gaussian_weights(distances, sigma)
+
+            # Compute fractional state inline (avoid deadlock from calling get_fractional_state)
+            idx_lower = nearest_idx
+            idx_upper = int(indices[1]) if len(indices) > 1 else idx_lower
+            frac = float(weights[1]) / (float(weights[0]) + float(weights[1]) + 1e-8) if len(weights) > 1 else 0.0
+            fractional_state = {
+                "idx_lower": idx_lower,
+                "idx_upper": idx_upper,
+                "frac": frac,
+                "same_file": int(file_ids[0]) == int(file_ids[1]) if len(file_ids) > 1 else True,
+                "file_id_lower": int(file_ids[0]),
+                "file_id_upper": int(file_ids[1]) if len(file_ids) > 1 else int(file_ids[0]),
+            }
+
+            # Project recent latent positions to 2D for smooth trajectory visualization
+            recent_z_list = list(self._recent_z)
+            if len(recent_z_list) > 0:
+                recent_z_array = np.array(recent_z_list)
+                recent_2d = self.geometry.project_to_2d(recent_z_array)
+                trajectory_2d_raw = recent_2d.tolist() if len(recent_2d.shape) > 1 else [recent_2d.tolist()]
+            else:
+                trajectory_2d_raw = []
+
+            return {
+                "cursor": pos_2d.tolist(),  # Raw 2D projection
+                "policy_index": float(nearest_idx),
+                "policy_velocity": float(np.linalg.norm(self.v)),
+                "current_file_id": self._current_file_id,
+                "recent_indices": list(self._recent_indices),
+                "controls": {
+                    "width": self.ctrl_width,
+                    "energy": self.ctrl_energy,
+                    "gravity": self.ctrl_gravity,
+                    "memory": self.ctrl_memory,
+                    "coherence": self.ctrl_coherence,
+                    "exploration": self.ctrl_exploration,
+                },
+                "fractional": fractional_state,
+                "latent": {
+                    "z_norm": float(np.linalg.norm(self.z)),
+                    "v_norm": float(np.linalg.norm(self.v)),
+                    "position_2d": pos_2d.tolist(),  # Raw 2D projection
+                    "trajectory_2d": trajectory_2d_raw,  # Raw 2D trajectory for visualization
+                },
+            }
+
+    # Window size class mapping (matches LatentPolicyConfig)
+    WINDOW_CLASS_SIZES = (1, 2, 4, 8, 16)
+
+    def _heuristic_window_size(self, sigma: float) -> int:
+        """
+        Compute window size from local sigma using quantile-based heuristic.
+
+        Same logic as training targets but using stored geometry statistics.
+        """
+        # Compute quantiles from all local_sigma values (cached)
+        if not hasattr(self, "_sigma_quantiles"):
+            sigmas = self.geometry.local_sigma
+            self._sigma_quantiles = {
+                "q10": np.percentile(sigmas, 10),
+                "q25": np.percentile(sigmas, 25),
+                "q50": np.percentile(sigmas, 50),
+                "q75": np.percentile(sigmas, 75),
+            }
+
+        q = self._sigma_quantiles
+
+        # Map sigma to window class (inverse of training: sparse -> short, dense -> long)
+        if sigma < q["q10"]:
+            return 16  # Very dense -> longest window
+        elif sigma < q["q25"]:
+            return 8   # Dense
+        elif sigma < q["q50"]:
+            return 4   # Default
+        elif sigma < q["q75"]:
+            return 2   # Sparse
+        else:
+            return 1   # Very sparse -> shortest window
+
+    @property
+    def _file_ids(self) -> np.ndarray:
+        return self.geometry.file_ids
