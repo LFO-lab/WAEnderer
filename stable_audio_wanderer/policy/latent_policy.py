@@ -29,7 +29,7 @@ class LatentPolicy(nn.Module):
     Inputs:
         - z: [B, T, 64] current position in latent space
         - v: [B, T, 64] current velocity
-        - controls: [B, T, 7] performer control parameters
+        - controls: [B, T, 6] performer control parameters
         - local_features: [B, T, 16] local geometry features
 
     Outputs:
@@ -119,7 +119,7 @@ class LatentPolicy(nn.Module):
         Args:
             z: [B, T, 64] current latent position
             v: [B, T, 64] current velocity
-            controls: [B, T, 7] control parameters
+            controls: [B, T, 6] control parameters
             local_features: [B, T, 16] local geometry features
             hidden: [num_layers, B, H] optional initial hidden state
 
@@ -180,7 +180,7 @@ class LatentPolicy(nn.Module):
         Args:
             z: [1, 1, 64] current position
             v: [1, 1, 64] current velocity
-            controls: [1, 1, 7] control parameters
+            controls: [1, 1, 6] control parameters
             local_features: [1, 1, 16] local geometry features
             hidden: optional hidden state
 

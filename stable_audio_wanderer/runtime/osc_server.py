@@ -68,7 +68,7 @@ def run_server(
             /warp/speed value         - Alias for /grain/rate (multiplier)
 
     Args:
-        nav: NavigationEngine instance
+        nav: Navigation engine instance
         grain_player: GrainPlayer instance (optional)
         scheduler: GrainScheduler instance (optional)
         ip: Server IP address

@@ -1493,7 +1493,7 @@ class GrainScheduler:
         Get navigation interval adjusted by nav_speed.
 
         Args:
-            base_interval: Base interval from NavigationEngine
+            base_interval: Base interval from the navigation engine
 
         Returns:
             Adjusted interval (shorter = faster navigation)

@@ -37,7 +37,7 @@ class WSBroadcaster:
         Initialize broadcaster.
 
         Args:
-            nav: NavigationEngine instance
+            nav: Navigation engine instance
             grain_player: GrainPlayer instance (optional)
             scheduler: GrainScheduler instance (optional)
             fps: Target broadcast rate in frames per second
@@ -101,7 +101,7 @@ class WSBroadcaster:
             pos_2d = [float(np.clip(p, 0.0, 1.0)) for p in pos_2d_normalized]
             current_idx = int(round(nav_state["policy_index"]))
             current_idx = max(0, min(current_idx, len(self._ZZ_2d_norm) - 1))
-        # For index-based navigation, interpolate if fractional state available
+        # If fractional state is available, interpolate for smooth cursor movement
         elif frac_state and frac_state.get("frac", 0.0) > 0.0:
             idx_lower = frac_state["idx_lower"]
             idx_upper = frac_state["idx_upper"]
@@ -130,7 +130,7 @@ class WSBroadcaster:
                 pt_norm = (pt_arr - self._ZZ_2d_min) / self._ZZ_2d_range
                 trajectory_2d.append([float(np.clip(p, 0.0, 1.0)) for p in pt_norm])
         else:
-            # Index mode: use corpus positions for trajectory
+            # Use corpus positions for trajectory
             recent_indices = nav_state["recent_indices"]
             trajectory_2d = [
                 self._ZZ_2d_norm[max(0, min(int(i), len(self._ZZ_2d_norm) - 1))].tolist()
@@ -149,7 +149,7 @@ class WSBroadcaster:
                 "velocity": nav_state["policy_velocity"],
                 "file_id": nav_state["current_file_id"],
                 "fractional": frac_state if frac_state else None,
-                "mode": "latent" if self._is_latent_nav else "index",
+                "mode": "latent",
             },
             "controls": nav_state["controls"],
             "grain": {
@@ -189,7 +189,7 @@ class WSBroadcaster:
             "total_points": n_points,
             "positions_2d": positions,
             "file_ids": file_ids,
-            "navigation_mode": "latent" if self._is_latent_nav else "index",
+            "navigation_mode": "latent",
         })
     
     async def _handle_client(self, websocket):
@@ -366,7 +366,7 @@ def start_ws_server(
     Start a WebSocket server for visualization.
 
     Args:
-        nav: NavigationEngine instance
+        nav: Navigation engine instance
         grain_player: GrainPlayer instance (optional)
         scheduler: GrainScheduler instance (optional)
         host: Server host address
