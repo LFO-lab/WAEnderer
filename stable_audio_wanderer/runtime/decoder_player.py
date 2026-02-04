@@ -1,8 +1,12 @@
 """
 Realtime decoder audio output using sounddevice with dual-buffer architecture.
 
-Uses 50% overlap-add with Hann windowing for seamless transitions.
-Hann window satisfies COLA (Constant Overlap-Add) at 50% overlap.
+Supports two crossfade modes:
+1. Fixed Hann overlap-add (COLA compliant, 50% overlap) - default
+2. Adaptive logarithmic crossfade (variable window sizes) - for dynamic decoding
+
+Logarithmic crossfades maintain perceived loudness better than linear crossfades
+because human hearing perceives loudness logarithmically.
 """
 import threading
 from collections import deque
@@ -17,14 +21,46 @@ except ImportError as exc:
 from ..config import SR
 
 
+# Adaptive crossfade constants
+CROSSFADE_RATIO = 0.25  # 25% of incoming window as crossfade region
+MIN_CROSSFADE_SAMPLES = 64  # Minimum crossfade length
+
+
+def log_fade_in(length: int) -> np.ndarray:
+    """
+    Logarithmic fade-in curve (perceptually linear loudness increase).
+
+    Maps [0, 1] -> [0, 1] using log1p for smooth perceptual transition.
+    """
+    if length <= 0:
+        return np.array([], dtype=np.float32)
+    t = np.linspace(0, 1, length, dtype=np.float32)
+    return (np.log1p(t * (np.e - 1)) / np.log(np.e)).astype(np.float32)
+
+
+def log_fade_out(length: int) -> np.ndarray:
+    """Logarithmic fade-out (complement of fade-in)."""
+    return 1.0 - log_fade_in(length)
+
+
+def compute_crossfade_length(incoming_window_samples: int) -> int:
+    """
+    Compute crossfade length based on incoming window size.
+
+    Shorter windows (transients) -> shorter crossfades (preserve attack)
+    Longer windows (sustained) -> longer crossfades (smooth blend)
+    """
+    return max(MIN_CROSSFADE_SAMPLES, int(incoming_window_samples * CROSSFADE_RATIO))
+
+
 class DecoderPlayer:
     """
     Streaming audio output with dual-buffer architecture and overlap-add.
 
     Architecture:
     - Audio callback (sounddevice thread): Pulls from chunk queue
-    - Decode thread: Applies Hann window + overlap-add, queues result
-    - 50% overlap with Hann window satisfies COLA for seamless reconstruction
+    - Decode thread: Applies crossfade + overlap-add, queues result
+    - Two modes: fixed Hann (COLA) or adaptive logarithmic (variable windows)
 
     This eliminates lock contention and ensures continuous playback.
     """
@@ -35,6 +71,7 @@ class DecoderPlayer:
         gain: float = 1.0,
         smoothing: float = 0.1,
         blocksize: int = 0,
+        adaptive_crossfade: bool = False,
     ):
         self.sr = int(sr)
         self._gain = float(gain)
@@ -42,6 +79,7 @@ class DecoderPlayer:
         self.frame_samples = 0
         self.frame_duration = None
         self.underruns = 0
+        self._adaptive_crossfade = bool(adaptive_crossfade)
 
         # Dual-buffer: active chunk being played + queue of ready chunks
         self._active_chunk = np.zeros((0, 2), dtype=np.float32)
@@ -53,6 +91,9 @@ class DecoderPlayer:
         self._overlap_samples = 0       # Will be set on first chunk
         self._window = None             # Hann window (periodic)
         self._overlap_buffer = None     # Previous chunk's second half (windowed)
+
+        # Adaptive crossfade state (for variable window sizes)
+        self._adaptive_overlap_buffer = None  # Tail from previous frame
 
         self._stream = sd.OutputStream(
             samplerate=self.sr,
@@ -76,6 +117,13 @@ class DecoderPlayer:
 
     def set_smoothing(self, value: float):
         self._smoothing = float(np.clip(value, 0.0, 1.0))
+
+    def set_adaptive_crossfade(self, enabled: bool):
+        """Enable or disable adaptive logarithmic crossfade mode."""
+        self._adaptive_crossfade = bool(enabled)
+        if enabled:
+            # Reset adaptive buffer when switching modes
+            self._adaptive_overlap_buffer = None
 
     def _setup_overlap(self, chunk_len: int):
         """Initialize Hann window for 50% overlap-add (COLA compliant)."""
@@ -118,7 +166,17 @@ class DecoderPlayer:
             out_pos += to_copy
 
     def write_frame(self, audio: np.ndarray):
-        """Apply Hann window and overlap-add, then queue for playback."""
+        """Apply crossfade and overlap-add, then queue for playback.
+
+        Routes to either fixed Hann overlap-add or adaptive logarithmic crossfade
+        based on the adaptive_crossfade setting.
+        """
+        if self._adaptive_crossfade:
+            return self._write_frame_adaptive(audio)
+        return self._write_frame_hann(audio)
+
+    def _write_frame_hann(self, audio: np.ndarray):
+        """Apply Hann window and overlap-add, then queue for playback (COLA compliant)."""
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 1:
             audio = audio[:, None]
@@ -151,6 +209,86 @@ class DecoderPlayer:
         # Save current second half for next overlap
         self._overlap_buffer = second_half.copy()
 
+    def _write_frame_adaptive(self, audio: np.ndarray):
+        """
+        Apply logarithmic crossfade with length based on incoming window.
+
+        Unlike Hann overlap-add (which requires fixed window sizes), this
+        approach handles arbitrary window size transitions smoothly.
+
+        Crossfade length is proportional to the incoming window size:
+        - Shorter windows (transients) -> shorter crossfades (preserve attack)
+        - Longer windows (sustained) -> longer crossfades (smooth blend)
+        """
+        audio = np.asarray(audio, dtype=np.float32)
+        if audio.ndim == 1:
+            audio = audio[:, None]
+        if audio.shape[1] == 1:
+            audio = np.repeat(audio, 2, axis=1)
+
+        incoming_samples = len(audio)
+        crossfade_len = compute_crossfade_length(incoming_samples)
+
+        # Update frame tracking
+        self.frame_samples = incoming_samples
+        self.frame_duration = self.frame_samples / float(self.sr)
+
+        if self._adaptive_overlap_buffer is None:
+            # First frame: no crossfade needed, just save tail
+            if crossfade_len < incoming_samples:
+                self._adaptive_overlap_buffer = audio[-crossfade_len:].copy()
+                output = audio[:-crossfade_len]
+            else:
+                # Very short frame - output all but save for blending
+                self._adaptive_overlap_buffer = audio.copy()
+                output = np.zeros((0, 2), dtype=np.float32)
+        else:
+            # Crossfade region: blend previous tail with new head
+            prev_tail = self._adaptive_overlap_buffer
+            prev_len = len(prev_tail)
+
+            # Use minimum of prev tail and new crossfade length
+            blend_len = min(prev_len, crossfade_len, incoming_samples)
+
+            if blend_len > 0:
+                # Extract regions
+                new_head = audio[:blend_len]
+
+                # Apply logarithmic crossfade
+                fade_out = log_fade_out(blend_len)[:, None]  # [blend_len, 1] for stereo
+                fade_in = log_fade_in(blend_len)[:, None]
+
+                # Trim prev_tail to match blend length
+                prev_tail_trimmed = prev_tail[-blend_len:]
+
+                blended = prev_tail_trimmed * fade_out + new_head * fade_in
+
+                # Determine body and tail regions
+                if crossfade_len < incoming_samples:
+                    new_body = audio[blend_len:-crossfade_len]
+                    new_tail = audio[-crossfade_len:]
+                else:
+                    new_body = np.zeros((0, 2), dtype=np.float32)
+                    new_tail = audio[blend_len:] if blend_len < incoming_samples else audio
+
+                # Concatenate: blended region + body
+                if len(new_body) > 0:
+                    output = np.concatenate([blended, new_body], axis=0)
+                else:
+                    output = blended
+
+                # Save new tail for next crossfade
+                self._adaptive_overlap_buffer = new_tail.copy() if len(new_tail) > 0 else blended[-crossfade_len:].copy()
+            else:
+                # Edge case: no blending possible, just output
+                output = audio[:-crossfade_len] if crossfade_len < incoming_samples else np.zeros((0, 2), dtype=np.float32)
+                self._adaptive_overlap_buffer = audio[-crossfade_len:].copy() if crossfade_len < incoming_samples else audio.copy()
+
+        # Queue output for playback (with gain)
+        if len(output) > 0:
+            with self._queue_lock:
+                self._chunk_queue.append(output * self._gain)
+
     def buffer_duration(self) -> float:
         """Return approximate buffered audio duration in seconds."""
         with self._queue_lock:
@@ -165,4 +303,5 @@ class DecoderPlayer:
             "frame_samples": int(self.frame_samples),
             "underruns": int(self.underruns),
             "buffer_duration": self.buffer_duration(),
+            "adaptive_crossfade": self._adaptive_crossfade,
         }

@@ -22,6 +22,54 @@ from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 
 
+def compute_window_targets(local_sigma: np.ndarray) -> np.ndarray:
+    """
+    Compute window size targets based on local geometry (sigma).
+
+    Uses quantile-based classification:
+    - sigma < q25 (dense regions) → class 3 (8 frames, ~372ms) - long window
+    - sigma < q50 → class 2 (4 frames, ~186ms) - default
+    - sigma < q75 → class 1 (2 frames, ~93ms) - percussive
+    - sigma >= q75 (sparse regions) → class 0 (1 frame, ~47ms) - sharp transients
+
+    The intuition: dense regions have similar neighbors, so longer windows
+    maintain coherence. Sparse regions have unique content, so shorter
+    windows preserve transients.
+
+    Args:
+        local_sigma: [N] array of local sigma values from geometry
+
+    Returns:
+        window_targets: [N] int32 array of window class indices (0-4)
+    """
+    # Compute quantiles
+    q25 = np.percentile(local_sigma, 25)
+    q50 = np.percentile(local_sigma, 50)
+    q75 = np.percentile(local_sigma, 75)
+
+    # Initialize with default class 2
+    targets = np.full(len(local_sigma), 2, dtype=np.int32)
+
+    # Dense regions (low sigma) -> longer windows
+    targets[local_sigma < q25] = 3  # 8 frames
+
+    # Medium-dense -> default
+    # Already set to 2 (4 frames)
+
+    # Medium-sparse -> shorter windows
+    mask_q50_q75 = (local_sigma >= q50) & (local_sigma < q75)
+    targets[mask_q50_q75] = 1  # 2 frames
+
+    # Sparse regions (high sigma) -> shortest windows
+    targets[local_sigma >= q75] = 0  # 1 frame
+
+    # Optional: add class 4 (16 frames) for very dense regions
+    q10 = np.percentile(local_sigma, 10)
+    targets[local_sigma < q10] = 4  # 16 frames for very static regions
+
+    return targets
+
+
 
 
 def compute_segment_latents(latents_dict: Dict[str, np.ndarray], meta: np.ndarray, win_lat: int) -> np.ndarray:
@@ -120,6 +168,12 @@ def main():
     geometry = compute_latent_geometry(GG_l2, meta, k=int(args.latent_nav_k))
     geometry_arrays = save_geometry_to_dict(geometry)
 
+    # Compute window targets for adaptive decoding
+    print("Computing window targets from local geometry...")
+    window_targets = compute_window_targets(geometry.local_sigma)
+    class_counts = np.bincount(window_targets, minlength=5)
+    print(f"  Window class distribution: {dict(enumerate(class_counts.tolist()))}")
+
     # Save corpus
     corpus_path = os.path.join(out_dir, "corpus.npz")
     save_corpus(
@@ -134,6 +188,7 @@ def main():
         segment_dur=np.array(float(args.seg_sec), dtype=np.float32),
         hop_dur=np.array(float(args.hop_sec), dtype=np.float32),
         latent_nav_k=np.array(int(args.latent_nav_k), dtype=np.int32),
+        window_targets=window_targets,
         **geometry_arrays,
     )
 

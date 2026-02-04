@@ -35,6 +35,22 @@ def find_corpus_file(corpus_dir: str):
         return corpus_npz
 
 
+# Valid window sizes (must match policy config)
+VALID_WINDOW_SIZES = (1, 2, 4, 8, 16)
+
+
+def smooth_window_size(current: float, target: int, alpha: float = 0.3) -> float:
+    """Smooth window size transitions to avoid rapid jumps."""
+    return (1.0 - alpha) * current + alpha * float(target)
+
+
+def nearest_valid_size(value: float) -> int:
+    """Round to nearest valid window size class."""
+    value = max(1, min(16, value))
+    # Find closest valid size
+    return min(VALID_WINDOW_SIZES, key=lambda x: abs(x - value))
+
+
 def load_navigation_engine(
     data: dict,
     policy_path: str = None,
@@ -123,6 +139,9 @@ def main():
     ap.add_argument("--window_size", type=int, default=1,
                     help="Number of latent frames to decode together (1-16). "
                          "Higher values increase audio coherence but add latency.")
+    ap.add_argument("--adaptive_window", action="store_true",
+                    help="Enable adaptive window sizing based on policy prediction. "
+                         "Overrides --window_size with dynamic per-frame predictions.")
 
     args = ap.parse_args()
 
@@ -161,7 +180,11 @@ def main():
     print("[info] Loading VAE decoder...")
     vae = load_vae(args.pretrained)
 
-    decoder = DecoderPlayer(gain=args.output_gain, smoothing=args.smoothing)
+    decoder = DecoderPlayer(
+        gain=args.output_gain,
+        smoothing=args.smoothing,
+        adaptive_crossfade=args.adaptive_window,
+    )
 
     # Queue for latent batches (navigation -> decode)
     latent_queue = queue.Queue(maxsize=4)  # Buffer up to 4 windows ahead
@@ -169,9 +192,13 @@ def main():
     running = threading.Event()
     running.set()
 
+    adaptive_mode = args.adaptive_window
     window_size = max(1, min(args.window_size, 16))
     hop_size = (window_size + 1) // 2  # 50% overlap (rounded up)
-    if window_size > 1:
+
+    if adaptive_mode:
+        print("[info] Using adaptive window sizing (policy-predicted)")
+    elif window_size > 1:
         print(f"[info] Using window_size={window_size}, hop_size={hop_size} (overlap-add mode)")
 
     # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
@@ -212,24 +239,54 @@ def main():
     print(f"[info] Latent queue filled ({latent_queue.qsize()} batches)")
 
     # Store prev_half in a mutable container for nav_loop access
-    nav_state = {"prev_half": prev_half}
+    nav_state = {
+        "prev_half": prev_half,
+        "current_window_size": float(window_size),
+        "adaptive_mode": adaptive_mode,
+    }
 
     def nav_loop():
-        """Navigation thread with 50% overlap context."""
-        print("[info] Navigation loop started (overlap-add mode)")
+        """Navigation thread with overlap context (fixed or adaptive)."""
+        mode_str = "adaptive" if nav_state["adaptive_mode"] else "overlap-add"
+        print(f"[info] Navigation loop started ({mode_str} mode)")
         frame_buffer = []
-        prev_half = nav_state["prev_half"]  # Continue from pre-buffering state
+        prev_half = nav_state["prev_half"]
+        current_window_float = nav_state["current_window_size"]
 
         try:
             while running.is_set():
+                # Get current window/hop sizes
+                if nav_state["adaptive_mode"]:
+                    current_window = nearest_valid_size(current_window_float)
+                    current_hop = (current_window + 1) // 2
+                else:
+                    current_window = window_size
+                    current_hop = hop_size
+
                 # Accumulate new frames
                 frame = nav.step()
                 frame_buffer.append(frame)
 
-                # Need hop_size new frames to complete next window
-                if len(frame_buffer) >= hop_size:
+                # Update smoothed window size from policy prediction
+                if nav_state["adaptive_mode"]:
+                    target_window = frame.predicted_window_size
+                    current_window_float = smooth_window_size(current_window_float, target_window)
+
+                # Need current_hop new frames to complete next window
+                if len(frame_buffer) >= current_hop:
+                    # Adjust prev_half to match current window requirements
+                    # If window size changed, we may need to pad/truncate prev_half
+                    target_prev_len = current_window - current_hop
+                    if len(prev_half) < target_prev_len:
+                        # Pad by repeating last frames
+                        while len(prev_half) < target_prev_len:
+                            prev_half.append(prev_half[-1] if prev_half else frame_buffer[0])
+                    elif len(prev_half) > target_prev_len:
+                        # Truncate from the front
+                        prev_half = prev_half[-target_prev_len:]
+
                     # Combine: prev_half + new frames = full window
-                    full_window = prev_half + frame_buffer[:hop_size]
+                    full_window = prev_half + frame_buffer[:current_hop]
 
                     # Batch manifold constraint (fast: ~2-5ms)
                     z_batch_norm = manifold.generate_batch(
@@ -245,8 +302,8 @@ def main():
                         pass  # Drop if decode can't keep up
 
                     # Second half becomes first half of next window
-                    prev_half = full_window[hop_size:]
-                    frame_buffer = frame_buffer[hop_size:]
+                    prev_half = full_window[current_hop:]
+                    frame_buffer = frame_buffer[current_hop:]
         except Exception as e:
             print(f"[error] Navigation loop exception: {e}")
             import traceback
@@ -325,7 +382,9 @@ def main():
     print(
         f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
     )
-    if args.window_size > 1:
+    if args.adaptive_window:
+        print("[info] Window size: adaptive (policy-predicted, 1-16 frames)")
+    elif args.window_size > 1:
         print(f"[info] Window size: {args.window_size} frames (batched decoding)")
 
     try:
