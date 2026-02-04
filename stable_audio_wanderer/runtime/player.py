@@ -1,6 +1,6 @@
 """
 64D latent navigation engine for corpus exploration.
-Audio playback is handled separately by GrainPlayer.
+Produces continuous latent trajectories for downstream decoding.
 """
 import os
 # Fix OpenMP duplicate library issue on macOS (must be set before importing faiss)
@@ -8,14 +8,28 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import numpy as np
 import threading
+from dataclasses import dataclass
 from collections import deque
 from typing import Optional, Tuple
 from scipy.spatial import cKDTree
 import torch
 
-from ..config import DEVICE, LATENT_HZ
+from ..config import DEVICE
 from ..policy.latent_geometry import LatentGeometry
 from ..policy.latent_policy import LatentPolicy, LatentPolicyConfig, build_local_features
+
+
+@dataclass
+class NavFrame:
+    """Navigation output for a single step."""
+    z_nav: np.ndarray           # [64] current latent position after step
+    indices: np.ndarray         # [K] kNN indices around z_nav
+    distances: np.ndarray       # [K] cosine distances to kNN indices
+    nearest_idx: int            # nearest neighbor index
+    local_sigma: float          # local sigma at nearest neighbor
+    time_gradient: np.ndarray   # [64] time gradient at nearest neighbor
+    t_lat: float                # latent time index for nearest neighbor
+    file_id: int                # file id for nearest neighbor
 
 
 class LatentNavigationEngine:
@@ -23,7 +37,7 @@ class LatentNavigationEngine:
     64D latent space navigation engine for corpus exploration.
 
     Maintains continuous position z in 64D embedding space.
-    Uses FAISS for fast kNN search and Gaussian kernel weights for sampling.
+    Uses FAISS for fast kNN search and Gaussian kernel weights for interpolation.
 
     Control parameters (6 total):
         - width (0-1): Temperature scaling for exploration breadth
@@ -52,8 +66,6 @@ class LatentNavigationEngine:
         control_memory: float = 0.0,
         control_coherence: float = 0.0,
         control_exploration: float = 0.0,
-        grain_rate: float = 21.5,
-        grain_jitter: float = 0.0,
     ):
         """
         Initialize latent navigation engine.
@@ -66,8 +78,6 @@ class LatentNavigationEngine:
             policy_temperature: Base temperature for policy sampling
             policy_sample: Whether to sample from policy (True) or use mode (False)
             control_*: Initial control parameters (0-1)
-            grain_rate: Initial grain trigger rate (grains/sec)
-            grain_jitter: Initial timing jitter (0-1)
         """
         self.GG = GG.astype(np.float32)
         self.meta = meta
@@ -118,10 +128,6 @@ class LatentNavigationEngine:
         self._recent_z = deque(maxlen=128)
         self._recent_indices = deque(maxlen=128)
 
-        # Grain rate control
-        self._grain_rate = float(max(LATENT_HZ, grain_rate))
-        self._grain_jitter = float(np.clip(grain_jitter, 0.0, 1.0))
-
         # Thread safety
         self._lock = threading.Lock()
 
@@ -160,7 +166,7 @@ class LatentNavigationEngine:
             if len(coords) >= 2:
                 coords_2d = np.array(coords[:2], dtype=np.float32)
                 # Inverse project: 2D -> 64D (approximate via pseudo-inverse)
-                pca_pinv = np.linalg.pinv(self.geometry.pca_components)  # [64, 2]
+                pca_pinv = np.linalg.pinv(self.geometry.pca_components_2d)  # [64, 2]
                 z_centered = coords_2d @ pca_pinv.T
                 self.z = (z_centered + self.geometry.pca_mean).astype(np.float32)
                 # Reset velocity when cursor is set
@@ -210,33 +216,6 @@ class LatentNavigationEngine:
             self.v = np.zeros(self.latent_dim, dtype=np.float32)
             self._reset_policy_state()
 
-    # --- Grain rate control ---
-    def set_grain_rate(self, rate: float):
-        """Set grain trigger rate (minimum LATENT_HZ = 21.5 Hz)."""
-        with self._lock:
-            self._grain_rate = float(max(LATENT_HZ, rate))
-
-    def set_grain_jitter(self, jitter: float):
-        """Set grain timing jitter (0-1)."""
-        with self._lock:
-            self._grain_jitter = float(np.clip(jitter, 0.0, 1.0))
-
-    @property
-    def grain_rate(self) -> float:
-        return self._grain_rate
-
-    @property
-    def grain_jitter(self) -> float:
-        return self._grain_jitter
-
-    def get_trigger_interval(self) -> float:
-        """Get time between grain triggers, with optional jitter."""
-        base_interval = 1.0 / self._grain_rate
-        if self._grain_jitter > 0:
-            jitter = (np.random.random() - 0.5) * 2 * self._grain_jitter * base_interval
-            return max(0.01, base_interval + jitter)
-        return base_interval
-
     # --- Control vector for policy ---
     def _control_vector(self) -> np.ndarray:
         """Build 6-dimensional control vector for policy."""
@@ -280,12 +259,12 @@ class LatentNavigationEngine:
         return weights / (weights.sum() + 1e-8)
 
     # --- Navigation step ---
-    def _navigation_step(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _navigation_step(self) -> NavFrame:
         """
         Execute one navigation step using policy or stochastic dynamics.
 
         Returns:
-            (indices, weights, times, file_ids) for K neighbors
+            NavFrame for the updated latent position
         """
         # Get kNN around current position
         k = self.geometry.K
@@ -372,43 +351,33 @@ class LatentNavigationEngine:
         self.z = z_new.astype(np.float32)
         self._recent_z.append(self.z.copy())
 
-        # Re-query kNN at new position for render weights
+        # Re-query kNN at new position for updated neighborhood
         indices, distances = self._query_knn(self.z, k=k)
 
-        # Compute Gaussian weights
-        weights = self._compute_gaussian_weights(distances, local_sigma)
-
-        # Get time and file info
-        times = self.geometry.t_lat[indices].astype(np.float32)
-        file_ids = self.geometry.file_ids[indices].astype(np.int32)
+        nearest_idx = int(indices[0])
+        local_sigma = float(self.geometry.local_sigma[nearest_idx])
+        time_gradient = self.geometry.time_gradients[nearest_idx]
+        t_lat = float(self.geometry.t_lat[nearest_idx])
+        file_id = int(self.geometry.file_ids[nearest_idx])
 
         # Track state
-        self._recent_indices.append(int(indices[0]))
-        self._current_file_id = int(file_ids[0])
+        self._recent_indices.append(nearest_idx)
+        self._current_file_id = file_id
 
-        return indices, weights, times, file_ids
+        return NavFrame(
+            z_nav=self.z.copy(),
+            indices=indices.astype(np.int32),
+            distances=distances.astype(np.float32),
+            nearest_idx=nearest_idx,
+            local_sigma=local_sigma,
+            time_gradient=time_gradient.copy(),
+            t_lat=t_lat,
+            file_id=file_id,
+        )
 
     # --- Main API ---
-    def pick_next_index(self) -> int:
-        """
-        Pick next segment index based on stochastic kNN sampling.
-
-        Returns:
-            Segment index (0 to N-1)
-        """
-        with self._lock:
-            indices, weights, _, _ = self._navigation_step()
-            # Stochastic sample from neighbors
-            idx = np.random.choice(indices, p=weights)
-            return int(idx)
-
-    def get_render_weights(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Get kNN neighbors with sampling weights for render stage.
-
-        Returns:
-            (indices, weights, times, file_ids) arrays of shape [K]
-        """
+    def step(self) -> NavFrame:
+        """Advance navigation by one step and return NavFrame."""
         with self._lock:
             return self._navigation_step()
 
@@ -501,8 +470,6 @@ class LatentNavigationEngine:
                     "coherence": self.ctrl_coherence,
                     "exploration": self.ctrl_exploration,
                 },
-                "grain_rate": self._grain_rate,
-                "grain_jitter": self._grain_jitter,
                 "fractional": fractional_state,
                 "latent": {
                     "z_norm": float(np.linalg.norm(self.z)),
@@ -515,4 +482,3 @@ class LatentNavigationEngine:
     @property
     def _file_ids(self) -> np.ndarray:
         return self.geometry.file_ids
-

@@ -367,226 +367,25 @@
                 </div>
             </div>
 
-            <h2>Grain Playback</h2>
-            
-            <h3>Navigation</h3>
+            <h2>Decoder</h2>
+
             <div class="control-row">
                 <div class="control-group">
                     <div class="control-label">
-                        <span>Nav Rate (Hz)</span>
-                        <span class="control-value" id="val-trigger_rate">21.5</span>
+                        <span>Gain</span>
+                        <span class="control-value" id="val-gain">1.00</span>
                     </div>
-                    <input type="range" id="grain-trigger_rate" min="21.5" max="100" step="0.5" value="21.5">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Jitter</span>
-                        <span class="control-value" id="val-trigger_jitter">0.00</span>
-                    </div>
-                    <input type="range" id="grain-trigger_jitter" min="0" max="1" step="0.01" value="0">
-                </div>
-            </div>
-
-            <div class="control-group">
-                <div class="control-label">
-                    <span>Nav Speed</span>
-                    <span class="control-value" id="val-nav_speed">1.00</span>
-                </div>
-                <input type="range" id="scheduler-nav_speed" min="0.1" max="4" step="0.1" value="1">
-            </div>
-
-            <h3>Grain Density</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Streams</span>
-                        <span class="control-value" id="val-num_streams">4</span>
-                    </div>
-                    <input type="range" id="scheduler-num_streams" min="1" max="16" step="1" value="4">
+                    <input type="range" id="decoder-gain" min="0" max="2" step="0.01" value="1">
                 </div>
 
                 <div class="control-group">
                     <div class="control-label">
-                        <span>Overlap</span>
-                        <span class="control-value" id="val-overlap">0.75</span>
+                        <span>Smoothing</span>
+                        <span class="control-value" id="val-smoothing">0.10</span>
                     </div>
-                    <input type="range" id="scheduler-overlap" min="0" max="0.95" step="0.05" value="0.75">
+                    <input type="range" id="decoder-smoothing" min="0" max="1" step="0.01" value="0.1">
                 </div>
             </div>
-
-            <h3>Voice Pool</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Active Voices</span>
-                        <span class="control-value" id="val-voices_active">0</span>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Total Voices</span>
-                        <span class="control-value" id="val-voices_total">0</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="control-group">
-                <div class="control-label">
-                    <span>Drops/sec</span>
-                    <span class="control-value" id="val-drops_per_sec">0.0</span>
-                </div>
-            </div>
-
-            <h3>Pitch</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Pitch</span>
-                        <span class="control-value" id="val-pitch">1.00</span>
-                    </div>
-                    <input type="range" id="grain-pitch" min="0.25" max="4" step="0.01" value="1">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Spread (st)</span>
-                        <span class="control-value" id="val-pitch_spread">0.00</span>
-                    </div>
-                    <input type="range" id="grain-pitch_spread" min="0" max="12" step="0.1" value="0">
-                </div>
-            </div>
-            
-            <h3>Duration</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Duration (s)</span>
-                        <span class="control-value" id="val-grain_dur">0.05</span>
-                    </div>
-                    <input type="range" id="grain-grain_dur" min="0.01" max="1.0" step="0.01" value="0.05">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Spread</span>
-                        <span class="control-value" id="val-grain_dur_spread">0.00</span>
-                    </div>
-                    <input type="range" id="grain-grain_dur_spread" min="0" max="1" step="0.01" value="0">
-                </div>
-            </div>
-            
-            <h3>Position</h3>
-            <div class="control-group">
-                <div class="control-label">
-                    <span>Position Spread</span>
-                    <span class="control-value" id="val-position_spread">0.00</span>
-                </div>
-                <input type="range" id="grain-position_spread" min="0" max="1" step="0.01" value="0">
-            </div>
-            
-            <h3>Stereo</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Pan</span>
-                        <span class="control-value" id="val-pan">0.50</span>
-                    </div>
-                    <input type="range" id="grain-pan" min="0" max="1" step="0.01" value="0.5">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Spread</span>
-                        <span class="control-value" id="val-pan_spread">0.00</span>
-                    </div>
-                    <input type="range" id="grain-pan_spread" min="0" max="1" step="0.01" value="0">
-                </div>
-            </div>
-            
-            <h3>Filter</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Cutoff (Hz)</span>
-                        <span class="control-value" id="val-filter_freq">20000</span>
-                    </div>
-                    <input type="range" id="grain-filter_freq" min="100" max="20000" step="100" value="20000">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Resonance</span>
-                        <span class="control-value" id="val-filter_q">1.00</span>
-                    </div>
-                    <input type="range" id="grain-filter_q" min="0.5" max="10" step="0.1" value="1">
-                </div>
-            </div>
-            
-            <h3>Envelope & FX</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Envelope</span>
-                    </div>
-                    <select id="grain-envelope">
-                        <option value="hann" selected>Hann</option>
-                        <option value="hamming">Hamming</option>
-                        <option value="blackman">Blackman</option>
-                        <option value="blackman_harris">Blackman-Harris</option>
-                        <option value="kaiser">Kaiser</option>
-                        <option value="gaussian">Gaussian</option>
-                        <option value="triangle">Triangle</option>
-                        <option value="trapezoid">Trapezoid</option>
-                        <option value="expodec">Exp Decay</option>
-                        <option value="rexpodec">Exp Attack</option>
-                    </select>
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Reverse %</span>
-                        <span class="control-value" id="val-reverse_prob">0.00</span>
-                    </div>
-                    <input type="range" id="grain-reverse_prob" min="0" max="1" step="0.01" value="0">
-                </div>
-            </div>
-            
-            <h3>Master</h3>
-            <div class="control-group">
-                <div class="control-label">
-                    <span>Amplitude</span>
-                    <span class="control-value" id="val-master_amp">1.00</span>
-                </div>
-                <input type="range" id="grain-master_amp" min="0" max="2" step="0.01" value="1">
-            </div>
-
-            <h3>Audio Quality</h3>
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Zero-Cross</span>
-                        <span class="control-value" id="val-zero_crossing_align">off</span>
-                    </div>
-                    <label class="toggle">
-                        <input type="checkbox" id="grain-zero_crossing_align">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Phase Coherence</span>
-                        <span class="control-value" id="val-phase_coherence">off</span>
-                    </div>
-                    <label class="toggle">
-                        <input type="checkbox" id="grain-phase_coherence">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-            <button id="btn-phase-reset" class="secondary">Reset Phase</button>
 
             <button id="btn-reset">Reset Policy</button>
             <button id="btn-reconnect" class="secondary">Reconnect</button>

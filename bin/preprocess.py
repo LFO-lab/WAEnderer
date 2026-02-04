@@ -1,98 +1,27 @@
 #!/usr/bin/env python3
 """
-Preprocess audio files into a 64D latent corpus with geometry and grains.
+Preprocess audio files into a 64D latent corpus with geometry.
 Pipeline:
   - Encode audio with Stable Audio Open VAE
   - Mean-pool latents per segment -> GG (64D)
   - Normalize GG with global Z_mean/Z_std
-  - Compute latent geometry (kNN + PCA for visualization)
-  - Render grains and save manifest
+  - Compute latent geometry (kNN + PCA)
 """
 import os
 import argparse
 import datetime
 import glob
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 import numpy as np
 from tqdm import tqdm
 
 from stable_audio_wanderer.config import SR, LATENT_HZ
 from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
-from stable_audio_wanderer.io.corpus_io import save_corpus, save_grain_manifest
-from stable_audio_wanderer.io.audio_io import save_wav
+from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 
 
-def render_grains(
-    wav_dict: Dict[int, np.ndarray],
-    meta: np.ndarray,
-    grain_sec: float,
-    out_dir: str,
-    sr: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
-    """Render raw grains to disk (no envelope - enveloping happens at playback)."""
-    grain_len_samp = int(round(grain_sec * sr))
-
-    # Group segments by file
-    file_segments: Dict[int, List[Tuple[int, int]]] = {}
-    for seg_idx, (fid, t_lat, _) in enumerate(meta):
-        fid = int(fid)
-        if fid not in file_segments:
-            file_segments[fid] = []
-        file_segments[fid].append((seg_idx, int(t_lat)))
-
-    offsets_list: List[int] = []
-    lengths_list: List[int] = []
-    file_ids_list: List[int] = []
-    segment_ids_list: List[int] = []
-    grain_paths: List[str] = []
-
-    grains_dir = os.path.join(out_dir, "grains")
-    os.makedirs(grains_dir, exist_ok=True)
-
-    file_ids = sorted(file_segments.keys())
-    for fid in file_ids:
-        wav = wav_dict[fid]
-        segments = file_segments[fid]
-
-        grain_buffer_list: List[np.ndarray] = []
-        current_offset = 0
-
-        for seg_idx, t_lat in segments:
-            sec_start = t_lat / LATENT_HZ
-            samp_start = int(round(sec_start * sr))
-            samp_end = min(samp_start + grain_len_samp, wav.shape[0])
-            grain = wav[samp_start:samp_end].copy()
-
-            if grain.shape[0] < grain_len_samp:
-                pad_len = grain_len_samp - grain.shape[0]
-                pad = np.zeros((pad_len, grain.shape[1]), dtype=np.float32)
-                grain = np.concatenate([grain, pad], axis=0)
-
-            offsets_list.append(current_offset)
-            lengths_list.append(grain.shape[0])
-            file_ids_list.append(fid)
-            segment_ids_list.append(seg_idx)
-
-            grain_buffer_list.append(grain)
-            current_offset += grain.shape[0]
-
-        if grain_buffer_list:
-            file_grain_buffer = np.concatenate(grain_buffer_list, axis=0)
-            grain_path = os.path.join(grains_dir, f"file_{fid:04d}.wav")
-            save_wav(grain_path, file_grain_buffer, sr)
-            grain_paths.append(grain_path)
-        else:
-            grain_paths.append("")
-
-    return (
-        np.array(offsets_list, dtype=np.int64),
-        np.array(lengths_list, dtype=np.int64),
-        np.array(file_ids_list, dtype=np.int32),
-        np.array(segment_ids_list, dtype=np.int32),
-        grain_paths,
-    )
 
 
 def compute_segment_latents(latents_dict: Dict[str, np.ndarray], meta: np.ndarray, win_lat: int) -> np.ndarray:
@@ -116,7 +45,7 @@ def compute_segment_latents(latents_dict: Dict[str, np.ndarray], meta: np.ndarra
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Preprocess: VAE latents -> 64D corpus + geometry + grains."
+        description="Preprocess: VAE latents -> 64D corpus + geometry."
     )
     ap.add_argument("--audio_dir", required=True)
     ap.add_argument("--out_prefix", required=True)
@@ -124,18 +53,6 @@ def main():
     ap.add_argument("--seg_sec", type=float, default=0.2)
     ap.add_argument("--hop_sec", type=float, default=0.05)
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
-    ap.add_argument(
-        "--render_grains",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Render pre-baked grain audio buffers for runtime playback (default: on).",
-    )
-    ap.add_argument(
-        "--grain_sec",
-        type=float,
-        default=1.0 / LATENT_HZ,
-        help="Grain duration in seconds (default: 1/LATENT_HZ).",
-    )
 
     args = ap.parse_args()
 
@@ -220,37 +137,11 @@ def main():
         **geometry_arrays,
     )
 
-    # Grain rendering
-    grain_manifest_path = None
-    if args.render_grains:
-        print(f"Rendering grains (grain_sec={args.grain_sec})...")
-        offsets, lengths, file_ids, segment_ids, grain_paths = render_grains(
-            wav_dict=wav_dict,
-            meta=meta,
-            grain_sec=args.grain_sec,
-            out_dir=out_dir,
-            sr=SR,
-        )
-        grain_manifest_path = os.path.join(out_dir, "grains", "manifest.npz")
-        save_grain_manifest(
-            path=grain_manifest_path,
-            offsets=offsets,
-            lengths=lengths,
-            file_ids=file_ids,
-            segment_ids=segment_ids,
-            grain_paths=grain_paths,
-            grain_sec=args.grain_sec,
-            grain_hop_sec=args.hop_sec,
-            sr=SR,
-        )
-
     # Clear wav_dict to free memory
     wav_dict.clear()
 
     print("\nSaved:")
     print("  Corpus         :", corpus_path)
-    if grain_manifest_path is not None:
-        print("  Grain manifest :", grain_manifest_path)
 
 
 if __name__ == "__main__":

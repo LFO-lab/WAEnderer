@@ -515,12 +515,8 @@ function handleMessage(data) {
             updateControlDisplays('ctrl', data.controls);
         }
 
-        if (data.grain) {
-            updateControlDisplays('grain', data.grain);
-        }
-
-        if (data.scheduler) {
-            updateControlDisplays('scheduler', data.scheduler);
+        if (data.decoder) {
+            updateControlDisplays('decoder', data.decoder);
         }
     }
 }
@@ -554,12 +550,7 @@ function updateControlDisplays(prefix, values) {
             continue;
         }
 
-        // For scheduler, only update if the input element exists
-        // This prevents scheduler.grain_dur from overwriting grain.grain_dur display
         const input = document.getElementById(inputId);
-        if (prefix === 'scheduler' && !input) {
-            continue;
-        }
 
         const display = document.getElementById(`val-${key}`);
 
@@ -576,12 +567,8 @@ function updateControlDisplays(prefix, values) {
 
         // Handle numeric values
         if (display && typeof value === 'number') {
-            if (key === 'filter_freq') {
+            if (key === 'frame_samples' || key === 'underruns') {
                 display.textContent = value.toFixed(0);
-            } else if (key === 'num_streams' || key.startsWith('voices_')) {
-                display.textContent = value.toFixed(0);
-            } else if (key === 'drops_per_sec') {
-                display.textContent = value.toFixed(1);
             } else {
                 display.textContent = value.toFixed(2);
             }
@@ -622,63 +609,16 @@ function setupControls() {
         }
     });
     
-    // Grain controls - all parameters
-    const grainControls = [
-        'trigger_rate',
-        'trigger_jitter',
-        'pitch',
-        'pitch_spread',
-        'grain_dur',
-        'grain_dur_spread',
-        'position_spread',
-        'pan',
-        'pan_spread',
-        'filter_freq',
-        'filter_q',
-        'reverse_prob',
-        'master_amp',
+    // Decoder controls
+    const decoderControls = [
+        { param: 'gain', format: 2 },
+        { param: 'smoothing', format: 2 },
     ];
 
-    grainControls.forEach(param => {
-        const input = document.getElementById(`grain-${param}`);
+    decoderControls.forEach(({ param, format }) => {
+        const input = document.getElementById(`decoder-${param}`);
         const display = document.getElementById(`val-${param}`);
-        const inputId = `grain-${param}`;
-
-        if (input) {
-            // Track when user starts adjusting
-            input.addEventListener('mousedown', () => activeControls.add(inputId));
-            input.addEventListener('touchstart', () => activeControls.add(inputId));
-
-            // Track when user stops adjusting
-            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
-            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
-            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
-
-            input.addEventListener('input', (e) => {
-                const value = parseFloat(e.target.value);
-                if (display) {
-                    if (param === 'filter_freq') {
-                        display.textContent = value.toFixed(0);
-                    } else {
-                        display.textContent = value.toFixed(2);
-                    }
-                }
-                sendGrainParam(param, value);
-            });
-        }
-    });
-
-    // Scheduler controls
-    const schedulerControls = [
-        { param: 'nav_speed', format: 2 },
-        { param: 'num_streams', format: 0 },
-        { param: 'overlap', format: 2 },
-    ];
-
-    schedulerControls.forEach(({ param, format }) => {
-        const input = document.getElementById(`scheduler-${param}`);
-        const display = document.getElementById(`val-${param}`);
-        const inputId = `scheduler-${param}`;
+        const inputId = `decoder-${param}`;
 
         if (input) {
             // Track when user starts adjusting
@@ -695,45 +635,10 @@ function setupControls() {
                 if (display) {
                     display.textContent = value.toFixed(format);
                 }
-                sendSchedulerParam(param, value);
+                sendDecoderParam(param, value);
             });
         }
     });
-    
-    // Envelope select
-    const envSelect = document.getElementById('grain-envelope');
-    if (envSelect) {
-        envSelect.addEventListener('change', (e) => {
-            sendGrainParam('envelope', e.target.value);
-        });
-    }
-
-    // Audio quality toggle controls
-    const zeroCrossInput = document.getElementById('grain-zero_crossing_align');
-    if (zeroCrossInput) {
-        zeroCrossInput.addEventListener('change', (e) => {
-            const enabled = e.target.checked;
-            document.getElementById('val-zero_crossing_align').textContent = enabled ? 'on' : 'off';
-            sendGrainParam('zero_crossing_align', enabled);
-        });
-    }
-
-    const phaseCoherenceInput = document.getElementById('grain-phase_coherence');
-    if (phaseCoherenceInput) {
-        phaseCoherenceInput.addEventListener('change', (e) => {
-            const enabled = e.target.checked;
-            document.getElementById('val-phase_coherence').textContent = enabled ? 'on' : 'off';
-            sendGrainParam('phase_coherence', enabled);
-        });
-    }
-
-    // Phase reset button
-    const phaseResetBtn = document.getElementById('btn-phase-reset');
-    if (phaseResetBtn) {
-        phaseResetBtn.addEventListener('click', () => {
-            sendGrainParam('phase_reset', true);
-        });
-    }
 
     // Visualization mode buttons
     document.querySelectorAll('.viz-option').forEach(btn => {
@@ -772,19 +677,10 @@ function sendControl(name, value) {
     }
 }
 
-function sendGrainParam(name, value) {
+function sendDecoderParam(name, value) {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
-            type: 'grain',
-            params: { [name]: value }
-        }));
-    }
-}
-
-function sendSchedulerParam(name, value) {
-    if (ws && wsConnected) {
-        ws.send(JSON.stringify({
-            type: 'scheduler',
+            type: 'decoder',
             params: { [name]: value }
         }));
     }

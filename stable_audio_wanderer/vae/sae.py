@@ -1,6 +1,6 @@
 """
 VAE encoding utilities for offline preprocessing.
-Runtime playback uses pre-rendered grains instead of live decoding.
+Runtime playback uses live decoding.
 """
 from typing import Optional
 import numpy as np
@@ -113,5 +113,5 @@ def encode_full(ae, wav_np: np.ndarray, chunk_sec: Optional[float] = None, overl
         z_full = np.concatenate([z_full, pad], axis=0)
     return z_full
 
-# decode_window removed - runtime uses pre-rendered grains instead of live VAE decoding
+# decode_window removed - runtime uses live VAE decoding
 # load_wav moved to stable_audio_wanderer.io.audio_io (re-exported above for compatibility)

@@ -9,7 +9,6 @@ import time
 from typing import Optional, Set, Tuple
 import numpy as np
 
-from ..config import LATENT_HZ
 
 try:
     import websockets
@@ -28,26 +27,23 @@ class WSBroadcaster:
         - Recent trajectory (last 128 indices)
         - 2D projection of current position
         - All control values
-        - Grain player state
-        - Scheduler state (multi-stream granular)
+        - Decoder state (gain, smoothing, underruns)
     """
 
-    def __init__(self, nav, grain_player=None, scheduler=None, fps: float = 30.0):
+    def __init__(self, nav, decoder=None, fps: float = 30.0):
         """
         Initialize broadcaster.
 
         Args:
             nav: Navigation engine instance
-            grain_player: GrainPlayer instance (optional)
-            scheduler: GrainScheduler instance (optional)
+            decoder: DecoderPlayer instance (optional)
             fps: Target broadcast rate in frames per second
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
 
         self.nav = nav
-        self.grain_player = grain_player
-        self.scheduler = scheduler
+        self.decoder = decoder
         self.fps = fps
         self.interval = 1.0 / fps
 
@@ -68,7 +64,7 @@ class WSBroadcaster:
         if self._is_latent_nav:
             # For latent nav, use the stored PCA projection
             self._ZZ_2d = self.nav.geometry.project_to_2d(self.nav.GG)
-            self._projection_matrix = self.nav.geometry.pca_components
+            self._projection_matrix = self.nav.geometry.pca_components_2d
         elif self.nav.ZZ.shape[1] > 2:
             # Use PCA for projection to 2D
             from sklearn.decomposition import PCA
@@ -152,23 +148,15 @@ class WSBroadcaster:
                 "mode": "latent",
             },
             "controls": nav_state["controls"],
-            "grain": {
-                "trigger_rate": nav_state["grain_rate"],
-                "trigger_jitter": nav_state["grain_jitter"],
-            },
         }
 
         # Add latent-specific state if available
         if self._is_latent_nav and "latent" in nav_state:
             state["navigation"]["latent"] = nav_state["latent"]
         
-        # Add grain player state if available
-        if self.grain_player is not None:
-            state["grain"].update(self.grain_player.get_state())
-
-        # Add scheduler state if available
-        if self.scheduler is not None:
-            state["scheduler"] = self.scheduler.get_state()
+        # Add decoder state if available
+        if self.decoder is not None:
+            state["decoder"] = self.decoder.get_state()
 
         return json.dumps(state)
     
@@ -238,52 +226,16 @@ class WSBroadcaster:
                 idx = data.get("index")
                 self.nav.reset_policy(idx=idx)
                 
-            elif msg_type == "grain":
-                # Update grain parameters
+            elif msg_type == "decoder":
                 params = data.get("params", {})
-                for key, value in params.items():
-                    # Enforce minimum rate of LATENT_HZ for trigger_rate
-                    if key == "trigger_rate":
-                        value = max(LATENT_HZ, value)
-                        self.nav.set_grain_rate(value)
-                    elif key == "trigger_jitter":
-                        self.nav.set_grain_jitter(value)
-
-                    # Also update grain player if available
-                    if self.grain_player is not None:
-                        # Special case: phase_reset is a bang (no value)
-                        if key == "phase_reset":
-                            try:
-                                self.grain_player.reset_phase()
-                            except Exception as e:
-                                print(f"[ws] Error resetting phase: {e}")
-                            continue
-
-                        setter = getattr(self.grain_player, f"set_{key}", None)
-                        if setter is not None:
-                            try:
-                                setter(value)
-                            except Exception as e:
-                                print(f"[ws] Error setting grain.{key}: {e}")
-
-                    # Sync scheduler timing when grain_dur changes
-                    if key == "grain_dur" and self.scheduler is not None:
-                        try:
-                            self.scheduler.set_grain_dur(value)
-                        except Exception as e:
-                            print(f"[ws] Error syncing scheduler grain_dur: {e}")
-                            
-            elif msg_type == "scheduler":
-                # Update scheduler parameters
-                if self.scheduler is not None:
-                    params = data.get("params", {})
+                if self.decoder is not None:
                     for key, value in params.items():
-                        setter = getattr(self.scheduler, f"set_{key}", None)
+                        setter = getattr(self.decoder, f"set_{key}", None)
                         if setter is not None:
                             try:
                                 setter(value)
                             except Exception as e:
-                                print(f"[ws] Error setting scheduler.{key}: {e}")
+                                print(f"[ws] Error setting decoder.{key}: {e}")
 
             elif msg_type == "request_corpus":
                 # Client requesting corpus data
@@ -356,8 +308,7 @@ class WSBroadcaster:
 
 def start_ws_server(
     nav,
-    grain_player=None,
-    scheduler=None,
+    decoder=None,
     host: str = "127.0.0.1",
     port: int = 8765,
     fps: float = 30.0,
@@ -367,8 +318,7 @@ def start_ws_server(
 
     Args:
         nav: Navigation engine instance
-        grain_player: GrainPlayer instance (optional)
-        scheduler: GrainScheduler instance (optional)
+        decoder: DecoderPlayer instance (optional)
         host: Server host address
         port: Server port
         fps: Broadcast rate in frames per second
@@ -376,6 +326,6 @@ def start_ws_server(
     Returns:
         Tuple of (WSBroadcaster, Thread)
     """
-    broadcaster = WSBroadcaster(nav, grain_player, scheduler, fps=fps)
+    broadcaster = WSBroadcaster(nav, decoder, fps=fps)
     thread = broadcaster.start(host, port)
     return broadcaster, thread

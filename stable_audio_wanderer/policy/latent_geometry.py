@@ -27,7 +27,7 @@ class LatentGeometry:
         file_ids: [N] source file ID for each segment
         t_lat: [N] latent time position (frame index within file)
         centroid: [64] global centroid of the latent space
-        pca_components: [2, 64] PCA projection matrix for visualization (64D -> 2D)
+        pca_components: [D, 64] PCA projection matrix (full rank)
         pca_mean: [64] mean used for PCA centering
     """
     knn_indices: np.ndarray       # [N, K] neighbor indices
@@ -38,7 +38,7 @@ class LatentGeometry:
     file_ids: np.ndarray          # [N] source file ID
     t_lat: np.ndarray             # [N] latent time position
     centroid: np.ndarray          # [64] global centroid
-    pca_components: np.ndarray    # [2, 64] PCA projection matrix
+    pca_components: np.ndarray    # [D, 64] PCA projection matrix (full-rank)
     pca_mean: np.ndarray          # [64] PCA mean for centering
 
     @property
@@ -85,7 +85,14 @@ class LatentGeometry:
         """
         # Center and project
         z_centered = z - self.pca_mean
-        return z_centered @ self.pca_components.T
+        return z_centered @ self.pca_components_2d.T
+
+    @property
+    def pca_components_2d(self) -> np.ndarray:
+        """Return the first two PCA components for 2D projection."""
+        if self.pca_components.shape[0] < 2:
+            raise ValueError("PCA components must have at least 2 rows for 2D projection.")
+        return self.pca_components[:2]
 
 
 def compute_latent_geometry(
@@ -180,9 +187,9 @@ def compute_latent_geometry(
     # Compute global centroid
     centroid = GG.mean(axis=0).astype(np.float32)
 
-    # Compute PCA for 2D projection (for visualization)
+    # Compute full PCA (for manifold projection + visualization)
     from sklearn.decomposition import PCA
-    pca = PCA(n_components=2)
+    pca = PCA(n_components=D)
     pca.fit(GG)
     pca_components = pca.components_.astype(np.float32)
     pca_mean = pca.mean_.astype(np.float32)
