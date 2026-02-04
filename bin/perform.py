@@ -155,6 +155,48 @@ def main():
 
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
+    ar_model = None
+    ar_projector = None
+    ar_context = None
+    ar_path = None
+    ar_noise_std = max(0.0, float(args.ar_noise))
+    ar_clamp_std = float(args.ar_clamp_std) if args.ar_clamp_std > 0 else None
+    ar_target_norm = float(args.ar_target_norm) if args.ar_target_norm > 0 else None
+    ar_reanchor_interval = max(0, int(args.ar_reanchor_interval))
+
+    if args.ar_drive:
+        if "ar_model_path" in data.files:
+            candidate = str(data["ar_model_path"])
+            if candidate and os.path.isfile(candidate):
+                ar_path = candidate
+        if ar_path is None:
+            print("[warn] --ar_drive demandé mais aucun modèle AR trouvé dans le corpus; retour au mode kNN.")
+            args.ar_drive = False
+        else:
+            device = torch.device(DEVICE)
+            # Load AR model and projector together
+            ar_model, ar_projector, ar_meta = load_ar_model_with_projector(ar_path, device=device)
+            ctx_from_meta = ar_meta.get("context", 0) if isinstance(ar_meta, dict) else 0
+            ar_context = int(ctx_from_meta) if ctx_from_meta else None
+            if ar_context is None and "ar_context" in data.files:
+                try:
+                    ar_context = int(data["ar_context"])
+                except Exception:
+                    ar_context = None
+            if ar_context is None or ar_context <= 0:
+                print("[warn] Impossible de récupérer le contexte AR; retour au mode kNN.")
+                args.ar_drive = False
+                ar_model = None
+                ar_projector = None
+            else:
+                proj_status = "avec projecteur" if ar_projector is not None else "sans projecteur"
+                print(f"[info] Modèle AR chargé ({ar_path}), contexte={ar_context}, {proj_status}")
+                
+                # Get target norm from training if not specified
+                if ar_target_norm is None or ar_target_norm <= 0:
+                    if "target_norm" in ar_meta:
+                        ar_target_norm = float(ar_meta["target_norm"])
+                        print(f"[info] Utilisation de la norme cible d'entraînement: {ar_target_norm:.4f}")
 
     nav = load_navigation_engine(
         data=data,
