@@ -170,60 +170,83 @@ def main():
     running.set()
 
     window_size = max(1, min(args.window_size, 16))
+    hop_size = (window_size + 1) // 2  # 50% overlap (rounded up)
     if window_size > 1:
-        print(f"[info] Using window_size={window_size} for batched decoding")
+        print(f"[info] Using window_size={window_size}, hop_size={hop_size} (overlap-add mode)")
 
     # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
-    print("[info] Pre-buffering audio...")
-    pre_buffer_windows = max(4, int(1.0 / (0.0465 * window_size)) + 1)  # ~1 sec of audio
-    for i in range(pre_buffer_windows):
-        frame_buffer = []
-        for _ in range(window_size):
-            frame = nav.step()
-            frame_buffer.append(frame)
-        z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+    # With overlap-add, each hop outputs hop_size frames worth of audio
+    print("[info] Pre-buffering audio (overlap-add)...")
+    audio_per_hop = hop_size * 0.0465  # seconds per hop
+    num_hops = max(4, int(1.0 / audio_per_hop) + 1)
+
+    # First window: no prev_half yet, decode full window_size frames
+    frame_buffer = [nav.step() for _ in range(window_size)]
+    z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+    z_batch_raw = z_batch_norm * Z_std + Z_mean
+    audio = decode_latents(vae, z_batch_raw)
+    decoder.write_frame(audio)
+    prev_half = frame_buffer[hop_size:]  # Save second half for overlap
+
+    # Subsequent windows with overlap
+    for _ in range(num_hops - 1):
+        new_frames = [nav.step() for _ in range(hop_size)]
+        full_window = prev_half + new_frames
+        z_batch_norm = manifold.generate_batch(full_window, exploration=nav.ctrl_exploration)
         z_batch_raw = z_batch_norm * Z_std + Z_mean
         audio = decode_latents(vae, z_batch_raw)
         decoder.write_frame(audio)
-    print(f"[info] Pre-buffered {pre_buffer_windows} windows ({decoder.buffer_duration():.2f}s)")
+        prev_half = full_window[hop_size:]
+
+    print(f"[info] Pre-buffered {num_hops} windows ({decoder.buffer_duration():.2f}s)")
 
     # Pre-fill the latent queue so decode thread has work immediately
     print("[info] Pre-filling latent queue...")
     for _ in range(latent_queue.maxsize):
-        frame_buffer = []
-        for _ in range(window_size):
-            frame = nav.step()
-            frame_buffer.append(frame)
-        z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+        new_frames = [nav.step() for _ in range(hop_size)]
+        full_window = prev_half + new_frames
+        z_batch_norm = manifold.generate_batch(full_window, exploration=nav.ctrl_exploration)
         z_batch_raw = z_batch_norm * Z_std + Z_mean
         latent_queue.put(z_batch_raw)
+        prev_half = full_window[hop_size:]
     print(f"[info] Latent queue filled ({latent_queue.qsize()} batches)")
 
+    # Store prev_half in a mutable container for nav_loop access
+    nav_state = {"prev_half": prev_half}
+
     def nav_loop():
-        """Navigation thread: generates latent batches ahead of decode."""
-        print("[info] Navigation loop started")
+        """Navigation thread with 50% overlap context."""
+        print("[info] Navigation loop started (overlap-add mode)")
         frame_buffer = []
+        prev_half = nav_state["prev_half"]  # Continue from pre-buffering state
 
         try:
             while running.is_set():
-                # Accumulate frames
+                # Accumulate new frames
                 frame = nav.step()
                 frame_buffer.append(frame)
 
-                # Generate latents when window is full
-                if len(frame_buffer) >= window_size:
+                # Need hop_size new frames to complete next window
+                if len(frame_buffer) >= hop_size:
+                    # Combine: prev_half + new frames = full window
+                    full_window = prev_half + frame_buffer[:hop_size]
+
                     # Batch manifold constraint (fast: ~2-5ms)
-                    z_batch_norm = manifold.generate_batch(frame_buffer, exploration=nav.ctrl_exploration)
+                    z_batch_norm = manifold.generate_batch(
+                        full_window,
+                        exploration=nav.ctrl_exploration
+                    )
                     z_batch_raw = z_batch_norm * Z_std + Z_mean  # [N, 64]
 
                     # Queue for decode thread - blocks when queue is full (backpressure)
-                    # This naturally paces navigation to stay ~4 windows ahead
                     try:
                         latent_queue.put(z_batch_raw, timeout=1.0)
                     except queue.Full:
                         pass  # Drop if decode can't keep up
 
-                    frame_buffer.clear()
+                    # Second half becomes first half of next window
+                    prev_half = full_window[hop_size:]
+                    frame_buffer = frame_buffer[hop_size:]
         except Exception as e:
             print(f"[error] Navigation loop exception: {e}")
             import traceback

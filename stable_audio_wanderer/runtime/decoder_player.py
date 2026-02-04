@@ -1,9 +1,13 @@
 """
 Realtime decoder audio output using sounddevice with dual-buffer architecture.
+
+Uses 50% overlap-add with Hann windowing for seamless transitions.
+Hann window satisfies COLA (Constant Overlap-Add) at 50% overlap.
 """
 import threading
 from collections import deque
 import numpy as np
+from scipy.signal.windows import hann
 
 try:
     import sounddevice as sd
@@ -15,12 +19,12 @@ from ..config import SR
 
 class DecoderPlayer:
     """
-    Streaming audio output with dual-buffer architecture for gap-free playback.
+    Streaming audio output with dual-buffer architecture and overlap-add.
 
     Architecture:
-    - Audio callback (sounddevice thread): Pulls from active buffer
-    - Decode thread: Fills chunks into ready queue
-    - When active buffer exhausted, swap in next chunk from ready queue
+    - Audio callback (sounddevice thread): Pulls from chunk queue
+    - Decode thread: Applies Hann window + overlap-add, queues result
+    - 50% overlap with Hann window satisfies COLA for seamless reconstruction
 
     This eliminates lock contention and ensures continuous playback.
     """
@@ -34,7 +38,7 @@ class DecoderPlayer:
     ):
         self.sr = int(sr)
         self._gain = float(gain)
-        self._smoothing = float(np.clip(smoothing, 0.0, 1.0))
+        self._smoothing = float(np.clip(smoothing, 0.0, 1.0))  # Kept for API compat
         self.frame_samples = 0
         self.frame_duration = None
         self.underruns = 0
@@ -45,8 +49,10 @@ class DecoderPlayer:
         self._chunk_queue = deque()  # Ready chunks waiting to play
         self._queue_lock = threading.Lock()  # Only held briefly during swap
 
-        # For crossfade smoothing between chunks
-        self._prev_tail = None
+        # Overlap-add state (Hann windowing for COLA compliance)
+        self._overlap_samples = 0       # Will be set on first chunk
+        self._window = None             # Hann window (periodic)
+        self._overlap_buffer = None     # Previous chunk's second half (windowed)
 
         self._stream = sd.OutputStream(
             samplerate=self.sr,
@@ -70,6 +76,16 @@ class DecoderPlayer:
 
     def set_smoothing(self, value: float):
         self._smoothing = float(np.clip(value, 0.0, 1.0))
+
+    def _setup_overlap(self, chunk_len: int):
+        """Initialize Hann window for 50% overlap-add (COLA compliant)."""
+        self._overlap_samples = chunk_len // 2  # 50% overlap
+
+        # Periodic Hann window (sym=False) satisfies COLA at 50% overlap
+        self._window = hann(chunk_len, sym=False).astype(np.float32)
+
+        # Initialize overlap buffer with zeros (for first chunk)
+        self._overlap_buffer = np.zeros((self._overlap_samples, 2), dtype=np.float32)
 
     def _callback(self, outdata, frames, time_info, status):
         """Audio callback - runs in sounddevice's audio thread."""
@@ -102,38 +118,38 @@ class DecoderPlayer:
             out_pos += to_copy
 
     def write_frame(self, audio: np.ndarray):
-        """Queue a decoded audio chunk for playback."""
+        """Apply Hann window and overlap-add, then queue for playback."""
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 1:
             audio = audio[:, None]
         if audio.shape[1] == 1:
             audio = np.repeat(audio, 2, axis=1)
 
-        if self.frame_samples == 0:
-            self.frame_samples = int(audio.shape[0])
+        # Initialize overlap-add on first chunk
+        if self._window is None:
+            self._setup_overlap(len(audio))
+            self.frame_samples = len(audio)
             self.frame_duration = self.frame_samples / float(self.sr)
 
-        # Apply smoothing crossfade with previous tail
-        fade_len = int(self._smoothing * audio.shape[0])
-        if fade_len > 0 and self._prev_tail is not None:
-            fade_len = min(fade_len, self._prev_tail.shape[0], audio.shape[0])
-            if fade_len > 0:
-                fade_in = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
-                fade_out = 1.0 - fade_in
-                audio[:fade_len] = (
-                    audio[:fade_len] * fade_in[:, None] +
-                    self._prev_tail[-fade_len:] * fade_out[:, None]
-                )
-        if fade_len > 0:
-            self._prev_tail = audio[-fade_len:].copy()
-        else:
-            self._prev_tail = None
+        # Apply Hann window to entire chunk
+        windowed = audio * self._window[:, None]
 
-        # Apply gain and queue the chunk
-        chunk = audio * self._gain
+        # Split into first half and second half
+        half = self._overlap_samples
+        first_half = windowed[:half]
+        second_half = windowed[half:]
+
+        # Overlap-add: previous second_half + current first_half
+        blended = self._overlap_buffer + first_half
+
+        # Apply gain to the blended output
+        output = blended * self._gain
 
         with self._queue_lock:
-            self._chunk_queue.append(chunk)
+            self._chunk_queue.append(output)
+
+        # Save current second half for next overlap
+        self._overlap_buffer = second_half.copy()
 
     def buffer_duration(self) -> float:
         """Return approximate buffered audio duration in seconds."""
