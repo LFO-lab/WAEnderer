@@ -20,9 +20,9 @@ class LatentPolicyConfig:
     control_dim: int = 6           # Controls: width, energy, gravity, memory, coherence, exploration
     local_feature_dim: int = 16    # Local geometry features (sigma, density, etc.)
     dropout: float = 0.1           # Dropout rate
-    # Window size prediction (adaptive decoding)
-    num_window_classes: int = 5    # Number of discrete window size classes
-    window_class_sizes: tuple = (1, 2, 4, 8, 16)  # Latent frames per class
+    # Window size prediction (continuous log2 regression)
+    window_min_log2: float = 1.0    # log2(2) = 1.0
+    window_max_log2: float = 6.0    # log2(64) = 6.0
 
 
 class LatentPolicy(nn.Module):
@@ -86,8 +86,8 @@ class LatentPolicy(nn.Module):
         # Velocity update: H -> D
         self.vel_delta_head = nn.Linear(H, D)
 
-        # Window size prediction: H -> num_window_classes
-        self.window_head = nn.Linear(H, cfg.num_window_classes)
+        # Window size prediction: continuous log2(window_size)
+        self.window_head = nn.Linear(H, 1)
 
         # Initialize weights
         self._init_weights()
@@ -134,7 +134,7 @@ class LatentPolicy(nn.Module):
             delta_log_std: [B, T, M, 64] mixture component log-stds
             delta_weights: [B, T, M] mixture log-weights
             vel_delta: [B, T, 64] velocity update
-            window_logits: [B, T, num_window_classes] window size logits
+            window_log2: [B, T] continuous log2 window size prediction
             hidden: [num_layers, B, H] final hidden state
         """
         B, T, D = z.shape
@@ -170,10 +170,13 @@ class LatentPolicy(nn.Module):
         # Velocity update
         vel_delta = self.vel_delta_head(out)  # [B, T, D]
 
-        # Window size prediction
-        window_logits = self.window_head(out)  # [B, T, num_window_classes]
+        # Window size prediction: continuous log2
+        window_raw = self.window_head(out).squeeze(-1)  # [B, T]
+        window_log2 = self.cfg.window_min_log2 + (
+            self.cfg.window_max_log2 - self.cfg.window_min_log2
+        ) * torch.sigmoid(window_raw)
 
-        return delta_mean, delta_log_std, delta_weights, vel_delta, window_logits, h_next
+        return delta_mean, delta_log_std, delta_weights, vel_delta, window_log2, h_next
 
     @torch.inference_mode()
     def step(
@@ -199,10 +202,10 @@ class LatentPolicy(nn.Module):
             delta_log_std: [1, M, 64] mixture log-stds
             delta_weights: [1, M] mixture log-weights
             vel_delta: [1, 64] velocity update
-            window_logits: [1, num_window_classes] window size logits
+            window_log2: [1] continuous log2 window size
             hidden: updated hidden state
         """
-        delta_mean, delta_log_std, delta_weights, vel_delta, window_logits, h_next = self.forward(
+        delta_mean, delta_log_std, delta_weights, vel_delta, window_log2, h_next = self.forward(
             z, v, controls, local_features, hidden
         )
         # Remove time dimension
@@ -211,7 +214,7 @@ class LatentPolicy(nn.Module):
             delta_log_std[:, -1],   # [B, M, D]
             delta_weights[:, -1],   # [B, M]
             vel_delta[:, -1],       # [B, D]
-            window_logits[:, -1],   # [B, num_window_classes]
+            window_log2[:, -1],     # [B]
             h_next,
         )
 
@@ -277,35 +280,11 @@ class LatentPolicy(nn.Module):
         batch_idx = torch.arange(B, device=delta_mean.device)
         return delta_mean[batch_idx, best_idx]  # [B, D]
 
-    def get_window_size(
-        self,
-        window_logits: torch.Tensor,
-        temperature: float = 1.0,
-        sample: bool = False,
-    ) -> int:
-        """
-        Get predicted window size from logits.
-
-        Args:
-            window_logits: [B, num_window_classes] or [num_window_classes] logits
-            temperature: Sampling temperature (higher = more random)
-            sample: If True, sample from softmax; if False, use argmax
-
-        Returns:
-            Window size in latent frames (from window_class_sizes)
-        """
-        if window_logits.dim() == 1:
-            window_logits = window_logits.unsqueeze(0)
-
-        if sample and temperature > 0:
-            # Sample from softmax distribution
-            probs = F.softmax(window_logits / temperature, dim=-1)
-            class_idx = torch.multinomial(probs, num_samples=1).item()
-        else:
-            # Deterministic argmax
-            class_idx = window_logits.argmax(dim=-1).item()
-
-        return self.cfg.window_class_sizes[class_idx]
+    def get_window_size(self, window_log2: torch.Tensor) -> int:
+        """Convert continuous log2 prediction to integer frame count."""
+        log2_val = float(window_log2.item()) if window_log2.dim() > 0 else float(window_log2)
+        window_float = 2.0 ** log2_val
+        return max(2, min(64, round(window_float)))
 
 
 def build_local_features(

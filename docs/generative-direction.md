@@ -350,9 +350,9 @@ With granular playback removed, audio synthesis depends entirely on the VAE deco
 
 At 21.5 Hz latent rate, each frame represents ~46.5ms of audio.
 
-For 50ms interaction latency:
-- We can afford ~1 frame of buffering
-- Decoder must complete in <50ms per frame
+For ~100ms interaction latency:
+- We can afford ~2 frames of buffering
+- Decoder must complete in <100ms per frame
 - Leaves room for navigation model + audio output
 
 **Critical unknown**: Current decode cost per frame on target hardware (M1/M2 MacBook, CPU fallback). This determines feasibility.
@@ -580,7 +580,7 @@ Based on benchmark results, one of these paths:
 │   Engine          Perturb         Decode         │    Output
 │   (21.5 Hz)       (per frame)    (per frame)    │
 │                                                  │
-│   Latency: ~50ms (1 frame + overhead)           │
+│   Latency: ~100ms (2 frames + overhead)         │
 └─────────────────────────────────────────────────┘
 ```
 

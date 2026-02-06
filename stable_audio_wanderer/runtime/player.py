@@ -17,6 +17,7 @@ import torch
 from ..config import DEVICE
 from ..policy.latent_geometry import LatentGeometry
 from ..policy.latent_policy import LatentPolicy, LatentPolicyConfig, build_local_features
+from ..policy.sequence import compute_velocity_magnitudes
 
 
 @dataclass
@@ -30,7 +31,7 @@ class NavFrame:
     time_gradient: np.ndarray   # [64] time gradient at nearest neighbor
     t_lat: float                # latent time index for nearest neighbor
     file_id: int                # file id for nearest neighbor
-    predicted_window_size: int = 4  # Predicted window size in latent frames (1, 2, 4, 8, 16)
+    predicted_window_size: int = 4  # Predicted window size in latent frames (2-64)
 
 
 class LatentNavigationEngine:
@@ -297,7 +298,7 @@ class LatentNavigationEngine:
             local_tensor = torch.tensor(local_features, device=self.policy_device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
 
             # Run policy
-            delta_mean, delta_log_std, delta_weights, vel_delta, window_logits, self.policy_hidden = self.policy.step(
+            delta_mean, delta_log_std, delta_weights, vel_delta, window_log2, self.policy_hidden = self.policy.step(
                 z_tensor, v_tensor, ctrl_tensor, local_tensor, self.policy_hidden
             )
 
@@ -312,7 +313,7 @@ class LatentNavigationEngine:
             dv = vel_delta.squeeze(0).cpu().numpy()
 
             # Get predicted window size
-            predicted_window = self.policy.get_window_size(window_logits.squeeze(0), temperature=1.0, sample=False)
+            predicted_window = self.policy.get_window_size(window_log2.squeeze(0))
         else:
             # Stochastic dynamics without learned policy
             # Direction toward time gradient with gravity bias
@@ -327,7 +328,10 @@ class LatentNavigationEngine:
             dv = np.zeros(self.latent_dim, dtype=np.float32)
 
             # Use heuristic for window size when no policy
-            predicted_window = self._heuristic_window_size(local_sigma)
+            if not hasattr(self, "_velocity_magnitudes"):
+                self._velocity_magnitudes = compute_velocity_magnitudes(self.GG, self.meta)
+            local_velocity = float(self._velocity_magnitudes[nearest_idx])
+            predicted_window = self._heuristic_window_size(local_velocity)
 
         # Apply energy scaling
         energy_scale = 0.5 + self.ctrl_energy
@@ -487,38 +491,20 @@ class LatentNavigationEngine:
                 },
             }
 
-    # Window size class mapping (matches LatentPolicyConfig)
-    WINDOW_CLASS_SIZES = (1, 2, 4, 8, 16)
-
-    def _heuristic_window_size(self, sigma: float) -> int:
-        """
-        Compute window size from local sigma using quantile-based heuristic.
-
-        Same logic as training targets but using stored geometry statistics.
-        """
-        # Compute quantiles from all local_sigma values (cached)
-        if not hasattr(self, "_sigma_quantiles"):
-            sigmas = self.geometry.local_sigma
-            self._sigma_quantiles = {
-                "q10": np.percentile(sigmas, 10),
-                "q25": np.percentile(sigmas, 25),
-                "q50": np.percentile(sigmas, 50),
-                "q75": np.percentile(sigmas, 75),
-            }
-
-        q = self._sigma_quantiles
-
-        # Map sigma to window class (inverse of training: sparse -> short, dense -> long)
-        if sigma < q["q10"]:
-            return 16  # Very dense -> longest window
-        elif sigma < q["q25"]:
-            return 8   # Dense
-        elif sigma < q["q50"]:
-            return 4   # Default
-        elif sigma < q["q75"]:
-            return 2   # Sparse
-        else:
-            return 1   # Very sparse -> shortest window
+    def _heuristic_window_size(self, velocity: float) -> int:
+        """Continuous velocity-to-window mapping (no policy needed)."""
+        if not hasattr(self, "_velocity_percentiles"):
+            if not hasattr(self, "_velocity_magnitudes"):
+                self._velocity_magnitudes = compute_velocity_magnitudes(self.GG, self.meta)
+            vels = self._velocity_magnitudes
+            self._velocity_percentiles = (
+                float(np.percentile(vels, 5)),
+                float(np.percentile(vels, 95)),
+            )
+        v_low, v_high = self._velocity_percentiles
+        v_norm = float(np.clip((velocity - v_low) / (v_high - v_low + 1e-8), 0, 1))
+        log2_window = 6.0 - 5.0 * v_norm
+        return max(2, min(64, round(2 ** log2_window)))
 
     @property
     def _file_ids(self) -> np.ndarray:

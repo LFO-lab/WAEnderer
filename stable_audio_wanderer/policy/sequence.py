@@ -18,3 +18,34 @@ def group_meta_by_file(meta: np.ndarray) -> List[np.ndarray]:
         if seq.size > 0:
             sequences.append(seq)
     return sequences
+
+
+def compute_velocity_magnitudes(GG: np.ndarray, meta: np.ndarray) -> np.ndarray:
+    """
+    Compute per-segment latent velocity magnitude using adjacent segments per file.
+
+    Velocity is estimated from GG differences between neighboring segments
+    (ordered by t_lat) and averaged for interior points to reduce jitter.
+    """
+    GG = np.asarray(GG, dtype=np.float32)
+    N = GG.shape[0]
+    vel_mag = np.zeros(N, dtype=np.float32)
+    sequences = group_meta_by_file(meta)
+    for seq in sequences:
+        if seq.size == 0:
+            continue
+        if seq.size == 1:
+            vel_mag[seq[0]] = 0.0
+            continue
+        for j, idx in enumerate(seq):
+            if j == 0:
+                diff = GG[seq[1]] - GG[seq[0]]
+                vel_mag[idx] = float(np.linalg.norm(diff))
+            elif j == seq.size - 1:
+                diff = GG[seq[-1]] - GG[seq[-2]]
+                vel_mag[idx] = float(np.linalg.norm(diff))
+            else:
+                diff_prev = GG[seq[j]] - GG[seq[j - 1]]
+                diff_next = GG[seq[j + 1]] - GG[seq[j]]
+                vel_mag[idx] = float(0.5 * (np.linalg.norm(diff_prev) + np.linalg.norm(diff_next)))
+    return vel_mag

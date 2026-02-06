@@ -213,7 +213,7 @@ Global constants in `stable_audio_wanderer/config.py`:
 Default preprocessing:
 - Segment: 200ms window, 50ms hop
 - kNN: k=32, cosine distance
-- Adaptive windows: 1/2/4/8/16 frames based on density
+- Adaptive windows: 2/4/8/16/64 frames based on latent velocity
 
 ## Key Algorithms
 
@@ -230,7 +230,7 @@ Default preprocessing:
 ### Audio Reconstruction
 - **Overlap-Add**: 50% Hann window overlap (COLA compliant)
 - **Logarithmic Crossfade**: Perceptually linear loudness blending
-- **Adaptive Windows**: 1-16 frames based on local density or policy prediction
+- **Adaptive Windows**: 2-64 frames based on latent velocity or policy prediction
 
 ## Project Structure
 

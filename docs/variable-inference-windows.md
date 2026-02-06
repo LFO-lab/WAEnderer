@@ -50,11 +50,11 @@ The current frame-by-frame decoding architecture produces audio at 21.5 Hz (one 
 |-----------|------|
 | Navigation step | ~2-5ms |
 | Manifold constraint | ~1-2ms |
-| VAE decode (1 frame) | ~12ms |
+| VAE decode (2 frames) | ~24ms |
 | Audio output | ~5-10ms |
-| **Total** | ~20-30ms |
-| **Frame duration** | 46.5ms |
-| **Headroom** | ~16-26ms |
+| **Total (2 frames)** | ~32-41ms |
+| **Window duration (2 frames)** | 93ms |
+| **Headroom** | ~52-61ms |
 
 ---
 

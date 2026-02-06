@@ -40,7 +40,7 @@ class LatentTrajectoryDataset:
         - knn_centroid: [seq_len, 64] kNN centroids for manifold loss
         - file_ids: [seq_len] source file IDs
         - t_lat: [seq_len] time positions
-        - window_targets: [seq_len] window size class targets (0-4)
+        - window_targets: [seq_len] continuous log2 targets (float32)
     """
 
     def __init__(
@@ -61,8 +61,11 @@ class LatentTrajectoryDataset:
         self.control_dim = int(control_dim)
         self.N = self.GG.shape[0]
         self.D = self.GG.shape[1]
-        # Window targets for adaptive decoding (optional for backward compat)
-        self.window_targets = window_targets if window_targets is not None else np.full(self.N, 2, dtype=np.int32)
+        # Window targets for adaptive decoding (continuous log2)
+        if window_targets is not None:
+            self.window_targets = window_targets.astype(np.float32)
+        else:
+            self.window_targets = np.full(self.N, 3.0, dtype=np.float32)  # Default: log2(8)
 
     def __len__(self):
         return len(self.sequences)
@@ -113,8 +116,8 @@ class LatentTrajectoryDataset:
         file_ids = self.geometry.file_ids[curr_idx].astype(np.int64)
         t_lat = self.geometry.t_lat[curr_idx].astype(np.float32)
 
-        # Window targets for adaptive decoding
-        window_targets = self.window_targets[curr_idx].astype(np.int64)
+        # Window targets for adaptive decoding (continuous log2)
+        window_targets = self.window_targets[curr_idx].astype(np.float32)
 
         return {
             "z": z,
@@ -134,7 +137,7 @@ def compute_latent_losses(
     delta_log_std: torch.Tensor,
     delta_weights: torch.Tensor,
     vel_delta: torch.Tensor,
-    window_logits: torch.Tensor,
+    window_log2: torch.Tensor,
     z: torch.Tensor,
     v: torch.Tensor,
     z_next: torch.Tensor,
@@ -165,32 +168,17 @@ def compute_latent_losses(
     z_pred_var = z_pred.view(-1, D).var(dim=0).mean()
     diversity_loss = -z_pred_var
 
-    # Window classification loss with class weights to handle imbalance
-    num_window_classes = window_logits.shape[-1]
-
-    # Compute class weights from batch (inverse frequency)
-    class_weights = weights.get("window_class_weights", None)
-
-    window_loss = F.cross_entropy(
-        window_logits.view(-1, num_window_classes),
-        window_targets.view(-1),
-        weight=class_weights,
-        label_smoothing=0.1,
+    # Window loss: Huber loss in log2 space
+    window_loss = F.huber_loss(
+        window_log2.view(-1), window_targets.view(-1), delta=1.0
     )
 
-    # Compute window accuracy and predicted distribution
+    # Window metrics: MAE in log2 and frame space
     with torch.no_grad():
-        window_preds = window_logits.view(-1, num_window_classes).argmax(dim=-1)
-        window_targets_flat = window_targets.view(-1)
-        window_acc = (window_preds == window_targets_flat).float().mean()
-
-        # Predicted class distribution (what the model is outputting)
-        pred_counts = torch.bincount(window_preds, minlength=num_window_classes).float()
-        pred_dist = pred_counts / pred_counts.sum()
-
-        # Target class distribution (ground truth)
-        target_counts = torch.bincount(window_targets_flat, minlength=num_window_classes).float()
-        target_dist = target_counts / target_counts.sum()
+        window_mae_log2 = (window_log2.view(-1) - window_targets.view(-1)).abs().mean()
+        pred_frames = 2.0 ** window_log2.detach().view(-1)
+        target_frames = 2.0 ** window_targets.view(-1)
+        window_mae_frames = (pred_frames - target_frames).abs().mean()
 
     total_loss = (
         weights.get("recon", 1.0) * recon_loss +
@@ -207,9 +195,8 @@ def compute_latent_losses(
         "manifold_loss": manifold_loss,
         "diversity_loss": diversity_loss,
         "window_loss": window_loss,
-        "window_acc": window_acc,
-        "window_pred_dist": pred_dist,
-        "window_target_dist": target_dist,
+        "window_mae_log2": window_mae_log2,
+        "window_mae_frames": window_mae_frames,
     }
 
 
@@ -219,14 +206,10 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
     else:
         model.eval()
 
-    scalar_keys = ["loss", "recon_loss", "smooth_loss", "manifold_loss", "diversity_loss", "window_loss", "window_acc"]
+    scalar_keys = ["loss", "recon_loss", "smooth_loss", "manifold_loss", "diversity_loss",
+                    "window_loss", "window_mae_log2", "window_mae_frames"]
     totals = {k: 0.0 for k in scalar_keys}
     total_samples = 0
-
-    # Accumulate predicted and target distributions
-    num_classes = 5
-    total_pred_dist = torch.zeros(num_classes, device=device)
-    total_target_dist = torch.zeros(num_classes, device=device)
 
     for batch in loader:
         z = torch.tensor(batch["z"], device=device)
@@ -241,7 +224,7 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
             optimizer = weights["optimizer"]
             optimizer.zero_grad(set_to_none=True)
 
-        delta_mean, delta_log_std, delta_weights, vel_delta, window_logits, _ = model(
+        delta_mean, delta_log_std, delta_weights, vel_delta, window_log2, _ = model(
             z=z,
             v=v,
             controls=controls,
@@ -253,7 +236,7 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
             delta_log_std=delta_log_std,
             delta_weights=delta_weights,
             vel_delta=vel_delta,
-            window_logits=window_logits,
+            window_log2=window_log2,
             z=z,
             v=v,
             z_next=z_next,
@@ -271,16 +254,8 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
         for k in scalar_keys:
             totals[k] += float(losses[k].item()) * bs
 
-        # Accumulate distributions (weighted by batch size)
-        total_pred_dist += losses["window_pred_dist"] * bs
-        total_target_dist += losses["window_target_dist"] * bs
-
     for k in scalar_keys:
         totals[k] /= max(1, total_samples)
-
-    # Normalize distributions
-    totals["window_pred_dist"] = (total_pred_dist / total_samples).cpu().numpy()
-    totals["window_target_dist"] = (total_target_dist / total_samples).cpu().numpy()
 
     return totals
 
@@ -295,17 +270,13 @@ def build_latent_loaders(sequences, GG, geometry, args, window_targets=None):
     train_seqs = sequences[val_count:] if val_count > 0 else sequences
 
     train_ds = LatentTrajectoryDataset(
-        train_seqs,
-        GG,
-        geometry,
+        train_seqs, GG, geometry,
         seq_len=int(args.seq_len),
         control_dim=int(args.control_dim),
         window_targets=window_targets,
     )
     val_ds = LatentTrajectoryDataset(
-        val_seqs if val_seqs else train_seqs,
-        GG,
-        geometry,
+        val_seqs if val_seqs else train_seqs, GG, geometry,
         seq_len=int(args.seq_len),
         control_dim=int(args.control_dim),
         window_targets=window_targets,
@@ -339,9 +310,7 @@ def main():
     ap.add_argument("--lambda_manifold", type=float, default=0.1)
     ap.add_argument("--lambda_diversity", type=float, default=0.01)
     ap.add_argument("--lambda_window", type=float, default=0.5,
-                    help="Weight for window size classification loss.")
-    ap.add_argument("--window_class_weights", action="store_true",
-                    help="Use inverse-frequency class weights for window loss (helps with imbalance).")
+                    help="Weight for window size Huber loss.")
 
     ap.add_argument("--out_path", default=None, help="Override policy checkpoint path.")
     ap.add_argument("--verbose", action="store_true", help="Print detailed metrics each epoch.")
@@ -365,18 +334,29 @@ def main():
     GG = data["GG"].astype(np.float32)
     meta = data["meta"]
 
-    # Load window targets (optional for backward compatibility)
-    window_targets = data.get("window_targets", None)
-    if window_targets is not None:
-        window_targets = window_targets.astype(np.int32)
-        print(f"[info] Loaded window targets (classes: {np.bincount(window_targets, minlength=5).tolist()})")
+    # Load continuous window targets (log2 space)
+    window_targets_log2 = data.get("window_targets_log2", None)
+    if window_targets_log2 is not None:
+        window_targets = window_targets_log2.astype(np.float32)
+        print(f"[info] Loaded window targets (log2): "
+              f"min={window_targets.min():.2f}, max={window_targets.max():.2f}, mean={window_targets.mean():.2f}")
+        # Blend with decoder quality targets if available
+        decoder_targets = data.get("decoder_quality_targets_log2", None)
+        if decoder_targets is not None:
+            alpha = 0.7  # Velocity weight
+            decoder_targets = decoder_targets.astype(np.float32)
+            window_targets = alpha * window_targets + (1 - alpha) * decoder_targets
+            print(f"[info] Blended with decoder quality targets (alpha={alpha})")
     else:
-        print("[warn] No window_targets in corpus. Using default class 2 for all samples.")
+        window_targets = None
+        print("[warn] No window_targets_log2 in corpus. Using defaults.")
 
     sequences = group_meta_by_file(meta)
     print(f"[info] Sequences: {len(sequences)} (total points={GG.shape[0]})")
 
-    train_loader, val_loader = build_latent_loaders(sequences, GG, geometry, args, window_targets=window_targets)
+    train_loader, val_loader = build_latent_loaders(
+        sequences, GG, geometry, args, window_targets=window_targets,
+    )
 
     cfg = LatentPolicyConfig(
         latent_dim=int(GG.shape[1]),
@@ -390,25 +370,12 @@ def main():
     model = LatentPolicy(cfg).to(torch.device(DEVICE))
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # Compute class weights for window loss if requested
-    window_class_weights = None
-    if args.window_class_weights and window_targets is not None:
-        class_counts = np.bincount(window_targets, minlength=5).astype(np.float32)
-        # Inverse frequency weighting (with smoothing to avoid division by zero)
-        class_counts = np.maximum(class_counts, 1.0)
-        window_class_weights = torch.tensor(
-            1.0 / class_counts, device=device, dtype=torch.float32
-        )
-        window_class_weights = window_class_weights / window_class_weights.sum() * 5.0  # Normalize
-        print(f"[info] Window class weights: {window_class_weights.cpu().numpy().round(2).tolist()}")
-
     weights = {
         "recon": float(args.lambda_recon),
         "smooth": float(args.lambda_smooth),
         "manifold": float(args.lambda_manifold),
         "diversity": float(args.lambda_diversity),
         "window": float(args.lambda_window),
-        "window_class_weights": window_class_weights,
         "optimizer": optimizer,
     }
 
@@ -425,14 +392,12 @@ def main():
     for epoch in range(args.epochs):
         train_stats = run_latent_epoch(model, train_loader, device, weights, train=True)
         val_stats = run_latent_epoch(model, val_loader, device, weights, train=False)
-        # Convert numpy arrays to lists for serialization
         train_hist = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in train_stats.items()}
         val_hist = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in val_stats.items()}
         history["train"].append(train_hist)
         history["val"].append(val_hist)
 
         if args.json_progress:
-            # Convert numpy arrays to lists for JSON serialization
             train_json = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in train_stats.items()}
             val_json = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in val_stats.items()}
             emit_json_progress({
@@ -442,19 +407,12 @@ def main():
             })
 
         if args.verbose:
-            # Format predicted distribution as compact string
-            pred_dist = train_stats.get("window_pred_dist", np.zeros(5))
-            target_dist = train_stats.get("window_target_dist", np.zeros(5))
-            pred_str = "[" + ",".join(f"{p:.0%}" for p in pred_dist) + "]"
-            target_str = "[" + ",".join(f"{p:.0%}" for p in target_dist) + "]"
-
             print(
                 f"[epoch {epoch+1:03d}] "
                 f"loss={train_stats['loss']:.4f} "
                 f"win_loss={train_stats['window_loss']:.3f} "
-                f"win_acc={train_stats['window_acc']:.1%} "
-                f"pred={pred_str} "
-                f"target={target_str}"
+                f"win_mae_log2={train_stats['window_mae_log2']:.3f} "
+                f"win_mae_frames={train_stats['window_mae_frames']:.1f}"
             )
 
         if val_stats["loss"] < best_val_loss:

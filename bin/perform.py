@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse
+import math
 import queue
 import threading
 import time
@@ -35,20 +36,9 @@ def find_corpus_file(corpus_dir: str):
         return corpus_npz
 
 
-# Valid window sizes (must match policy config)
-VALID_WINDOW_SIZES = (1, 2, 4, 8, 16)
-
-
-def smooth_window_size(current: float, target: int, alpha: float = 0.3) -> float:
-    """Smooth window size transitions to avoid rapid jumps."""
-    return (1.0 - alpha) * current + alpha * float(target)
-
-
-def nearest_valid_size(value: float) -> int:
-    """Round to nearest valid window size class."""
-    value = max(1, min(16, value))
-    # Find closest valid size
-    return min(VALID_WINDOW_SIZES, key=lambda x: abs(x - value))
+def smooth_window_log2(current_log2: float, target_log2: float, alpha: float = 0.3) -> float:
+    """Smooth window size transitions in log2 space (perceptually uniform)."""
+    return (1.0 - alpha) * current_log2 + alpha * target_log2
 
 
 def load_navigation_engine(
@@ -136,8 +126,8 @@ def main():
                     help="Initial exploration control (0-1): entropy injection.")
 
     # Window size for batched decoding
-    ap.add_argument("--window_size", type=int, default=1,
-                    help="Number of latent frames to decode together (1-16). "
+    ap.add_argument("--window_size", type=int, default=2,
+                    help="Number of latent frames to decode together (2-64). "
                          "Higher values increase audio coherence but add latency.")
     ap.add_argument("--adaptive_window", action="store_true",
                     help="Enable adaptive window sizing based on policy prediction. "
@@ -155,48 +145,6 @@ def main():
 
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
-    ar_model = None
-    ar_projector = None
-    ar_context = None
-    ar_path = None
-    ar_noise_std = max(0.0, float(args.ar_noise))
-    ar_clamp_std = float(args.ar_clamp_std) if args.ar_clamp_std > 0 else None
-    ar_target_norm = float(args.ar_target_norm) if args.ar_target_norm > 0 else None
-    ar_reanchor_interval = max(0, int(args.ar_reanchor_interval))
-
-    if args.ar_drive:
-        if "ar_model_path" in data.files:
-            candidate = str(data["ar_model_path"])
-            if candidate and os.path.isfile(candidate):
-                ar_path = candidate
-        if ar_path is None:
-            print("[warn] --ar_drive demandé mais aucun modèle AR trouvé dans le corpus; retour au mode kNN.")
-            args.ar_drive = False
-        else:
-            device = torch.device(DEVICE)
-            # Load AR model and projector together
-            ar_model, ar_projector, ar_meta = load_ar_model_with_projector(ar_path, device=device)
-            ctx_from_meta = ar_meta.get("context", 0) if isinstance(ar_meta, dict) else 0
-            ar_context = int(ctx_from_meta) if ctx_from_meta else None
-            if ar_context is None and "ar_context" in data.files:
-                try:
-                    ar_context = int(data["ar_context"])
-                except Exception:
-                    ar_context = None
-            if ar_context is None or ar_context <= 0:
-                print("[warn] Impossible de récupérer le contexte AR; retour au mode kNN.")
-                args.ar_drive = False
-                ar_model = None
-                ar_projector = None
-            else:
-                proj_status = "avec projecteur" if ar_projector is not None else "sans projecteur"
-                print(f"[info] Modèle AR chargé ({ar_path}), contexte={ar_context}, {proj_status}")
-                
-                # Get target norm from training if not specified
-                if ar_target_norm is None or ar_target_norm <= 0:
-                    if "target_norm" in ar_meta:
-                        ar_target_norm = float(ar_meta["target_norm"])
-                        print(f"[info] Utilisation de la norme cible d'entraînement: {ar_target_norm:.4f}")
 
     nav = load_navigation_engine(
         data=data,
@@ -235,7 +183,7 @@ def main():
     running.set()
 
     adaptive_mode = args.adaptive_window
-    window_size = max(1, min(args.window_size, 16))
+    window_size = max(2, min(args.window_size, 64))
     hop_size = (window_size + 1) // 2  # 50% overlap (rounded up)
 
     if adaptive_mode:
@@ -283,7 +231,7 @@ def main():
     # Store prev_half in a mutable container for nav_loop access
     nav_state = {
         "prev_half": prev_half,
-        "current_window_size": float(window_size),
+        "current_window_log2": math.log2(max(2, window_size)),
         "adaptive_mode": adaptive_mode,
     }
 
@@ -293,13 +241,13 @@ def main():
         print(f"[info] Navigation loop started ({mode_str} mode)")
         frame_buffer = []
         prev_half = nav_state["prev_half"]
-        current_window_float = nav_state["current_window_size"]
+        current_window_log2 = nav_state["current_window_log2"]
 
         try:
             while running.is_set():
                 # Get current window/hop sizes
                 if nav_state["adaptive_mode"]:
-                    current_window = nearest_valid_size(current_window_float)
+                    current_window = max(2, min(64, round(2 ** current_window_log2)))
                     current_hop = (current_window + 1) // 2
                 else:
                     current_window = window_size
@@ -309,22 +257,19 @@ def main():
                 frame = nav.step()
                 frame_buffer.append(frame)
 
-                # Update smoothed window size from policy prediction
+                # Update smoothed window size from policy prediction (in log2 space)
                 if nav_state["adaptive_mode"]:
-                    target_window = frame.predicted_window_size
-                    current_window_float = smooth_window_size(current_window_float, target_window)
+                    target_log2 = math.log2(max(2, frame.predicted_window_size))
+                    current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
 
                 # Need current_hop new frames to complete next window
                 if len(frame_buffer) >= current_hop:
                     # Adjust prev_half to match current window requirements
-                    # If window size changed, we may need to pad/truncate prev_half
                     target_prev_len = current_window - current_hop
                     if len(prev_half) < target_prev_len:
-                        # Pad by repeating last frames
                         while len(prev_half) < target_prev_len:
                             prev_half.append(prev_half[-1] if prev_half else frame_buffer[0])
                     elif len(prev_half) > target_prev_len:
-                        # Truncate from the front
                         prev_half = prev_half[-target_prev_len:]
 
                     # Combine: prev_half + new frames = full window
@@ -410,8 +355,6 @@ def main():
             from stable_audio_wanderer.runtime.ws_server import start_ws_server
             ws_server, ws_thread = start_ws_server(nav, decoder, port=args.ws_port)
             print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
-        except ImportError:
-            print("[warn] WebSocket server not available (missing dependencies)")
         except Exception as e:
             print(f"[warn] Failed to start WebSocket server: {e}")
 
@@ -425,7 +368,7 @@ def main():
         f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
     )
     if args.adaptive_window:
-        print("[info] Window size: adaptive (policy-predicted, 1-16 frames)")
+        print("[info] Window size: adaptive (policy-predicted, 2-64 frames)")
     elif args.window_size > 1:
         print(f"[info] Window size: {args.window_size} frames (batched decoding)")
 
