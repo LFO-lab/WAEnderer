@@ -127,11 +127,8 @@ def main():
 
     # Window size for batched decoding
     ap.add_argument("--window_size", type=int, default=2,
-                    help="Number of latent frames to decode together (2-64). "
-                         "Higher values increase audio coherence but add latency.")
-    ap.add_argument("--adaptive_window", action="store_true",
-                    help="Enable adaptive window sizing based on policy prediction. "
-                         "Overrides --window_size with dynamic per-frame predictions.")
+                    help="Initial window size in latent frames (2-64). "
+                         "Adaptive sizing adjusts this dynamically from policy predictions.")
 
     args = ap.parse_args()
 
@@ -173,7 +170,6 @@ def main():
     decoder = DecoderPlayer(
         gain=args.output_gain,
         smoothing=args.smoothing,
-        adaptive_crossfade=args.adaptive_window,
     )
 
     # Queue for latent batches (navigation -> decode)
@@ -182,18 +178,13 @@ def main():
     running = threading.Event()
     running.set()
 
-    adaptive_mode = args.adaptive_window
     window_size = max(2, min(args.window_size, 64))
-    hop_size = (window_size + 1) // 2  # 50% overlap (rounded up)
+    hop_size = (window_size + 1) // 2
 
-    if adaptive_mode:
-        print("[info] Using adaptive window sizing (policy-predicted)")
-    elif window_size > 1:
-        print(f"[info] Using window_size={window_size}, hop_size={hop_size} (overlap-add mode)")
+    print(f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)")
 
     # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
-    # With overlap-add, each hop outputs hop_size frames worth of audio
-    print("[info] Pre-buffering audio (overlap-add)...")
+    print("[info] Pre-buffering audio...")
     audio_per_hop = hop_size * 0.0465  # seconds per hop
     num_hops = max(4, int(1.0 / audio_per_hop) + 1)
 
@@ -203,7 +194,7 @@ def main():
     z_batch_raw = z_batch_norm * Z_std + Z_mean
     audio = decode_latents(vae, z_batch_raw)
     decoder.write_frame(audio)
-    prev_half = frame_buffer[hop_size:]  # Save second half for overlap
+    prev_half = frame_buffer[hop_size:]  # Save context for next window
 
     # Subsequent windows with overlap
     for _ in range(num_hops - 1):
@@ -232,13 +223,11 @@ def main():
     nav_state = {
         "prev_half": prev_half,
         "current_window_log2": math.log2(max(2, window_size)),
-        "adaptive_mode": adaptive_mode,
     }
 
     def nav_loop():
-        """Navigation thread with overlap context (fixed or adaptive)."""
-        mode_str = "adaptive" if nav_state["adaptive_mode"] else "overlap-add"
-        print(f"[info] Navigation loop started ({mode_str} mode)")
+        """Navigation thread with adaptive context."""
+        print(f"[info] Navigation loop started (adaptive mode)")
         frame_buffer = []
         prev_half = nav_state["prev_half"]
         current_window_log2 = nav_state["current_window_log2"]
@@ -246,21 +235,16 @@ def main():
         try:
             while running.is_set():
                 # Get current window/hop sizes
-                if nav_state["adaptive_mode"]:
-                    current_window = max(2, min(64, round(2 ** current_window_log2)))
-                    current_hop = (current_window + 1) // 2
-                else:
-                    current_window = window_size
-                    current_hop = hop_size
+                current_window = max(2, min(64, round(2 ** current_window_log2)))
+                current_hop = (current_window + 1) // 2
 
                 # Accumulate new frames
                 frame = nav.step()
                 frame_buffer.append(frame)
 
                 # Update smoothed window size from policy prediction (in log2 space)
-                if nav_state["adaptive_mode"]:
-                    target_log2 = math.log2(max(2, frame.predicted_window_size))
-                    current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
+                target_log2 = math.log2(max(2, frame.predicted_window_size))
+                current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
 
                 # Need current_hop new frames to complete next window
                 if len(frame_buffer) >= current_hop:
@@ -367,10 +351,7 @@ def main():
     print(
         f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
     )
-    if args.adaptive_window:
-        print("[info] Window size: adaptive (policy-predicted, 2-64 frames)")
-    elif args.window_size > 1:
-        print(f"[info] Window size: {args.window_size} frames (batched decoding)")
+    print(f"[info] Window size: adaptive (initial={window_size}, range 2-64 frames)")
 
     try:
         run_server(nav, decoder, ip=args.osc_ip, port=args.osc_port)
