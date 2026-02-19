@@ -99,6 +99,18 @@ def main():
                     help="Initial output gain (0-2).")
     ap.add_argument("--smoothing", type=float, default=0.1,
                     help="Crossfade smoothing between frames (0-1).")
+    ap.add_argument(
+        "--audio_stats",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print periodic audio transport stats (buffer duration + underruns delta).",
+    )
+    ap.add_argument(
+        "--audio_stats_interval",
+        type=float,
+        default=1.0,
+        help="Seconds between audio stats logs when --audio_stats is enabled.",
+    )
 
     # Manifold parameters
     ap.add_argument("--manifold_k", type=int, default=16)
@@ -334,6 +346,27 @@ def main():
     decode_thread = threading.Thread(target=decode_loop, daemon=True)
     nav_thread.start()
     decode_thread.start()
+    stats_thread = None
+
+    if args.audio_stats:
+        stats_interval = max(0.1, float(args.audio_stats_interval))
+
+        def audio_stats_loop():
+            last_underruns = int(decoder.underruns)
+            while running.is_set():
+                time.sleep(stats_interval)
+                curr_underruns = int(decoder.underruns)
+                delta_underruns = curr_underruns - last_underruns
+                last_underruns = curr_underruns
+                print(
+                    f"[audio] buf={decoder.buffer_duration():.3f}s "
+                    f"underruns_total={curr_underruns} "
+                    f"underruns_delta={delta_underruns:+d}"
+                )
+
+        print(f"[info] Audio stats logging enabled (interval={stats_interval:.2f}s)")
+        stats_thread = threading.Thread(target=audio_stats_loop, daemon=True)
+        stats_thread.start()
 
     ws_server = None
     ws_thread = None
@@ -382,6 +415,8 @@ def main():
         running.clear()
         nav_thread.join(timeout=1.0)
         decode_thread.join(timeout=1.0)
+        if stats_thread is not None:
+            stats_thread.join(timeout=1.0)
         decoder.stop()
         decoder.close()
         if ws_server is not None:
