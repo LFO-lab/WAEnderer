@@ -144,6 +144,18 @@ def main():
     ap.add_argument("--window_size", type=int, default=2,
                     help="Initial window size in latent frames (2-64). "
                          "Adaptive sizing adjusts this dynamically from policy predictions.")
+    ap.add_argument(
+        "--fixed_window",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Disable adaptive window sizing and keep --window_size constant.",
+    )
+    ap.add_argument(
+        "--boundary_window_updates",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="In adaptive mode, apply window-size changes only at window boundaries.",
+    )
 
     args = ap.parse_args()
 
@@ -196,7 +208,22 @@ def main():
     window_size = max(2, min(args.window_size, 64))
     hop_size = (window_size + 1) // 2
 
-    print(f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)")
+    if args.fixed_window:
+        print(f"[info] Fixed window sizing enabled (window={window_size}, hop={hop_size})")
+    elif args.boundary_window_updates:
+        print(f"[info] Adaptive window sizing with boundary-only updates (initial={window_size})")
+    else:
+        print(f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)")
+
+    stats_lock = threading.Lock()
+    runtime_stats = {
+        "current_window": int(window_size),
+        "current_hop": int(hop_size),
+        "window_changes": 0,
+        "decode_ms_last": 0.0,
+        "decode_ms_sum": 0.0,
+        "decode_count": 0,
+    }
 
     # Pre-buffer: fill audio buffer with ~1 second of audio BEFORE starting stream
     print("[info] Pre-buffering audio...")
@@ -242,24 +269,42 @@ def main():
 
     def nav_loop():
         """Navigation thread with adaptive context."""
-        print(f"[info] Navigation loop started (adaptive mode)")
+        nav_mode = "fixed" if args.fixed_window else "adaptive"
+        if (not args.fixed_window) and args.boundary_window_updates:
+            nav_mode = "adaptive-boundary"
+        print(f"[info] Navigation loop started ({nav_mode} mode)")
         frame_buffer = []
         prev_half = nav_state["prev_half"]
         current_window_log2 = nav_state["current_window_log2"]
+        pending_window_log2 = current_window_log2
+        active_window = int(window_size)
+        active_hop = int(hop_size)
+        prev_window_for_stats = int(window_size)
 
         try:
             while running.is_set():
                 # Get current window/hop sizes
-                current_window = max(2, min(64, round(2 ** current_window_log2)))
-                current_hop = (current_window + 1) // 2
+                if args.fixed_window:
+                    current_window = int(window_size)
+                    current_hop = (current_window + 1) // 2
+                elif args.boundary_window_updates:
+                    current_window = int(active_window)
+                    current_hop = int(active_hop)
+                else:
+                    current_window = max(2, min(64, round(2 ** current_window_log2)))
+                    current_hop = (current_window + 1) // 2
 
                 # Accumulate new frames
                 frame = nav.step()
                 frame_buffer.append(frame)
 
                 # Update smoothed window size from policy prediction (in log2 space)
-                target_log2 = math.log2(max(2, frame.predicted_window_size))
-                current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
+                if not args.fixed_window:
+                    target_log2 = math.log2(max(2, frame.predicted_window_size))
+                    if args.boundary_window_updates:
+                        pending_window_log2 = smooth_window_log2(pending_window_log2, target_log2)
+                    else:
+                        current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
 
                 # Need current_hop new frames to complete next window
                 if len(frame_buffer) >= current_hop:
@@ -290,6 +335,19 @@ def main():
                     # Second half becomes first half of next window
                     prev_half = full_window[current_hop:]
                     frame_buffer = frame_buffer[current_hop:]
+
+                    with stats_lock:
+                        if current_window != prev_window_for_stats:
+                            runtime_stats["window_changes"] += 1
+                            prev_window_for_stats = current_window
+                        runtime_stats["current_window"] = int(current_window)
+                        runtime_stats["current_hop"] = int(current_hop)
+
+                    # Boundary mode: commit size changes only after a full window is emitted.
+                    if (not args.fixed_window) and args.boundary_window_updates:
+                        active_window = max(2, min(64, round(2 ** pending_window_log2)))
+                        active_hop = (active_window + 1) // 2
+                        current_window_log2 = pending_window_log2
         except Exception as e:
             print(f"[error] Navigation loop exception: {e}")
             import traceback
@@ -323,7 +381,13 @@ def main():
                     continue
 
                 # VAE decode (~12ms per frame in batch, ~48ms for window_size=4)
+                decode_t0 = time.perf_counter()
                 audio = decode_latents(vae, z_batch)
+                decode_ms = (time.perf_counter() - decode_t0) * 1000.0
+                with stats_lock:
+                    runtime_stats["decode_ms_last"] = float(decode_ms)
+                    runtime_stats["decode_ms_sum"] += float(decode_ms)
+                    runtime_stats["decode_count"] += 1
 
                 # Write to dual-buffer (fast, lock-free append)
                 decoder.write_frame(audio)
@@ -358,8 +422,23 @@ def main():
                 curr_underruns = int(decoder.underruns)
                 delta_underruns = curr_underruns - last_underruns
                 last_underruns = curr_underruns
+                qsize = int(latent_queue.qsize())
+                with stats_lock:
+                    current_window = int(runtime_stats["current_window"])
+                    current_hop = int(runtime_stats["current_hop"])
+                    window_changes = int(runtime_stats["window_changes"])
+                    decode_ms_last = float(runtime_stats["decode_ms_last"])
+                    decode_count = int(runtime_stats["decode_count"])
+                    decode_ms_avg = (
+                        float(runtime_stats["decode_ms_sum"]) / max(1, decode_count)
+                    )
                 print(
                     f"[audio] buf={decoder.buffer_duration():.3f}s "
+                    f"queue={qsize} "
+                    f"decode_ms_last={decode_ms_last:.1f} "
+                    f"decode_ms_avg={decode_ms_avg:.1f} "
+                    f"window={current_window}/{current_hop} "
+                    f"window_changes={window_changes} "
                     f"underruns_total={curr_underruns} "
                     f"underruns_delta={delta_underruns:+d}"
                 )
@@ -405,7 +484,12 @@ def main():
     print(
         f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
     )
-    print(f"[info] Window size: adaptive (initial={window_size}, range 2-64 frames)")
+    if args.fixed_window:
+        print(f"[info] Window size: fixed ({window_size} frames)")
+    elif args.boundary_window_updates:
+        print(f"[info] Window size: adaptive with boundary-only updates (initial={window_size}, range 2-64 frames)")
+    else:
+        print(f"[info] Window size: adaptive (initial={window_size}, range 2-64 frames)")
 
     try:
         run_server(nav, decoder, ip=args.osc_ip, port=args.osc_port)
