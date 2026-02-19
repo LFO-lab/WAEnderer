@@ -2,7 +2,9 @@
 Realtime decoder audio output using sounddevice with dual-buffer architecture.
 
 """
+import os
 import threading
+import time
 from collections import deque
 import numpy as np
 
@@ -52,6 +54,9 @@ class DecoderPlayer:
     - Audio callback (sounddevice thread): Pulls from chunk queue
     - Decode thread: Applies adaptive logarithmic crossfade, queues result
 
+    If callback streams are unavailable (e.g. CFFI callback allocation blocked),
+    automatically falls back to blocking stream writes from a Python worker thread.
+
     Crossfade length scales with incoming window size (shorter windows ->
     shorter crossfades to preserve transients; longer windows -> longer
     crossfades for smooth blending).
@@ -82,18 +87,54 @@ class DecoderPlayer:
         # Adaptive crossfade state
         self._crossfade_buffer = None  # Tail from previous frame for blending
 
-        self._stream = sd.OutputStream(
-            samplerate=self.sr,
-            channels=2,
-            dtype="float32",
-            blocksize=blocksize,
-            callback=self._callback,
-        )
+        self._blocksize = int(blocksize)
+        self._running = threading.Event()
+        self._writer_thread = None
+        self._use_callback_stream = True
+
+        force_blocking = os.environ.get("STABLE_AUDIO_BLOCKING_STREAM", "").lower() in ("1", "true", "yes")
+        if force_blocking:
+            self._use_callback_stream = False
+            self._stream = sd.OutputStream(
+                samplerate=self.sr,
+                channels=2,
+                dtype="float32",
+                blocksize=self._blocksize,
+            )
+            print("[warn] STABLE_AUDIO_BLOCKING_STREAM enabled: using blocking audio stream mode")
+        else:
+            try:
+                self._stream = sd.OutputStream(
+                    samplerate=self.sr,
+                    channels=2,
+                    dtype="float32",
+                    blocksize=self._blocksize,
+                    callback=self._callback,
+                )
+            except MemoryError as exc:
+                # Some macOS environments deny writable+executable memory for ffi callbacks.
+                self._use_callback_stream = False
+                self._stream = sd.OutputStream(
+                    samplerate=self.sr,
+                    channels=2,
+                    dtype="float32",
+                    blocksize=self._blocksize,
+                )
+                print("[warn] Callback stream unavailable; falling back to blocking audio stream mode")
+                print(f"[warn] Original callback error: {exc}")
 
     def start(self):
         self._stream.start()
+        if not self._use_callback_stream:
+            self._running.set()
+            self._writer_thread = threading.Thread(target=self._blocking_writer_loop, daemon=True)
+            self._writer_thread.start()
 
     def stop(self):
+        self._running.clear()
+        if self._writer_thread is not None:
+            self._writer_thread.join(timeout=1.0)
+            self._writer_thread = None
         self._stream.stop()
 
     def close(self):
@@ -134,6 +175,26 @@ class DecoderPlayer:
             outdata[out_pos:out_pos + to_copy] = self._active_chunk[self._active_pos:self._active_pos + to_copy]
             self._active_pos += to_copy
             out_pos += to_copy
+
+    def _blocking_writer_loop(self):
+        """
+        Stream writer loop for environments that cannot allocate CFFI callbacks.
+        """
+        while self._running.is_set():
+            chunk = None
+            with self._queue_lock:
+                if self._chunk_queue:
+                    chunk = self._chunk_queue.popleft()
+
+            if chunk is None:
+                time.sleep(0.002)
+                continue
+
+            try:
+                self._stream.write(chunk)
+            except Exception:
+                self.underruns += 1
+                time.sleep(0.01)
 
     def write_frame(self, audio: np.ndarray):
         """

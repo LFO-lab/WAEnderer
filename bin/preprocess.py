@@ -3,9 +3,9 @@
 Preprocess audio files into a 64D latent corpus with geometry.
 Pipeline:
   - Encode audio with Stable Audio Open VAE
-  - Mean-pool latents per segment -> GG (64D)
-  - Normalize GG with global Z_mean/Z_std
-  - Compute latent geometry (kNN + PCA)
+  - Keep full latent trajectories per file (no mean pooling)
+  - Normalize latents with global Z_mean/Z_std
+  - Compute causal-context geometry/index over all frames
 """
 import os
 import argparse
@@ -16,14 +16,23 @@ from typing import List, Dict
 import numpy as np
 from tqdm import tqdm
 
-from stable_audio_wanderer.config import SR, LATENT_HZ
+from stable_audio_wanderer.config import (
+    SR,
+    LATENT_HZ,
+    K_SHORT,
+    EMA_ALPHA_FAST,
+    EMA_ALPHA_MID,
+    EMA_ALPHA_SLOW,
+    USE_EMA_MID,
+    CONTEXT_PCA_DIM,
+)
 from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
 
 
-def compute_window_targets(GG: np.ndarray, meta: np.ndarray) -> np.ndarray:
+def compute_window_targets(Z_concat: np.ndarray, meta: np.ndarray) -> np.ndarray:
     """
     Map velocity to continuous log2(window_size) targets.
 
@@ -31,13 +40,13 @@ def compute_window_targets(GG: np.ndarray, meta: np.ndarray) -> np.ndarray:
     Uses robust percentile scaling to normalize velocity to [0, 1].
 
     Args:
-        GG: [N, 64] normalized segment latents
-        meta: [N, 3] segment metadata (file_id, t_lat, win_lat)
+        Z_concat: [N, 64] normalized frame latents
+        meta: [N, 3] frame metadata (file_id, t_lat, 1)
 
     Returns:
         targets_log2: [N] float32 array of log2(window_size) in [1.0, 6.0]
     """
-    velocity = compute_velocity_magnitudes(GG, meta)
+    velocity = compute_velocity_magnitudes(Z_concat, meta)
     # Normalize velocity to [0, 1] using robust percentile scaling
     v_low, v_high = np.percentile(velocity, [5, 95])
     v_norm = np.clip((velocity - v_low) / (v_high - v_low + 1e-8), 0, 1)
@@ -53,7 +62,6 @@ def compute_window_targets(GG: np.ndarray, meta: np.ndarray) -> np.ndarray:
 def _compute_decoder_quality_targets(
     latents_dict: Dict[str, np.ndarray],
     meta: np.ndarray,
-    win_lat: int,
     vae,
     Z_mean: np.ndarray,
     Z_std: np.ndarray,
@@ -65,9 +73,8 @@ def _compute_decoder_quality_targets(
     marginal quality improvement drops below threshold.
 
     Args:
-        latents_dict: Dict of per-file latent sequences
-        meta: [N, 3] segment metadata (file_id, t_lat, win_lat)
-        win_lat: Window size in latent frames
+        latents_dict: Dict of per-file normalized latent sequences
+        meta: [N, 3] frame metadata (file_id, t_lat, 1)
         vae: Loaded VAE model
         Z_mean, Z_std: Normalization stats
 
@@ -89,7 +96,7 @@ def _compute_decoder_quality_targets(
 
         coherences = []
         for ws in test_sizes:
-            # Extract window centered on segment
+            # Extract window centered on frame
             center = t_start + seg_len // 2
             half = ws // 2
             start = max(0, center - half)
@@ -140,25 +147,6 @@ def _compute_decoder_quality_targets(
     return targets_log2
 
 
-def compute_segment_latents(latents_dict: Dict[str, np.ndarray], meta: np.ndarray, win_lat: int) -> np.ndarray:
-    """Mean-pool latent windows into per-segment embeddings (GG)."""
-    seg_latents = []
-    for fid, start, seg_len in meta:
-        key = f"z_{int(fid)}"
-        z_full = latents_dict[key]
-        start = int(start)
-        seg_len = int(seg_len) if int(seg_len) > 0 else int(win_lat)
-        end = min(z_full.shape[0], start + seg_len)
-        z_slice = z_full[start:end]
-        if z_slice.shape[0] == 0:
-            z_slice = np.repeat(z_full[:1], seg_len, axis=0)
-        if z_slice.shape[0] < seg_len:
-            pad = np.repeat(z_slice[-1:], seg_len - z_slice.shape[0], axis=0)
-            z_slice = np.concatenate([z_slice, pad], axis=0)
-        seg_latents.append(z_slice.mean(axis=0))
-    return np.stack(seg_latents, axis=0).astype(np.float32)
-
-
 def main():
     ap = argparse.ArgumentParser(
         description="Preprocess: VAE latents -> 64D corpus + geometry."
@@ -166,8 +154,10 @@ def main():
     ap.add_argument("--audio_dir", required=True)
     ap.add_argument("--out_prefix", required=True)
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
-    ap.add_argument("--seg_sec", type=float, default=0.2)
-    ap.add_argument("--hop_sec", type=float, default=0.05)
+    ap.add_argument("--seg_sec", type=float, default=0.2,
+                    help="Deprecated in frame-mode corpus; kept for CLI compatibility.")
+    ap.add_argument("--hop_sec", type=float, default=0.05,
+                    help="Deprecated in frame-mode corpus; kept for CLI compatibility.")
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
     ap.add_argument("--encode_chunk_sec", type=float, default=60.0,
                     help="Chunk size (seconds) for VAE encoding. Set 0 to disable chunking.")
@@ -183,21 +173,13 @@ def main():
     out_dir = os.path.join(os.getcwd(), "corpus", f"{prefix}_{ts}")
     os.makedirs(out_dir, exist_ok=True)
 
-    seg_len_samp = int(round(args.seg_sec * SR))
-    assert seg_len_samp >= 2048, "seg_sec must be >= 2048/44100"
-
     paths = sorted(glob.glob(os.path.join(args.audio_dir, "*.wav")))
     if not paths:
         raise FileNotFoundError("No WAV files in --audio_dir")
 
-    win_lat = max(1, int(round(args.seg_sec * LATENT_HZ)))
-    hop_lat = max(1, int(round(args.hop_sec * LATENT_HZ)))
-
     ae = load_vae(args.pretrained)
 
-    meta_list = []
-    latent_sequences: List[np.ndarray] = []
-    latents_dict = {}
+    latent_sequences_raw: List[np.ndarray] = []
     encode_chunk_sec = float(args.encode_chunk_sec)
     encode_overlap_sec = float(args.encode_chunk_overlap_sec)
     chunk_sec = encode_chunk_sec if encode_chunk_sec > 0.0 else None
@@ -206,46 +188,59 @@ def main():
     for fid, p in enumerate(tqdm(paths)):
         wav = load_wav(p)
         z_full = encode_full(ae, wav, chunk_sec=chunk_sec, overlap_sec=encode_overlap_sec).astype(np.float32)
-        z_full = np.ascontiguousarray(z_full)
-        latents_dict[f"z_{fid}"] = z_full
-        latent_sequences.append(z_full)
+        latent_sequences_raw.append(np.ascontiguousarray(z_full))
 
-        T_lat = z_full.shape[0]
-        starts = np.arange(0, max(1, T_lat - win_lat + 1), hop_lat, dtype=int)
-        for t_lat in starts:
-            meta_list.append((fid, t_lat, win_lat))
-
-    if not latent_sequences:
+    if not latent_sequences_raw:
         raise RuntimeError("No latent sequences were extracted.")
 
-    meta = np.array(meta_list, dtype=np.int32)
     paths_arr = np.array(paths)
 
     # Compute normalization stats from all VAE latents
-    latent_stack = np.concatenate(latent_sequences, axis=0).astype(np.float32)
+    latent_stack = np.concatenate(latent_sequences_raw, axis=0).astype(np.float32)
     Z_mean = latent_stack.mean(axis=0).astype(np.float32)
     Z_var = latent_stack.var(axis=0).astype(np.float32)
     Z_std = np.sqrt(Z_var + 1e-6).astype(np.float32)
 
-    # Compute GG (segment latents) from VAE embeddings - mean pooling per segment
-    GG = compute_segment_latents(latents_dict, meta, win_lat)
+    # Canonical corpus representation: all observed frame latents (normalized), grouped by file offsets.
+    file_offsets = [0]
+    meta_list = []
+    normalized_by_file: Dict[str, np.ndarray] = {}
+    normalized_sequences = []
 
-    # Normalize GG using VAE latent statistics
-    GG_norm = (GG - Z_mean[None, :]) / Z_std[None, :]
-    GG = np.clip(GG_norm, -5.0, 5.0).astype(np.float32)
+    for fid, z_full_raw in enumerate(latent_sequences_raw):
+        z_norm = np.clip((z_full_raw - Z_mean[None, :]) / Z_std[None, :], -5.0, 5.0).astype(np.float32)
+        z_norm = np.ascontiguousarray(z_norm)
+        normalized_sequences.append(z_norm)
+        normalized_by_file[f"z_{fid}"] = z_norm
 
-    # Compute latent geometry (kNN + PCA projection)
-    GG_norms = np.linalg.norm(GG, axis=1, keepdims=True)
-    GG_norms = np.maximum(GG_norms, 1e-6)
-    GG_l2 = (GG / GG_norms).astype(np.float32)
+        T_lat = z_norm.shape[0]
+        for t_lat in range(T_lat):
+            meta_list.append((fid, t_lat, 1))
+        file_offsets.append(file_offsets[-1] + T_lat)
+
+    Z_concat = np.concatenate(normalized_sequences, axis=0).astype(np.float32)
+    file_offsets = np.asarray(file_offsets, dtype=np.int64)
+    meta = np.asarray(meta_list, dtype=np.int32)
+    frame_file_ids = meta[:, 0].astype(np.int32)
+    frame_t = meta[:, 1].astype(np.int32)
 
     print(f"Computing latent geometry (k={args.latent_nav_k})...")
-    geometry = compute_latent_geometry(GG_l2, meta, k=int(args.latent_nav_k))
+    geometry = compute_latent_geometry(
+        Z_concat,
+        meta,
+        k=int(args.latent_nav_k),
+        k_short=int(K_SHORT),
+        ema_alpha_fast=float(EMA_ALPHA_FAST),
+        ema_alpha_mid=float(EMA_ALPHA_MID),
+        ema_alpha_slow=float(EMA_ALPHA_SLOW),
+        use_ema_mid=bool(USE_EMA_MID),
+        pca_dim=int(CONTEXT_PCA_DIM),
+    )
     geometry_arrays = save_geometry_to_dict(geometry)
 
     # Compute continuous window targets for adaptive decoding
     print("Computing window targets from latent velocity...")
-    window_targets_log2 = compute_window_targets(GG, meta)
+    window_targets_log2 = compute_window_targets(Z_concat, meta)
     print(f"  Window targets (log2): min={window_targets_log2.min():.2f}, "
           f"max={window_targets_log2.max():.2f}, mean={window_targets_log2.mean():.2f}")
 
@@ -255,7 +250,7 @@ def main():
         print("Computing decoder quality targets (this may take a while)...")
         try:
             decoder_targets = _compute_decoder_quality_targets(
-                latents_dict, meta, win_lat, ae, Z_mean, Z_std
+                normalized_by_file, meta, ae, Z_mean, Z_std
             )
             extra_arrays["decoder_quality_targets_log2"] = decoder_targets
             print(f"  Decoder quality targets: min={decoder_targets.min():.2f}, "
@@ -267,16 +262,25 @@ def main():
     corpus_path = os.path.join(out_dir, "corpus.npz")
     save_corpus(
         corpus_path,
-        GG=GG,
+        Z_concat=Z_concat,
+        file_offsets=file_offsets,
+        frame_file_ids=frame_file_ids,
+        frame_t=frame_t,
         meta=meta,
         paths=paths_arr,
         Z_mean=Z_mean,
         Z_std=Z_std,
         sr=np.array(int(SR), dtype=np.int32),
         latent_hz=np.array(float(LATENT_HZ), dtype=np.float32),
-        segment_dur=np.array(float(args.seg_sec), dtype=np.float32),
-        hop_dur=np.array(float(args.hop_sec), dtype=np.float32),
+        segment_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
+        hop_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
         latent_nav_k=np.array(int(args.latent_nav_k), dtype=np.int32),
+        k_short=np.array(int(K_SHORT), dtype=np.int32),
+        ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
+        ema_alpha_mid=np.array(float(EMA_ALPHA_MID), dtype=np.float32),
+        ema_alpha_slow=np.array(float(EMA_ALPHA_SLOW), dtype=np.float32),
+        use_ema_mid=np.array(int(USE_EMA_MID), dtype=np.int32),
+        context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
         window_targets_log2=window_targets_log2,
         **geometry_arrays,
         **extra_arrays,

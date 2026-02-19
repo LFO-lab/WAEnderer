@@ -18,13 +18,39 @@ from stable_audio_wanderer.policy import (
     LatentPolicy,
     LatentPolicyConfig,
     load_geometry_from_dict,
-    group_meta_by_file,
+    compute_causal_ema_summaries,
 )
 
 
 def emit_json_progress(data: dict):
     """Emit JSON progress update to stdout for GUI consumption."""
     print(json.dumps(data), flush=True)
+
+
+def _to_device_float_tensor(x, device):
+    """
+    Convert batch field to float tensor on target device without redundant copies.
+    """
+    if isinstance(x, torch.Tensor):
+        return x.to(device=device, dtype=torch.float32)
+    return torch.as_tensor(x, device=device, dtype=torch.float32)
+
+
+def build_sequences_from_offsets(file_offsets: np.ndarray) -> list:
+    """Build per-file frame index sequences from cumulative offsets [M+1]."""
+    file_offsets = np.asarray(file_offsets, dtype=np.int64)
+    if file_offsets.ndim != 1 or file_offsets.size < 2:
+        raise ValueError("file_offsets must be shape [num_files + 1].")
+
+    sequences = []
+    for fid in range(file_offsets.size - 1):
+        start = int(file_offsets[fid])
+        end = int(file_offsets[fid + 1])
+        if end <= start:
+            continue
+        seq = np.arange(start, end, dtype=np.int32)
+        sequences.append(seq)
+    return sequences
 
 
 class LatentTrajectoryDataset:
@@ -36,6 +62,7 @@ class LatentTrajectoryDataset:
         - v: [seq_len, 64] velocities
         - z_next: [seq_len, 64] next latent positions (target)
         - local_features: [seq_len, 16] local geometry features
+        - context_summaries: [seq_len, C] causal EMA summaries
         - controls: [seq_len, control_dim] control parameters
         - knn_centroid: [seq_len, 64] kNN centroids for manifold loss
         - file_ids: [seq_len] source file IDs
@@ -46,7 +73,7 @@ class LatentTrajectoryDataset:
     def __init__(
         self,
         sequences: list,
-        GG: np.ndarray,
+        Z: np.ndarray,
         geometry,
         seq_len: int = 32,
         control_dim: int = 6,
@@ -55,12 +82,17 @@ class LatentTrajectoryDataset:
         self.sequences = [np.asarray(seq, dtype=np.int32) for seq in sequences if len(seq) > 0]
         if not self.sequences:
             raise ValueError("No sequences available for latent policy training.")
-        self.GG = np.asarray(GG, dtype=np.float32)
+        self.Z = np.asarray(Z, dtype=np.float32)
         self.geometry = geometry
         self.seq_len = int(seq_len)
         self.control_dim = int(control_dim)
-        self.N = self.GG.shape[0]
-        self.D = self.GG.shape[1]
+        self.N = self.Z.shape[0]
+        self.D = self.Z.shape[1]
+        self.use_ema_mid = bool(getattr(self.geometry, "use_ema_mid", False))
+        self.ema_alpha_fast = float(getattr(self.geometry, "ema_alpha_fast", 0.60))
+        self.ema_alpha_mid = float(getattr(self.geometry, "ema_alpha_mid", 0.80))
+        self.ema_alpha_slow = float(getattr(self.geometry, "ema_alpha_slow", 0.95))
+        self.context_summary_dim = self.D * (3 if self.use_ema_mid else 2)
         # Window targets for adaptive decoding (continuous log2)
         if window_targets is not None:
             self.window_targets = window_targets.astype(np.float32)
@@ -86,18 +118,30 @@ class LatentTrajectoryDataset:
         seq = self.sequences[idx % len(self.sequences)]
         curr_idx, next_idx = self._sample_window(seq)
 
-        z = self.GG[curr_idx].astype(np.float32)
-        z_next = self.GG[next_idx].astype(np.float32)
+        z = self.Z[curr_idx].astype(np.float32)
+        z_next = self.Z[next_idx].astype(np.float32)
 
         v = np.zeros_like(z)
         v[1:] = z[1:] - z[:-1]
+
+        m_fast, m_mid, m_slow = compute_causal_ema_summaries(
+            z,
+            alpha_fast=self.ema_alpha_fast,
+            alpha_mid=self.ema_alpha_mid,
+            alpha_slow=self.ema_alpha_slow,
+            use_ema_mid=self.use_ema_mid,
+        )
+        if self.use_ema_mid:
+            context_summaries = np.concatenate([m_fast, m_mid, m_slow], axis=1).astype(np.float32)
+        else:
+            context_summaries = np.concatenate([m_fast, m_slow], axis=1).astype(np.float32)
 
         local_features = np.zeros((self.seq_len, 16), dtype=np.float32)
         for i, idx_i in enumerate(curr_idx):
             local_features[i, 0] = self.geometry.local_sigma[idx_i]
             local_features[i, 1] = self.geometry.local_density[idx_i]
             knn_idx = self.geometry.knn_indices[idx_i]
-            knn_centroid = self.GG[knn_idx].mean(axis=0)
+            knn_centroid = self.Z[knn_idx].mean(axis=0)
             local_features[i, 2] = np.linalg.norm(z[i] - knn_centroid)
             time_grad = self.geometry.time_gradients[idx_i]
             z_norm_i = z[i] / (np.linalg.norm(z[i]) + 1e-6)
@@ -111,7 +155,7 @@ class LatentTrajectoryDataset:
         knn_centroid = np.zeros((self.seq_len, self.D), dtype=np.float32)
         for i, idx_i in enumerate(curr_idx):
             knn_idx = self.geometry.knn_indices[idx_i]
-            knn_centroid[i] = self.GG[knn_idx].mean(axis=0)
+            knn_centroid[i] = self.Z[knn_idx].mean(axis=0)
 
         file_ids = self.geometry.file_ids[curr_idx].astype(np.int64)
         t_lat = self.geometry.t_lat[curr_idx].astype(np.float32)
@@ -124,6 +168,7 @@ class LatentTrajectoryDataset:
             "v": v,
             "z_next": z_next,
             "local_features": local_features,
+            "context_summaries": context_summaries,
             "controls": controls,
             "knn_centroid": knn_centroid,
             "file_ids": file_ids,
@@ -212,13 +257,14 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
     total_samples = 0
 
     for batch in loader:
-        z = torch.tensor(batch["z"], device=device)
-        v = torch.tensor(batch["v"], device=device)
-        z_next = torch.tensor(batch["z_next"], device=device)
-        local_features = torch.tensor(batch["local_features"], device=device)
-        controls = torch.tensor(batch["controls"], device=device)
-        knn_centroid = torch.tensor(batch["knn_centroid"], device=device)
-        window_targets = torch.tensor(batch["window_targets"], device=device)
+        z = _to_device_float_tensor(batch["z"], device)
+        v = _to_device_float_tensor(batch["v"], device)
+        z_next = _to_device_float_tensor(batch["z_next"], device)
+        local_features = _to_device_float_tensor(batch["local_features"], device)
+        context_summaries = _to_device_float_tensor(batch["context_summaries"], device)
+        controls = _to_device_float_tensor(batch["controls"], device)
+        knn_centroid = _to_device_float_tensor(batch["knn_centroid"], device)
+        window_targets = _to_device_float_tensor(batch["window_targets"], device)
 
         if train:
             optimizer = weights["optimizer"]
@@ -229,6 +275,7 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
             v=v,
             controls=controls,
             local_features=local_features,
+            context_summaries=context_summaries,
         )
 
         losses = compute_latent_losses(
@@ -260,7 +307,7 @@ def run_latent_epoch(model, loader, device, weights, train: bool):
     return totals
 
 
-def build_latent_loaders(sequences, GG, geometry, args, window_targets=None):
+def build_latent_loaders(sequences, Z, geometry, args, window_targets=None):
     sequences = list(sequences)
     np.random.shuffle(sequences)
     val_count = int(round(len(sequences) * float(args.val_split)))
@@ -270,13 +317,13 @@ def build_latent_loaders(sequences, GG, geometry, args, window_targets=None):
     train_seqs = sequences[val_count:] if val_count > 0 else sequences
 
     train_ds = LatentTrajectoryDataset(
-        train_seqs, GG, geometry,
+        train_seqs, Z, geometry,
         seq_len=int(args.seq_len),
         control_dim=int(args.control_dim),
         window_targets=window_targets,
     )
     val_ds = LatentTrajectoryDataset(
-        val_seqs if val_seqs else train_seqs, GG, geometry,
+        val_seqs if val_seqs else train_seqs, Z, geometry,
         seq_len=int(args.seq_len),
         control_dim=int(args.control_dim),
         window_targets=window_targets,
@@ -313,6 +360,8 @@ def main():
                     help="Weight for window size Huber loss.")
 
     ap.add_argument("--out_path", default=None, help="Override policy checkpoint path.")
+    ap.add_argument("--log_every", type=int, default=50,
+                    help="Print progress every N epochs when --verbose is not set.")
     ap.add_argument("--verbose", action="store_true", help="Print detailed metrics each epoch.")
     ap.add_argument("--json_progress", action="store_true", help="Emit JSON progress updates.")
 
@@ -331,8 +380,8 @@ def main():
     if geometry is None:
         raise RuntimeError("Corpus missing latent geometry. Re-run preprocess.py.")
 
-    GG = data["GG"].astype(np.float32)
-    meta = data["meta"]
+    Z = data["Z_concat"].astype(np.float32)
+    file_offsets = data["file_offsets"].astype(np.int64)
 
     # Load continuous window targets (log2 space)
     window_targets_log2 = data.get("window_targets_log2", None)
@@ -351,20 +400,23 @@ def main():
         window_targets = None
         print("[warn] No window_targets_log2 in corpus. Using defaults.")
 
-    sequences = group_meta_by_file(meta)
-    print(f"[info] Sequences: {len(sequences)} (total points={GG.shape[0]})")
+    sequences = build_sequences_from_offsets(file_offsets)
+    print(f"[info] Sequences: {len(sequences)} (total points={Z.shape[0]})")
 
     train_loader, val_loader = build_latent_loaders(
-        sequences, GG, geometry, args, window_targets=window_targets,
+        sequences, Z, geometry, args, window_targets=window_targets,
     )
 
+    context_summary_dim = int(Z.shape[1]) * (3 if bool(geometry.use_ema_mid) else 2)
+
     cfg = LatentPolicyConfig(
-        latent_dim=int(GG.shape[1]),
+        latent_dim=int(Z.shape[1]),
         hidden_size=int(args.hidden),
         num_layers=int(args.layers),
         num_mixture_components=4,
         control_dim=int(args.control_dim),
         local_feature_dim=16,
+        context_summary_dim=context_summary_dim,
     )
 
     model = LatentPolicy(cfg).to(torch.device(DEVICE))
@@ -414,6 +466,16 @@ def main():
                 f"win_mae_log2={train_stats['window_mae_log2']:.3f} "
                 f"win_mae_frames={train_stats['window_mae_frames']:.1f}"
             )
+        else:
+            log_every = max(1, int(args.log_every))
+            epoch_num = epoch + 1
+            if epoch_num == 1 or epoch_num % log_every == 0 or epoch_num == int(args.epochs):
+                print(
+                    f"[epoch {epoch_num:04d}/{args.epochs}] "
+                    f"train_loss={train_stats['loss']:.4f} "
+                    f"val_loss={val_stats['loss']:.4f} "
+                    f"win_mae={val_stats['window_mae_frames']:.2f}f"
+                )
 
         if val_stats["loss"] < best_val_loss:
             best_val_loss = val_stats["loss"]

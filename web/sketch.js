@@ -666,6 +666,14 @@ function setupControls() {
         }
         connectWebSocket();
     });
+
+    // Exit button
+    document.getElementById('btn-exit').addEventListener('click', () => {
+        const confirmed = window.confirm('Stop the performer process?');
+        if (confirmed) {
+            sendExit();
+        }
+    });
 }
 
 function sendControl(name, value) {
@@ -690,6 +698,15 @@ function sendReset() {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
             type: 'reset'
+        }));
+    }
+}
+
+function sendExit() {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'exit',
+            reason: 'web_ui_button',
         }));
     }
 }

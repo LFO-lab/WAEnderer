@@ -29,6 +29,29 @@ def load_corpus(corpus_npz_path: str):
     return np.load(corpus_npz_path, allow_pickle=True)
 
 
+def get_file_latents(corpus_data: dict, file_id: int) -> np.ndarray:
+    """
+    Return latent trajectory [T, 64] for a file from canonical frame corpus fields.
+    """
+    z_concat = corpus_data["Z_concat"]
+    offsets = corpus_data["file_offsets"]
+    file_id = int(file_id)
+    if file_id < 0 or file_id >= offsets.shape[0] - 1:
+        raise IndexError(f"file_id out of range: {file_id}")
+    start = int(offsets[file_id])
+    end = int(offsets[file_id + 1])
+    return z_concat[start:end]
+
+
+def iter_file_latents(corpus_data: dict):
+    """
+    Yield (file_id, z_file) for each file in corpus.
+    """
+    offsets = corpus_data["file_offsets"]
+    for file_id in range(int(offsets.shape[0] - 1)):
+        yield file_id, get_file_latents(corpus_data, file_id)
+
+
 def load_latents_bundle(bundle_path: str):
     """Load latent embeddings bundle (preprocess only, deprecated for runtime)."""
     return np.load(bundle_path, allow_pickle=True)

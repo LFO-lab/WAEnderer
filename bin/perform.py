@@ -8,6 +8,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse
 import math
+import signal
 import queue
 import threading
 import time
@@ -61,13 +62,15 @@ def load_navigation_engine(
         )
 
     print("[info] Using LatentNavigationEngine (64D latent navigation)")
-    GG = data["GG"].astype(np.float32)
-    meta = data["meta"]
+    Z_concat = data["Z_concat"].astype(np.float32)
+    meta = data["meta"].astype(np.int32)
+    file_offsets = data["file_offsets"].astype(np.int64)
 
     return LatentNavigationEngine(
-        GG=GG,
+        GG=Z_concat,
         meta=meta,
         geometry=geometry,
+        file_offsets=file_offsets,
         policy_path=policy_path,
         policy_temperature=policy_temperature,
         policy_sample=policy_sample,
@@ -334,10 +337,28 @@ def main():
 
     ws_server = None
     ws_thread = None
+    shutdown_requested = threading.Event()
+
+    def request_shutdown(reason: str = "web"):
+        """Request graceful process shutdown from non-main threads (e.g. WebSocket)."""
+        if shutdown_requested.is_set():
+            return
+        shutdown_requested.set()
+        print(f"[info] Shutdown requested via {reason}")
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+        except Exception as e:
+            print(f"[warn] Failed to signal shutdown: {e}")
+
     if args.ws_port > 0:
         try:
             from stable_audio_wanderer.runtime.ws_server import start_ws_server
-            ws_server, ws_thread = start_ws_server(nav, decoder, port=args.ws_port)
+            ws_server, ws_thread = start_ws_server(
+                nav,
+                decoder,
+                port=args.ws_port,
+                on_exit_request=request_shutdown,
+            )
             print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
         except Exception as e:
             print(f"[warn] Failed to start WebSocket server: {e}")

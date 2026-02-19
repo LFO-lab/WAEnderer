@@ -19,6 +19,7 @@ class LatentPolicyConfig:
     num_mixture_components: int = 4  # Number of Gaussian mixture components
     control_dim: int = 6           # Controls: width, energy, gravity, memory, coherence, exploration
     local_feature_dim: int = 16    # Local geometry features (sigma, density, etc.)
+    context_summary_dim: int = 128  # EMA summaries: [m_fast, m_slow] (+ m_mid optional)
     dropout: float = 0.1           # Dropout rate
     # Window size prediction (continuous log2 regression)
     window_min_log2: float = 1.0    # log2(2) = 1.0
@@ -34,6 +35,7 @@ class LatentPolicy(nn.Module):
         - v: [B, T, 64] current velocity
         - controls: [B, T, 6] performer control parameters
         - local_features: [B, T, 16] local geometry features
+        - context_summaries: [B, T, context_summary_dim] causal EMA summaries
 
     Outputs:
         - delta_mean: [B, T, M, 64] Gaussian mixture means (M components)
@@ -54,6 +56,8 @@ class LatentPolicy(nn.Module):
         self.v_proj = nn.Linear(cfg.latent_dim, H4)
         self.ctrl_proj = nn.Linear(cfg.control_dim, H4)
         self.local_proj = nn.Linear(cfg.local_feature_dim, H4)
+        self.ctx_proj = nn.Linear(cfg.context_summary_dim, H4)
+        self.input_fuse = nn.Linear(H + H4, H)
 
         # Input layer norm for stability
         self.input_norm = nn.LayerNorm(H)
@@ -117,6 +121,7 @@ class LatentPolicy(nn.Module):
         v: torch.Tensor,
         controls: torch.Tensor,
         local_features: torch.Tensor,
+        context_summaries: Optional[torch.Tensor] = None,
         hidden: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -127,6 +132,7 @@ class LatentPolicy(nn.Module):
             v: [B, T, 64] current velocity
             controls: [B, T, 6] control parameters
             local_features: [B, T, 16] local geometry features
+            context_summaries: [B, T, context_summary_dim] causal EMA summaries
             hidden: [num_layers, B, H] optional initial hidden state
 
         Returns:
@@ -145,9 +151,17 @@ class LatentPolicy(nn.Module):
         v_feat = self.v_proj(v)           # [B, T, H/4]
         ctrl_feat = self.ctrl_proj(controls)  # [B, T, H/4]
         local_feat = self.local_proj(local_features)  # [B, T, H/4]
+        if context_summaries is None:
+            context_summaries = torch.zeros(
+                (B, T, self.cfg.context_summary_dim),
+                device=z.device,
+                dtype=z.dtype,
+            )
+        ctx_feat = self.ctx_proj(context_summaries)  # [B, T, H/4]
 
         # Concatenate features
-        x = torch.cat([z_feat, v_feat, ctrl_feat, local_feat], dim=-1)  # [B, T, H]
+        x = torch.cat([z_feat, v_feat, ctrl_feat, local_feat, ctx_feat], dim=-1)  # [B, T, H + H/4]
+        x = self.input_fuse(x)  # [B, T, H]
         x = self.input_norm(x)
 
         # Run through GRU
@@ -185,6 +199,7 @@ class LatentPolicy(nn.Module):
         v: torch.Tensor,
         controls: torch.Tensor,
         local_features: torch.Tensor,
+        context_summaries: Optional[torch.Tensor] = None,
         hidden: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -195,6 +210,7 @@ class LatentPolicy(nn.Module):
             v: [1, 1, 64] current velocity
             controls: [1, 1, 6] control parameters
             local_features: [1, 1, 16] local geometry features
+            context_summaries: [1, 1, context_summary_dim] causal EMA summaries
             hidden: optional hidden state
 
         Returns:
@@ -206,7 +222,7 @@ class LatentPolicy(nn.Module):
             hidden: updated hidden state
         """
         delta_mean, delta_log_std, delta_weights, vel_delta, window_log2, h_next = self.forward(
-            z, v, controls, local_features, hidden
+            z, v, controls, local_features, context_summaries, hidden
         )
         # Remove time dimension
         return (

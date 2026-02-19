@@ -3,10 +3,11 @@ WebSocket server for real-time visualization of navigation state.
 Broadcasts state updates at ~30fps and receives control messages from web clients.
 """
 import asyncio
+from contextlib import suppress
 import json
 import threading
 import time
-from typing import Optional, Set, Tuple
+from typing import Callable, Optional, Set, Tuple
 import numpy as np
 
 
@@ -30,7 +31,7 @@ class WSBroadcaster:
         - Decoder state (gain, smoothing, underruns)
     """
 
-    def __init__(self, nav, decoder=None, fps: float = 30.0):
+    def __init__(self, nav, decoder=None, fps: float = 30.0, on_exit_request: Optional[Callable[[str], None]] = None):
         """
         Initialize broadcaster.
 
@@ -38,6 +39,7 @@ class WSBroadcaster:
             nav: Navigation engine instance
             decoder: DecoderPlayer instance (optional)
             fps: Target broadcast rate in frames per second
+            on_exit_request: Optional callback invoked when web UI sends {"type":"exit"}.
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
@@ -51,6 +53,9 @@ class WSBroadcaster:
         self._running = False
         self._server = None
         self._loop = None
+        self._thread = None
+        self._stop_event = None
+        self._on_exit_request = on_exit_request
 
         # Precompute 2D projection if corpus is higher dimensional
         self._projection_matrix = None
@@ -240,6 +245,14 @@ class WSBroadcaster:
             elif msg_type == "request_corpus":
                 # Client requesting corpus data
                 await websocket.send(self._get_corpus_json())
+            elif msg_type == "exit":
+                reason = data.get("reason", "websocket")
+                print(f"[ws] Exit requested by client (reason={reason})")
+                if self._on_exit_request is not None:
+                    try:
+                        self._on_exit_request(str(reason))
+                    except Exception as e:
+                        print(f"[ws] Error handling exit request: {e}")
 
         except json.JSONDecodeError:
             print(f"[ws] Invalid JSON message: {message[:100]}")
@@ -278,10 +291,20 @@ class WSBroadcaster:
     async def _run_server(self, host: str, port: int):
         """Run the WebSocket server."""
         self._running = True
-        
-        async with serve(self._handle_client, host, port):
+        self._stop_event = asyncio.Event()
+
+        async with serve(self._handle_client, host, port) as server:
+            self._server = server
             print(f"[ws] Server started on ws://{host}:{port}")
-            await self._broadcast_loop()
+            broadcast_task = asyncio.create_task(self._broadcast_loop())
+            try:
+                await self._stop_event.wait()
+            finally:
+                self._running = False
+                broadcast_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await broadcast_task
+                self._server = None
     
     def start(self, host: str = "127.0.0.1", port: int = 8765):
         """Start the WebSocket server in a new thread."""
@@ -295,15 +318,17 @@ class WSBroadcaster:
             finally:
                 self._loop.close()
         
-        self._thread = threading.Thread(target=run_in_thread, daemon=True)
+        self._thread = threading.Thread(target=run_in_thread, daemon=True, name="ws-server")
         self._thread.start()
         return self._thread
     
-    def shutdown(self):
+    def shutdown(self, timeout: float = 2.0):
         """Shutdown the WebSocket server."""
         self._running = False
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop is not None and self._loop.is_running() and self._stop_event is not None:
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
 
 def start_ws_server(
@@ -312,6 +337,7 @@ def start_ws_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     fps: float = 30.0,
+    on_exit_request: Optional[Callable[[str], None]] = None,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
@@ -322,10 +348,11 @@ def start_ws_server(
         host: Server host address
         port: Server port
         fps: Broadcast rate in frames per second
+        on_exit_request: Optional callback invoked when web UI requests exit.
 
     Returns:
         Tuple of (WSBroadcaster, Thread)
     """
-    broadcaster = WSBroadcaster(nav, decoder, fps=fps)
+    broadcaster = WSBroadcaster(nav, decoder, fps=fps, on_exit_request=on_exit_request)
     thread = broadcaster.start(host, port)
     return broadcaster, thread

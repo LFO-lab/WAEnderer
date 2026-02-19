@@ -3,6 +3,8 @@ from .latent_geometry import (
     compute_latent_geometry,
     save_geometry_to_dict,
     load_geometry_from_dict,
+    compute_causal_ema_summaries,
+    build_context_features,
 )
 from .latent_policy import (
     LatentPolicy,
@@ -16,6 +18,8 @@ __all__ = [
     "compute_latent_geometry",
     "save_geometry_to_dict",
     "load_geometry_from_dict",
+    "compute_causal_ema_summaries",
+    "build_context_features",
     "LatentPolicy",
     "LatentPolicyConfig",
     "build_local_features",
