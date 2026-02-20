@@ -126,6 +126,8 @@ class LatentNavigationEngine:
         self.ctrl_memory = float(np.clip(control_memory, 0.0, 1.0))
         self.ctrl_coherence = float(np.clip(control_coherence, 0.0, 1.0))
         self.ctrl_exploration = float(np.clip(control_exploration, 0.0, 1.0))
+        self._prev_control_vector = self._control_vector()
+        self._controls_dirty = False
 
         # Tracking.
         self._current_file_id = int(self._idx_to_file_id[self._current_index])
@@ -199,6 +201,8 @@ class LatentNavigationEngine:
                 self._set_current_index(int(indices[0]))
             self._retrieval_buffer.clear()
 
+    _CONTROL_CHANGE_THRESHOLD = 0.05
+
     def set_policy_controls(
         self,
         width=None,
@@ -221,6 +225,11 @@ class LatentNavigationEngine:
                 self.ctrl_coherence = float(np.clip(coherence, 0.0, 1.0))
             if exploration is not None:
                 self.ctrl_exploration = float(np.clip(exploration, 0.0, 1.0))
+
+            new_vec = self._control_vector()
+            if np.max(np.abs(new_vec - self._prev_control_vector)) > self._CONTROL_CHANGE_THRESHOLD:
+                self._controls_dirty = True
+                self._prev_control_vector = new_vec
 
     def reset_policy(self, idx=None):
         with self._lock:
@@ -377,6 +386,8 @@ class LatentNavigationEngine:
             predicted_window_size=int(predicted_window),
         )
 
+    _BUFFER_TRUNCATE_MAX = 2
+
     def _navigation_step(self) -> NavFrame:
         """
         Execute one navigation step.
@@ -386,6 +397,11 @@ class LatentNavigationEngine:
         3) Retrieve a real corpus chunk starting at (file_id, t).
         4) Emit one observed frame from that chunk.
         """
+        if self._controls_dirty and len(self._retrieval_buffer) > self._BUFFER_TRUNCATE_MAX:
+            while len(self._retrieval_buffer) > self._BUFFER_TRUNCATE_MAX:
+                self._retrieval_buffer.pop()
+            self._controls_dirty = False
+
         if self._retrieval_buffer:
             idx = int(self._retrieval_buffer.popleft())
             return self._emit_observed_frame(idx, self._last_predicted_window)

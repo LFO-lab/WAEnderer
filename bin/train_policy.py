@@ -114,6 +114,67 @@ class LatentTrajectoryDataset:
         nxt = seq[start + 1 : start + self.seq_len + 1]
         return curr, nxt
 
+    def _derive_controls(
+        self,
+        z: np.ndarray,
+        v: np.ndarray,
+        curr_idx: np.ndarray,
+        knn_centroids: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Derive control values from trajectory properties so the policy learns
+        a meaningful control-response mapping.
+
+        Returns: [seq_len, control_dim] controls in [0, 1].
+        """
+        T = z.shape[0]
+        controls = np.full((T, self.control_dim), 0.5, dtype=np.float32)
+
+        # --- energy: normalized velocity magnitude ---
+        v_mag = np.linalg.norm(v, axis=1)  # [T]
+        v_max = v_mag.max() + 1e-8
+        controls[:, 1] = np.clip(v_mag / v_max, 0.0, 1.0)
+
+        # --- width: local trajectory spread (rolling std of positions) ---
+        if T >= 3:
+            half_w = max(1, T // 8)
+            spread = np.zeros(T, dtype=np.float32)
+            for i in range(T):
+                lo, hi = max(0, i - half_w), min(T, i + half_w + 1)
+                spread[i] = z[lo:hi].std()
+            s_max = spread.max() + 1e-8
+            controls[:, 0] = np.clip(spread / s_max, 0.0, 1.0)
+
+        # --- gravity: alignment of velocity with local time gradient ---
+        for i in range(T):
+            tg = self.geometry.time_gradients[curr_idx[i]]
+            tg_norm = np.linalg.norm(tg) + 1e-8
+            v_norm = np.linalg.norm(v[i]) + 1e-8
+            alignment = np.dot(v[i], tg) / (v_norm * tg_norm)
+            controls[i, 2] = np.clip(0.5 + 0.5 * alignment, 0.0, 1.0)
+
+        # --- memory: trajectory autocorrelation (smoothness) ---
+        if T >= 3:
+            diffs = np.linalg.norm(np.diff(v, axis=0), axis=1)
+            d_max = diffs.max() + 1e-8
+            smoothness = 1.0 - np.clip(diffs / d_max, 0.0, 1.0)
+            controls[0, 3] = smoothness[0]
+            controls[1:, 3] = smoothness
+
+        # --- coherence: fraction of kNN in the same file ---
+        for i in range(T):
+            knn_idx = self.geometry.knn_indices[curr_idx[i]]
+            fid = self.geometry.file_ids[curr_idx[i]]
+            same = (self.geometry.file_ids[knn_idx] == fid).mean()
+            controls[i, 4] = float(same)
+
+        # --- exploration: distance from kNN centroid (normalized) ---
+        dist = np.linalg.norm(z - knn_centroids, axis=1)
+        sigmas = self.geometry.local_sigma[curr_idx]
+        controls[:, 5] = np.clip(dist / (sigmas + 1e-8), 0.0, 1.0)
+
+        return controls
+
     def __getitem__(self, idx: int):
         seq = self.sequences[idx % len(self.sequences)]
         curr_idx, next_idx = self._sample_window(seq)
@@ -149,13 +210,12 @@ class LatentTrajectoryDataset:
             local_features[i, 4] = float(self.geometry.t_lat[idx_i]) / 1000.0
             local_features[i, 5] = float(self.geometry.file_ids[idx_i]) / 100.0
 
-        controls = np.zeros((self.seq_len, self.control_dim), dtype=np.float32)
-        controls[:, :4] = 0.5  # width, energy, gravity, memory defaults
-
         knn_centroid = np.zeros((self.seq_len, self.D), dtype=np.float32)
         for i, idx_i in enumerate(curr_idx):
             knn_idx = self.geometry.knn_indices[idx_i]
             knn_centroid[i] = self.Z[knn_idx].mean(axis=0)
+
+        controls = self._derive_controls(z, v, curr_idx, knn_centroid)
 
         file_ids = self.geometry.file_ids[curr_idx].astype(np.int64)
         t_lat = self.geometry.t_lat[curr_idx].astype(np.float32)
