@@ -207,7 +207,32 @@
             transition: background 0.2s;
             margin-top: 8px;
         }
-        
+
+        .mode-tab {
+            margin-top: 0;
+            background: #1a1a24;
+            border: 1px solid #2a2a3a;
+            color: #b5b5c0;
+        }
+
+        .mode-tab.active {
+            background: #4a9eff;
+            border-color: #4a9eff;
+            color: #fff;
+        }
+
+        .mode-tab:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .mode-tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
         button:hover {
             background: #6ab0ff;
         }
@@ -236,6 +261,10 @@
         
         .control-row .control-group {
             margin-bottom: 8px;
+        }
+
+        .panel-hidden {
+            display: none;
         }
 
         /* Toggle switch styles */
@@ -319,59 +348,142 @@
                 <div class="viz-option" data-mode="heatmap">Heatmap</div>
             </div>
             
-            <h2>Policy Controls</h2>
-            
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Width</span>
-                        <span class="control-value" id="val-width">0.50</span>
-                    </div>
-                    <input type="range" id="ctrl-width" min="0" max="1" step="0.01" value="0.5">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Energy</span>
-                        <span class="control-value" id="val-energy">0.50</span>
-                    </div>
-                    <input type="range" id="ctrl-energy" min="0" max="1" step="0.01" value="0.5">
-                </div>
+            <h2>Navigation Mode</h2>
+            <div class="mode-tabs">
+                <button id="mode-policy" class="mode-tab active" type="button">Policy</button>
+                <button id="mode-manual" class="mode-tab" type="button">Manual</button>
             </div>
-            
+
             <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Gravity</span>
-                        <span class="control-value" id="val-gravity">0.50</span>
-                    </div>
-                    <input type="range" id="ctrl-gravity" min="0" max="1" step="0.01" value="0.5">
-                </div>
-                
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Memory</span>
-                        <span class="control-value" id="val-memory">0.00</span>
-                    </div>
-                    <input type="range" id="ctrl-memory" min="0" max="1" step="0.01" value="0">
-                </div>
+                <button id="btn-start" type="button">Start Decode</button>
+                <button id="btn-stop" type="button" class="secondary">Stop Decode</button>
             </div>
-            
-            <div class="control-row">
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Coherence</span>
-                        <span class="control-value" id="val-coherence">0.00</span>
+
+            <div id="policy-panel">
+                <h2>Policy Controls</h2>
+                
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Width</span>
+                            <span class="control-value" id="val-width">0.50</span>
+                        </div>
+                        <input type="range" id="ctrl-width" min="0" max="1" step="0.01" value="0.5">
                     </div>
-                    <input type="range" id="ctrl-coherence" min="0" max="1" step="0.01" value="0">
+                    
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Energy</span>
+                            <span class="control-value" id="val-energy">0.50</span>
+                        </div>
+                        <input type="range" id="ctrl-energy" min="0" max="1" step="0.01" value="0.5">
+                    </div>
                 </div>
                 
-                <div class="control-group">
-                    <div class="control-label">
-                        <span>Exploration</span>
-                        <span class="control-value" id="val-exploration">0.00</span>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Gravity</span>
+                            <span class="control-value" id="val-gravity">0.50</span>
+                        </div>
+                        <input type="range" id="ctrl-gravity" min="0" max="1" step="0.01" value="0.5">
                     </div>
-                    <input type="range" id="ctrl-exploration" min="0" max="1" step="0.01" value="0">
+                    
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Memory</span>
+                            <span class="control-value" id="val-memory">0.00</span>
+                        </div>
+                        <input type="range" id="ctrl-memory" min="0" max="1" step="0.01" value="0">
+                    </div>
+                </div>
+                
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Coherence</span>
+                            <span class="control-value" id="val-coherence">0.00</span>
+                        </div>
+                        <input type="range" id="ctrl-coherence" min="0" max="1" step="0.01" value="0">
+                    </div>
+                    
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Exploration</span>
+                            <span class="control-value" id="val-exploration">0.00</span>
+                        </div>
+                        <input type="range" id="ctrl-exploration" min="0" max="1" step="0.01" value="0">
+                    </div>
+                </div>
+
+                <button id="btn-reset">Reset Policy</button>
+            </div>
+
+            <div id="manual-panel" class="panel-hidden">
+                <h2>Manual Faders</h2>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 1</span>
+                            <span class="control-value" id="val-manual-0">0.50</span>
+                        </div>
+                        <input type="range" id="manual-0" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 2</span>
+                            <span class="control-value" id="val-manual-1">0.50</span>
+                        </div>
+                        <input type="range" id="manual-1" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 3</span>
+                            <span class="control-value" id="val-manual-2">0.50</span>
+                        </div>
+                        <input type="range" id="manual-2" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 4</span>
+                            <span class="control-value" id="val-manual-3">0.50</span>
+                        </div>
+                        <input type="range" id="manual-3" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 5</span>
+                            <span class="control-value" id="val-manual-4">0.50</span>
+                        </div>
+                        <input type="range" id="manual-4" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 6</span>
+                            <span class="control-value" id="val-manual-5">0.50</span>
+                        </div>
+                        <input type="range" id="manual-5" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 7</span>
+                            <span class="control-value" id="val-manual-6">0.50</span>
+                        </div>
+                        <input type="range" id="manual-6" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Fader 8</span>
+                            <span class="control-value" id="val-manual-7">0.50</span>
+                        </div>
+                        <input type="range" id="manual-7" min="0" max="1" step="0.01" value="0.5">
+                    </div>
                 </div>
             </div>
 
@@ -395,7 +507,6 @@
                 </div>
             </div>
 
-            <button id="btn-reset">Reset Policy</button>
             <button id="btn-reconnect" class="secondary">Reconnect</button>
             <button id="btn-exit" class="danger">Exit Performer</button>
         </div>

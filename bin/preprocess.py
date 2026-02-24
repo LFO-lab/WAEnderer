@@ -3,9 +3,11 @@
 Preprocess audio files into a 64D latent corpus with geometry.
 Pipeline:
   - Encode audio with Stable Audio Open VAE
+  - Extract latent-rate MFCC features for manual navigation
   - Keep full latent trajectories per file (no mean pooling)
   - Normalize latents with global Z_mean/Z_std
   - Compute causal-context geometry/index over all frames
+  - Compute manual 8D PCA control points + robust fader ranges
 """
 import os
 import argparse
@@ -14,6 +16,8 @@ import glob
 from typing import List, Dict
 
 import numpy as np
+import torch
+import torchaudio
 from tqdm import tqdm
 
 from stable_audio_wanderer.config import (
@@ -30,6 +34,110 @@ from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
+
+MANUAL_N_MFCC = 20
+MANUAL_PCA_DIM = 8
+MANUAL_PERCENTILE_LOW = 1.0
+MANUAL_PERCENTILE_HIGH = 99.0
+
+
+def _align_feature_frames(feature_seq: np.ndarray, target_frames: int) -> np.ndarray:
+    """
+    Trim/pad a [T, D] feature sequence so its time axis matches target_frames.
+    """
+    feat = np.asarray(feature_seq, dtype=np.float32)
+    if feat.ndim != 2:
+        raise ValueError(f"Expected feature_seq [T, D], got {feat.shape}")
+    target = int(max(1, target_frames))
+    if feat.shape[0] > target:
+        return feat[:target]
+    if feat.shape[0] < target:
+        if feat.shape[0] == 0:
+            return np.zeros((target, feat.shape[1]), dtype=np.float32)
+        pad = np.repeat(feat[-1:], target - feat.shape[0], axis=0)
+        return np.concatenate([feat, pad], axis=0)
+    return feat
+
+
+def _build_mfcc_transform(hop_length: int):
+    """
+    Build MFCC extractor using latent-aligned hop length.
+    """
+    return torchaudio.transforms.MFCC(
+        sample_rate=int(SR),
+        n_mfcc=int(MANUAL_N_MFCC),
+        melkwargs={
+            "n_fft": 2048,
+            "win_length": 2048,
+            "hop_length": int(hop_length),
+            "n_mels": 64,
+            "center": False,
+            "power": 2.0,
+        },
+    )
+
+
+def compute_latent_aligned_mfcc(
+    wav_stereo: np.ndarray,
+    target_frames: int,
+    mfcc_transform,
+) -> np.ndarray:
+    """
+    Compute mono MFCC features aligned to latent frame rate.
+    Returns [target_frames, MANUAL_N_MFCC].
+    """
+    wav = np.asarray(wav_stereo, dtype=np.float32)
+    if wav.ndim != 2:
+        raise ValueError(f"Expected stereo wav [T, C], got {wav.shape}")
+    mono = wav.mean(axis=1, dtype=np.float32)
+    min_len = 2048 + 1  # must exceed n_fft used by MelSpectrogram
+    if mono.shape[0] < min_len:
+        mono = np.pad(mono, (0, min_len - mono.shape[0]))
+    x = torch.from_numpy(mono[None, :])
+    with torch.inference_mode():
+        mfcc = mfcc_transform(x).squeeze(0).transpose(0, 1).cpu().numpy().astype(np.float32)
+    return _align_feature_frames(mfcc, int(target_frames))
+
+
+def compute_manual_navigation_features(mfcc_concat: np.ndarray) -> Dict[str, np.ndarray]:
+    """
+    Convert [N, n_mfcc] MFCC stack to 8D PCA control space with robust ranges.
+    """
+    mfcc = np.asarray(mfcc_concat, dtype=np.float32)
+    if mfcc.ndim != 2 or mfcc.shape[1] != MANUAL_N_MFCC:
+        raise ValueError(f"Expected MFCC stack [N, {MANUAL_N_MFCC}], got {mfcc.shape}")
+    if mfcc.shape[0] == 0:
+        raise ValueError("No MFCC frames available for manual feature extraction.")
+
+    mfcc_mean = mfcc.mean(axis=0, keepdims=True).astype(np.float32)
+    mfcc_std = np.sqrt(mfcc.var(axis=0, keepdims=True).astype(np.float32) + 1e-6).astype(np.float32)
+    mfcc_z = (mfcc - mfcc_mean) / mfcc_std
+
+    pca_mean = mfcc_z.mean(axis=0).astype(np.float32)
+    centered = mfcc_z - pca_mean[None, :]
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+
+    components = np.zeros((MANUAL_PCA_DIM, MANUAL_N_MFCC), dtype=np.float32)
+    available = int(min(MANUAL_PCA_DIM, vt.shape[0], vt.shape[1]))
+    if available > 0:
+        components[:available] = vt[:available].astype(np.float32)
+
+    points = (centered @ components.T).astype(np.float32)
+    p01 = np.percentile(points, MANUAL_PERCENTILE_LOW, axis=0).astype(np.float32)
+    p99 = np.percentile(points, MANUAL_PERCENTILE_HIGH, axis=0).astype(np.float32)
+    p99 = np.maximum(p99, p01 + 1e-6).astype(np.float32)
+
+    return {
+        "manual_pca_points": points,
+        "manual_pca_components": components,
+        "manual_pca_mean": pca_mean,
+        "manual_fader_p01": p01,
+        "manual_fader_p99": p99,
+        "manual_n_mfcc": np.array(int(MANUAL_N_MFCC), dtype=np.int32),
+        "manual_pca_dim": np.array(int(MANUAL_PCA_DIM), dtype=np.int32),
+        "manual_percentile_low": np.array(float(MANUAL_PERCENTILE_LOW), dtype=np.float32),
+        "manual_percentile_high": np.array(float(MANUAL_PERCENTILE_HIGH), dtype=np.float32),
+    }
 
 
 def compute_window_targets(Z_concat: np.ndarray, meta: np.ndarray) -> np.ndarray:
@@ -180,18 +288,29 @@ def main():
     ae = load_vae(args.pretrained)
 
     latent_sequences_raw: List[np.ndarray] = []
+    manual_mfcc_sequences: List[np.ndarray] = []
     encode_chunk_sec = float(args.encode_chunk_sec)
     encode_overlap_sec = float(args.encode_chunk_overlap_sec)
     chunk_sec = encode_chunk_sec if encode_chunk_sec > 0.0 else None
+    latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
+    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
 
-    print("Encoding audio with VAE...")
+    print("Encoding audio with VAE + extracting latent-aligned MFCC features...")
     for fid, p in enumerate(tqdm(paths)):
         wav = load_wav(p)
         z_full = encode_full(ae, wav, chunk_sec=chunk_sec, overlap_sec=encode_overlap_sec).astype(np.float32)
         latent_sequences_raw.append(np.ascontiguousarray(z_full))
+        mfcc_seq = compute_latent_aligned_mfcc(
+            wav_stereo=wav,
+            target_frames=z_full.shape[0],
+            mfcc_transform=mfcc_transform,
+        )
+        manual_mfcc_sequences.append(np.ascontiguousarray(mfcc_seq))
 
     if not latent_sequences_raw:
         raise RuntimeError("No latent sequences were extracted.")
+    if len(manual_mfcc_sequences) != len(latent_sequences_raw):
+        raise RuntimeError("MFCC extraction count mismatch.")
 
     paths_arr = np.array(paths)
 
@@ -219,10 +338,26 @@ def main():
         file_offsets.append(file_offsets[-1] + T_lat)
 
     Z_concat = np.concatenate(normalized_sequences, axis=0).astype(np.float32)
+    mfcc_concat = np.concatenate(manual_mfcc_sequences, axis=0).astype(np.float32)
     file_offsets = np.asarray(file_offsets, dtype=np.int64)
     meta = np.asarray(meta_list, dtype=np.int32)
     frame_file_ids = meta[:, 0].astype(np.int32)
     frame_t = meta[:, 1].astype(np.int32)
+
+    if mfcc_concat.shape[0] != Z_concat.shape[0]:
+        raise RuntimeError(
+            f"Manual MFCC frame count mismatch: {mfcc_concat.shape[0]} vs latent frames {Z_concat.shape[0]}"
+        )
+
+    print("Computing manual navigation PCA features...")
+    manual_arrays = compute_manual_navigation_features(mfcc_concat)
+    p01 = manual_arrays["manual_fader_p01"]
+    p99 = manual_arrays["manual_fader_p99"]
+    print(
+        "  Manual PCA points:",
+        manual_arrays["manual_pca_points"].shape,
+        f"(fader p01 mean={p01.mean():.3f}, p99 mean={p99.mean():.3f})",
+    )
 
     print(f"Computing latent geometry (k={args.latent_nav_k})...")
     geometry = compute_latent_geometry(
@@ -283,6 +418,7 @@ def main():
         context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
         window_targets_log2=window_targets_log2,
         **geometry_arrays,
+        **manual_arrays,
         **extra_arrays,
     )
 

@@ -22,6 +22,11 @@ let trajectory = [];
 let currentIndex = 0;
 let currentVelocity = 0;
 let currentFileId = 0;
+let selectedNavigationMode = 'policy';
+let transportRunning = false;
+let manualNearestIndex = 0;
+let manualNearestDistance = 0;
+let manualFaders = new Array(8).fill(0.5);
 
 // Visualization settings
 let vizMode = 'scatter';
@@ -96,6 +101,7 @@ function setup() {
 
     connectWebSocket();
     setupControls();
+    applyNavigationModeUI();
 
     frameRate(30);
 }
@@ -456,6 +462,8 @@ function connectWebSocket() {
             wsConnected = true;
             updateConnectionStatus(true);
             console.log('WebSocket connected');
+            sendTransportSetMode(selectedNavigationMode);
+            sendManualControls();
         };
         
         ws.onclose = () => {
@@ -488,6 +496,10 @@ function handleMessage(data) {
         corpusPoints = data.positions_2d || [];
         corpusFileIds = data.file_ids || [];
         totalCorpusPoints = data.total_points || 0;
+        if (typeof data.navigation_mode === 'string') {
+            selectedNavigationMode = data.navigation_mode;
+            applyNavigationModeUI();
+        }
 
         // Pre-compute and cache colors for all corpus points (performance optimization)
         cachedCorpusColors = corpusFileIds.map(fileId =>
@@ -498,14 +510,50 @@ function handleMessage(data) {
 
     } else if (data.type === 'state') {
         const nav = data.navigation || {};
+        const transport = data.transport || {};
+        const manual = data.manual || {};
 
-        currentPosition = nav.position_2d || currentPosition;
-        currentIndex = nav.index || 0;
-        currentVelocity = nav.velocity || 0;
-        currentFileId = nav.file_id || 0;
-        
-        if (nav.trajectory_2d && nav.trajectory_2d.length > 0) {
-            trajectory = nav.trajectory_2d;
+        if (typeof nav.mode === 'string') {
+            selectedNavigationMode = nav.mode;
+        } else if (typeof transport.selected_mode === 'string') {
+            selectedNavigationMode = transport.selected_mode;
+        }
+        transportRunning = Boolean(transport.running);
+        applyNavigationModeUI();
+        updateConnectionStatus(wsConnected);
+
+        if (selectedNavigationMode === 'manual') {
+            manualNearestIndex = manual.nearest_index || 0;
+            manualNearestDistance = manual.distance || 0;
+            const clampedIdx = constrain(manualNearestIndex, 0, Math.max(corpusPoints.length - 1, 0));
+            currentIndex = clampedIdx;
+            if (corpusPoints.length > 0) {
+                currentPosition = corpusPoints[clampedIdx];
+            }
+            currentVelocity = 0;
+            currentFileId = corpusFileIds[clampedIdx] || 0;
+            trajectory.push(currentPosition);
+            if (trajectory.length > trailLength) {
+                trajectory = trajectory.slice(-trailLength);
+            }
+            if (Array.isArray(manual.faders) && manual.faders.length === 8) {
+                manualFaders = manual.faders.slice(0, 8);
+                for (let i = 0; i < 8; i++) {
+                    const display = document.getElementById(`val-manual-${i}`);
+                    if (display) display.textContent = manualFaders[i].toFixed(2);
+                    const input = document.getElementById(`manual-${i}`);
+                    if (input && !activeControls.has(`manual-${i}`)) input.value = manualFaders[i];
+                }
+            }
+        } else {
+            currentPosition = nav.position_2d || currentPosition;
+            currentIndex = nav.index || 0;
+            currentVelocity = nav.velocity || 0;
+            currentFileId = nav.file_id || 0;
+            
+            if (nav.trajectory_2d && nav.trajectory_2d.length > 0) {
+                trajectory = nav.trajectory_2d;
+            }
         }
         
         updateHeatmap();
@@ -527,7 +575,8 @@ function updateConnectionStatus(connected) {
     
     if (connected) {
         dot.classList.add('connected');
-        text.textContent = 'Connected';
+        const runStatus = transportRunning ? 'Running' : 'Idle';
+        text.textContent = `Connected (${selectedNavigationMode}, ${runStatus})`;
     } else {
         dot.classList.remove('connected');
         text.textContent = 'Disconnected';
@@ -535,8 +584,14 @@ function updateConnectionStatus(connected) {
 }
 
 function updateInfoDisplay(data) {
-    const nav = data.navigation || {};
+    if (selectedNavigationMode === 'manual') {
+        document.getElementById('info-index').textContent = manualNearestIndex || 0;
+        document.getElementById('info-velocity').textContent = Number(manualNearestDistance || 0).toFixed(2);
+        document.getElementById('info-file').textContent = currentFileId || 0;
+        return;
+    }
 
+    const nav = data.navigation || {};
     document.getElementById('info-index').textContent = nav.index || 0;
     document.getElementById('info-velocity').textContent = (nav.velocity || 0).toFixed(2);
     document.getElementById('info-file').textContent = nav.file_id || 0;
@@ -583,6 +638,31 @@ function updateControlDisplays(prefix, values) {
 
 // UI Control handlers
 function setupControls() {
+    const modePolicyBtn = document.getElementById('mode-policy');
+    const modeManualBtn = document.getElementById('mode-manual');
+
+    modePolicyBtn.addEventListener('click', () => {
+        if (transportRunning) return;
+        selectedNavigationMode = 'policy';
+        applyNavigationModeUI();
+        sendTransportSetMode('policy');
+    });
+
+    modeManualBtn.addEventListener('click', () => {
+        if (transportRunning) return;
+        selectedNavigationMode = 'manual';
+        applyNavigationModeUI();
+        sendTransportSetMode('manual');
+    });
+
+    document.getElementById('btn-start').addEventListener('click', () => {
+        sendTransportAction('start');
+    });
+
+    document.getElementById('btn-stop').addEventListener('click', () => {
+        sendTransportAction('stop');
+    });
+
     // Policy controls
     const policyControls = ['width', 'energy', 'gravity', 'memory', 'coherence', 'exploration'];
     
@@ -608,6 +688,28 @@ function setupControls() {
             });
         }
     });
+
+    // Manual controls (8 faders)
+    for (let i = 0; i < 8; i++) {
+        const input = document.getElementById(`manual-${i}`);
+        const display = document.getElementById(`val-manual-${i}`);
+        const inputId = `manual-${i}`;
+
+        if (input) {
+            input.addEventListener('mousedown', () => activeControls.add(inputId));
+            input.addEventListener('touchstart', () => activeControls.add(inputId));
+            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+            input.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                manualFaders[i] = value;
+                if (display) display.textContent = value.toFixed(2);
+                sendManualControls();
+            });
+        }
+    }
     
     // Decoder controls
     const decoderControls = [
@@ -676,6 +778,23 @@ function setupControls() {
     });
 }
 
+function applyNavigationModeUI() {
+    const modePolicyBtn = document.getElementById('mode-policy');
+    const modeManualBtn = document.getElementById('mode-manual');
+    const policyPanel = document.getElementById('policy-panel');
+    const manualPanel = document.getElementById('manual-panel');
+
+    const isPolicy = selectedNavigationMode === 'policy';
+    modePolicyBtn.classList.toggle('active', isPolicy);
+    modeManualBtn.classList.toggle('active', !isPolicy);
+
+    policyPanel.classList.toggle('panel-hidden', !isPolicy);
+    manualPanel.classList.toggle('panel-hidden', isPolicy);
+
+    modePolicyBtn.disabled = transportRunning;
+    modeManualBtn.disabled = transportRunning;
+}
+
 function sendControl(name, value) {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
@@ -702,6 +821,34 @@ function sendReset() {
     }
 }
 
+function sendTransportSetMode(mode) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'transport',
+            action: 'set_mode',
+            mode,
+        }));
+    }
+}
+
+function sendTransportAction(action) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'transport',
+            action,
+        }));
+    }
+}
+
+function sendManualControls() {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'manual_controls',
+            faders: manualFaders,
+        }));
+    }
+}
+
 function sendExit() {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
@@ -713,6 +860,9 @@ function sendExit() {
 
 // Handle mouse clicks on canvas
 function mousePressed() {
+    if (selectedNavigationMode !== 'policy') {
+        return;
+    }
     if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
         const x = mouseX / width;
         const y = 1 - (mouseY / height);

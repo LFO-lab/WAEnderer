@@ -31,7 +31,15 @@ class WSBroadcaster:
         - Decoder state (gain, smoothing, underruns)
     """
 
-    def __init__(self, nav, decoder=None, fps: float = 30.0, on_exit_request: Optional[Callable[[str], None]] = None):
+    def __init__(
+        self,
+        nav,
+        decoder=None,
+        fps: float = 30.0,
+        on_exit_request: Optional[Callable[[str], None]] = None,
+        message_handler: Optional[Callable[[dict], bool]] = None,
+        extra_state_provider: Optional[Callable[[], dict]] = None,
+    ):
         """
         Initialize broadcaster.
 
@@ -40,6 +48,8 @@ class WSBroadcaster:
             decoder: DecoderPlayer instance (optional)
             fps: Target broadcast rate in frames per second
             on_exit_request: Optional callback invoked when web UI sends {"type":"exit"}.
+            message_handler: Optional callback for custom inbound messages.
+            extra_state_provider: Optional callback that returns extra state fields.
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
@@ -56,6 +66,8 @@ class WSBroadcaster:
         self._thread = None
         self._stop_event = None
         self._on_exit_request = on_exit_request
+        self._message_handler = message_handler
+        self._extra_state_provider = extra_state_provider
 
         # Precompute 2D projection if corpus is higher dimensional
         self._projection_matrix = None
@@ -150,7 +162,7 @@ class WSBroadcaster:
                 "velocity": nav_state["policy_velocity"],
                 "file_id": nav_state["current_file_id"],
                 "fractional": frac_state if frac_state else None,
-                "mode": "latent",
+                "mode": "policy",
             },
             "controls": nav_state["controls"],
         }
@@ -162,6 +174,23 @@ class WSBroadcaster:
         # Add decoder state if available
         if self.decoder is not None:
             state["decoder"] = self.decoder.get_state()
+
+        if self._extra_state_provider is not None:
+            try:
+                extra = self._extra_state_provider()
+            except Exception as e:
+                print(f"[ws] Error getting extra state: {e}")
+                extra = None
+            if isinstance(extra, dict):
+                transport = extra.get("transport")
+                if isinstance(transport, dict):
+                    state["transport"] = transport
+                nav_mode = extra.get("navigation_mode")
+                if isinstance(nav_mode, str):
+                    state["navigation"]["mode"] = nav_mode
+                manual_state = extra.get("manual")
+                if isinstance(manual_state, dict):
+                    state["manual"] = manual_state
 
         return json.dumps(state)
     
@@ -177,12 +206,21 @@ class WSBroadcaster:
             positions = self._ZZ_2d_norm.tolist()
             file_ids = self.nav._file_ids.tolist()
 
+        nav_mode = "policy"
+        if self._extra_state_provider is not None:
+            try:
+                extra = self._extra_state_provider()
+                if isinstance(extra, dict) and isinstance(extra.get("navigation_mode"), str):
+                    nav_mode = extra["navigation_mode"]
+            except Exception:
+                pass
+
         return json.dumps({
             "type": "corpus",
             "total_points": n_points,
             "positions_2d": positions,
             "file_ids": file_ids,
-            "navigation_mode": "latent",
+            "navigation_mode": nav_mode,
         })
     
     async def _handle_client(self, websocket):
@@ -208,6 +246,26 @@ class WSBroadcaster:
         try:
             data = json.loads(message)
             msg_type = data.get("type", "")
+
+            if msg_type in ("transport", "manual_controls"):
+                if self._message_handler is not None:
+                    try:
+                        handled = bool(self._message_handler(data))
+                        if handled:
+                            return
+                    except Exception as e:
+                        print(f"[ws] Error in custom message handler: {e}")
+                # Message types are recognized even if no handler is attached.
+                print(f"[ws] Ignored message type without handler: {msg_type}")
+                return
+
+            if self._message_handler is not None:
+                try:
+                    handled = bool(self._message_handler(data))
+                    if handled:
+                        return
+                except Exception as e:
+                    print(f"[ws] Error in custom message handler: {e}")
             
             if msg_type == "control":
                 # Update navigation controls
@@ -338,6 +396,8 @@ def start_ws_server(
     port: int = 8765,
     fps: float = 30.0,
     on_exit_request: Optional[Callable[[str], None]] = None,
+    message_handler: Optional[Callable[[dict], bool]] = None,
+    extra_state_provider: Optional[Callable[[], dict]] = None,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
@@ -349,10 +409,19 @@ def start_ws_server(
         port: Server port
         fps: Broadcast rate in frames per second
         on_exit_request: Optional callback invoked when web UI requests exit.
+        message_handler: Optional callback for custom inbound WebSocket messages.
+        extra_state_provider: Optional callback adding fields to broadcast state payloads.
 
     Returns:
         Tuple of (WSBroadcaster, Thread)
     """
-    broadcaster = WSBroadcaster(nav, decoder, fps=fps, on_exit_request=on_exit_request)
+    broadcaster = WSBroadcaster(
+        nav,
+        decoder,
+        fps=fps,
+        on_exit_request=on_exit_request,
+        message_handler=message_handler,
+        extra_state_provider=extra_state_provider,
+    )
     thread = broadcaster.start(host, port)
     return broadcaster, thread

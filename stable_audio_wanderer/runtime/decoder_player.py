@@ -137,6 +137,17 @@ class DecoderPlayer:
             self._writer_thread = None
         self._stream.stop()
 
+    def reset_buffers(self):
+        """
+        Drop queued/active audio and reset crossfade state.
+        Useful when restarting transport without recreating the stream.
+        """
+        with self._queue_lock:
+            self._chunk_queue.clear()
+            self._active_chunk = np.zeros((0, 2), dtype=np.float32)
+            self._active_pos = 0
+        self._crossfade_buffer = None
+
     def close(self):
         self._stream.close()
 
