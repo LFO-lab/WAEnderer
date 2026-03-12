@@ -27,6 +27,9 @@ let transportRunning = false;
 let manualNearestIndex = 0;
 let manualNearestDistance = 0;
 let manualFaders = new Array(8).fill(0.5);
+let manualDecodeWindow = 6;
+let manualDecodeWindowMin = 1;
+let manualDecodeWindowMax = 64;
 
 // Visualization settings
 let vizMode = 'scatter';
@@ -545,6 +548,25 @@ function handleMessage(data) {
                     if (input && !activeControls.has(`manual-${i}`)) input.value = manualFaders[i];
                 }
             }
+            if (typeof manual.decode_window_min === 'number') {
+                manualDecodeWindowMin = Math.round(manual.decode_window_min);
+            }
+            if (typeof manual.decode_window_max === 'number') {
+                manualDecodeWindowMax = Math.round(manual.decode_window_max);
+            }
+            if (typeof manual.decode_window === 'number') {
+                manualDecodeWindow = Math.round(manual.decode_window);
+                const display = document.getElementById('val-manual-window');
+                if (display) display.textContent = String(manualDecodeWindow);
+            }
+            const windowInput = document.getElementById('manual-window');
+            if (windowInput) {
+                windowInput.min = String(manualDecodeWindowMin);
+                windowInput.max = String(manualDecodeWindowMax);
+                if (!activeControls.has('manual-window')) {
+                    windowInput.value = String(manualDecodeWindow);
+                }
+            }
         } else {
             currentPosition = nav.position_2d || currentPosition;
             currentIndex = nav.index || 0;
@@ -710,6 +732,24 @@ function setupControls() {
             });
         }
     }
+
+    const manualWindowInput = document.getElementById('manual-window');
+    const manualWindowDisplay = document.getElementById('val-manual-window');
+    if (manualWindowInput) {
+        const inputId = 'manual-window';
+        manualWindowInput.addEventListener('mousedown', () => activeControls.add(inputId));
+        manualWindowInput.addEventListener('touchstart', () => activeControls.add(inputId));
+        manualWindowInput.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualWindowInput.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualWindowInput.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+        manualWindowInput.addEventListener('input', (e) => {
+            const value = Math.round(parseFloat(e.target.value));
+            manualDecodeWindow = value;
+            if (manualWindowDisplay) manualWindowDisplay.textContent = String(value);
+            sendManualWindowSize(value);
+        });
+    }
     
     // Decoder controls
     const decoderControls = [
@@ -845,6 +885,15 @@ function sendManualControls() {
         ws.send(JSON.stringify({
             type: 'manual_controls',
             faders: manualFaders,
+        }));
+    }
+}
+
+function sendManualWindowSize(size) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'manual_window',
+            size: Math.round(size),
         }));
     }
 }

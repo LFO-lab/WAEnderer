@@ -412,6 +412,9 @@ def _save_manual_navigation_artifact(
 ):
     required = [
         "manual_pca_points",
+        "manual_pca_components",
+        "manual_pca_mean",
+        "manual_desc_weighted",
         "manual_fader_p01",
         "manual_fader_p99",
         "frame_file_ids",
@@ -425,6 +428,9 @@ def _save_manual_navigation_artifact(
         )
 
     points = np.asarray(data["manual_pca_points"], dtype=np.float32)
+    pca_components = np.asarray(data["manual_pca_components"], dtype=np.float32)
+    pca_mean = np.asarray(data["manual_pca_mean"], dtype=np.float32).reshape(-1)
+    desc_weighted = np.asarray(data["manual_desc_weighted"], dtype=np.float32)
     p01 = np.asarray(data["manual_fader_p01"], dtype=np.float32).reshape(-1)
     p99 = np.asarray(data["manual_fader_p99"], dtype=np.float32).reshape(-1)
     frame_file_ids = np.asarray(data["frame_file_ids"], dtype=np.int32).reshape(-1)
@@ -436,6 +442,22 @@ def _save_manual_navigation_artifact(
         raise RuntimeError("manual points and frame metadata length mismatch.")
     if p01.shape[0] != 8 or p99.shape[0] != 8:
         raise RuntimeError("manual_fader_p01/p99 must both be shape [8].")
+    if pca_components.ndim != 2 or pca_components.shape[0] != 8:
+        raise RuntimeError(
+            f"manual_pca_components must be [8, D], got {pca_components.shape}"
+        )
+    if pca_mean.shape[0] != pca_components.shape[1]:
+        raise RuntimeError(
+            f"manual_pca_mean shape mismatch: {pca_mean.shape[0]} vs {pca_components.shape[1]}"
+        )
+    if desc_weighted.ndim != 2 or desc_weighted.shape[0] != points.shape[0]:
+        raise RuntimeError(
+            f"manual_desc_weighted must be [N, D] with N={points.shape[0]}, got {desc_weighted.shape}"
+        )
+    if desc_weighted.shape[1] != pca_components.shape[1]:
+        raise RuntimeError(
+            f"manual_desc_weighted dim mismatch: {desc_weighted.shape[1]} vs {pca_components.shape[1]}"
+        )
 
     leaf = max(1, int(leafsize))
     tree = cKDTree(points, leafsize=leaf)
@@ -453,8 +475,12 @@ def _save_manual_navigation_artifact(
 
     source_corpus = np.array([os.path.abspath(corpus_npz)], dtype=np.str_)
     artifact = {
-        "version": np.array(1, dtype=np.int32),
+        "version": np.array(2, dtype=np.int32),
         "manual_pca_points": points.astype(np.float32),
+        "manual_pca_components": pca_components.astype(np.float32),
+        "manual_pca_mean": pca_mean.astype(np.float32),
+        "manual_desc_weighted": desc_weighted.astype(np.float32),
+        "manual_desc_dim": np.array(int(desc_weighted.shape[1]), dtype=np.int32),
         "manual_fader_p01": p01.astype(np.float32),
         "manual_fader_p99": p99.astype(np.float32),
         "frame_file_ids": frame_file_ids.astype(np.int32),
@@ -462,6 +488,16 @@ def _save_manual_navigation_artifact(
         "kdtree_leafsize": np.array(int(leaf), dtype=np.int32),
         "source_corpus_path": source_corpus,
     }
+    optional_keys = [
+        "manual_desc_names",
+        "manual_desc_center",
+        "manual_desc_scale",
+        "manual_desc_scales",
+        "manual_pitch_confidence_index",
+    ]
+    for key in optional_keys:
+        if key in data:
+            artifact[key] = data[key]
     out_dir = os.path.dirname(os.path.abspath(out_path))
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)

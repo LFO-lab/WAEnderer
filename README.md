@@ -54,8 +54,9 @@ Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
 
 `corpus.npz` now includes manual-navigation fields:
 - `manual_pca_points` `[N, 8]`
-- `manual_pca_components` `[8, 20]`
-- `manual_pca_mean` `[20]`
+- `manual_pca_components` `[8, D_desc]`
+- `manual_pca_mean` `[D_desc]`
+- `manual_desc_weighted` `[N, D_desc]`
 - `manual_fader_p01` `[8]`
 - `manual_fader_p99` `[8]`
 
@@ -98,6 +99,12 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--corpus_dir` | required | Path to corpus directory |
 | `--manual_artifact` | `<corpus_dir>/manual_navigation.npz` | Manual navigation artifact path (required at startup) |
 | `--initial_navigation_mode` | `policy` | Initial selected mode (`policy` or `manual`) |
+| `--manual_wander_k` | 4 | Manual timbre-neighbor wander neighborhood size (`1` disables) |
+| `--manual_wander_speed` | 0.5 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
+| `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
+| `--manual_refine_k` | 16 | Refined descriptor-nearest subset size for manual retrieval/wander |
+| `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,64]` per chunk) |
+| `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
 | `--policy_path` | optional | Path to policy checkpoint |
 | `--osc_port` | 9000 | OSC server port |
@@ -224,9 +231,10 @@ The `corpus.npz` file contains:
 | `geom_local_sigma` | `[N]` | Local density scale |
 | `geom_pca_components` | `[D, 64]` | Full-rank PCA matrix |
 | `geom_pca_mean` | `[64]` | PCA centering mean |
-| `manual_pca_points` | `[N, 8]` | Manual navigation coordinates (MFCC -> PCA) |
-| `manual_pca_components` | `[8, 20]` | PCA basis over z-scored MFCC features |
-| `manual_pca_mean` | `[20]` | PCA centering mean in MFCC-z space |
+| `manual_pca_points` | `[N, 8]` | Manual navigation control coordinates (weighted descriptor PCA) |
+| `manual_pca_components` | `[8, D_desc]` | PCA basis over weighted descriptor space |
+| `manual_pca_mean` | `[D_desc]` | PCA centering mean in weighted descriptor space |
+| `manual_desc_weighted` | `[N, D_desc]` | Full weighted timbre descriptor vectors for two-stage reranking |
 | `manual_fader_p01` | `[8]` | Per-dimension 1st percentile range floor |
 | `manual_fader_p99` | `[8]` | Per-dimension 99th percentile range ceiling |
 

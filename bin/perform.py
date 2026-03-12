@@ -2,7 +2,9 @@
 """
 Real-time decoding with selectable policy/manual navigation modes.
 """
+
 import os
+
 # Fix OpenMP duplicate library issue on macOS (must be set before imports that use OpenMP).
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
@@ -17,14 +19,17 @@ from typing import Optional, Tuple
 import numpy as np
 
 from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
-from stable_audio_wanderer.runtime.player import LatentNavigationEngine
-from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
-from stable_audio_wanderer.runtime.manifold import ManifoldConstrainedGenerator, ManifoldConfig
-from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
-from stable_audio_wanderer.runtime.osc_server import run_server
 from stable_audio_wanderer.policy.latent_geometry import load_geometry_from_dict
-from stable_audio_wanderer.vae.sae import load_vae
+from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
+from stable_audio_wanderer.runtime.manifold import (
+    ManifoldConfig,
+    ManifoldConstrainedGenerator,
+)
+from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
+from stable_audio_wanderer.runtime.osc_server import run_server
+from stable_audio_wanderer.runtime.player import LatentNavigationEngine
 from stable_audio_wanderer.vae.decoder import decode_latents
+from stable_audio_wanderer.vae.sae import load_vae
 
 
 def find_corpus_file(corpus_dir: str):
@@ -40,7 +45,9 @@ def find_corpus_file(corpus_dir: str):
         return corpus_npz
 
 
-def smooth_window_log2(current_log2: float, target_log2: float, alpha: float = 0.3) -> float:
+def smooth_window_log2(
+    current_log2: float, target_log2: float, alpha: float = 0.3
+) -> float:
     """Smooth window size transitions in log2 space (perceptually uniform)."""
     return (1.0 - alpha) * current_log2 + alpha * target_log2
 
@@ -120,8 +127,27 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     frame_t = artifact["frame_t"].astype(np.int32).reshape(-1)
     leaf = int(_read_scalar(artifact, "kdtree_leafsize", 32))
     version = int(_read_scalar(artifact, "version", 0))
-
-    if version != 1:
+    pca_components = None
+    pca_mean = None
+    desc_weighted = None
+    if version == 2:
+        required_v2 = [
+            "manual_pca_components",
+            "manual_pca_mean",
+            "manual_desc_weighted",
+        ]
+        missing_v2 = [k for k in required_v2 if k not in artifact]
+        if missing_v2:
+            raise RuntimeError(f"Manual artifact v2 missing keys: {missing_v2}")
+        pca_components = artifact["manual_pca_components"].astype(np.float32)
+        pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
+        desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
+    elif version == 1:
+        print(
+            "[warn] Manual artifact version 1 loaded (legacy MFCC-only retrieval). "
+            "Re-run train_policy.py --navigation_mode manual to enable descriptor rerank."
+        )
+    else:
         raise RuntimeError(f"Unsupported manual artifact version: {version}")
     if points.ndim != 2 or points.shape[1] != 8:
         raise RuntimeError(f"manual_pca_points must be [N, 8], got {points.shape}")
@@ -129,13 +155,38 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
         raise RuntimeError(
             f"manual_pca_points frame count mismatch: {points.shape[0]} vs expected {expected_frames}"
         )
-    if frame_file_ids.shape[0] != points.shape[0] or frame_t.shape[0] != points.shape[0]:
+    if (
+        frame_file_ids.shape[0] != points.shape[0]
+        or frame_t.shape[0] != points.shape[0]
+    ):
         raise RuntimeError("Manual artifact frame metadata length mismatch.")
     if p01.shape[0] != 8 or p99.shape[0] != 8:
         raise RuntimeError("manual_fader_p01/manual_fader_p99 must both be shape [8].")
+    if pca_components is not None:
+        if pca_components.ndim != 2 or pca_components.shape[0] != 8:
+            raise RuntimeError(
+                f"manual_pca_components must be [8, D], got {pca_components.shape}"
+            )
+        if pca_mean is None or pca_mean.shape[0] != pca_components.shape[1]:
+            raise RuntimeError(
+                f"manual_pca_mean mismatch: {None if pca_mean is None else pca_mean.shape[0]} "
+                f"vs {pca_components.shape[1]}"
+            )
+        if desc_weighted is None or desc_weighted.shape != (
+            points.shape[0],
+            pca_components.shape[1],
+        ):
+            raise RuntimeError(
+                "manual_desc_weighted must be [N, D] aligned with manual_pca_points and "
+                f"manual_pca_components, got {None if desc_weighted is None else desc_weighted.shape}"
+            )
 
     return {
+        "version": int(version),
         "manual_pca_points": points,
+        "manual_pca_components": pca_components,
+        "manual_pca_mean": pca_mean,
+        "manual_desc_weighted": desc_weighted,
         "manual_fader_p01": p01,
         "manual_fader_p99": p99,
         "frame_file_ids": frame_file_ids,
@@ -148,10 +199,13 @@ class TransportController:
     """Owns runtime transport state for start/stop and mode selection."""
 
     POLICY_QUEUE_SIZE = 4
-    MANUAL_QUEUE_SIZE = 8
+    MANUAL_QUEUE_SIZE = 2
+    MANUAL_WINDOW_MIN = 1
+    MANUAL_WINDOW_MAX = 64
     TARGET_BUFFER_HIGH_POLICY = 1.0
     TARGET_BUFFER_HIGH_MANUAL = 0.22
     MANUAL_PREBUFFER_SEC = 0.22
+    MANUAL_FRAME_SEC = 0.0465
 
     def __init__(
         self,
@@ -191,6 +245,15 @@ class TransportController:
         self._policy_state = {}
         self._manual_last_index = 0
         self._manual_last_distance = 0.0
+        self._manual_window_size = max(
+            self.MANUAL_WINDOW_MIN,
+            min(self.MANUAL_WINDOW_MAX, int(args.manual_window_size)),
+        )
+        self._manual_fader_motion_threshold = float(
+            np.clip(float(args.manual_fader_motion_threshold), 0.0, 1.0)
+        )
+        self._manual_live_faders = np.full(8, 0.5, dtype=np.float32)
+        self._manual_render_faders = np.full(8, 0.5, dtype=np.float32)
 
         self._runtime_stats = {
             "current_window": int(max(2, min(args.window_size, 64))),
@@ -216,18 +279,69 @@ class TransportController:
 
     def set_manual_faders(self, faders) -> Tuple[bool, str]:
         try:
-            self.manual.set_faders(faders)
+            next_faders = np.asarray(faders, dtype=np.float32).reshape(-1)
+            if next_faders.shape[0] != 8:
+                raise ValueError(f"Expected 8 fader values, got {next_faders.shape[0]}")
+            next_faders = np.clip(next_faders, 0.0, 1.0)
         except Exception as exc:
             return False, str(exc)
+
         dropped = 0
         with self._lock:
+            prev_faders = self._manual_live_faders.copy()
+            fader_delta = float(np.max(np.abs(next_faders - prev_faders)))
+            self._manual_live_faders = next_faders.copy()
             running_manual = self._running.is_set() and self._active_mode == "manual"
+            if not running_manual:
+                self._manual_render_faders = next_faders.copy()
+
+        if not running_manual:
+            self.manual.set_faders(next_faders)
+
+        self._set_manual_window_stats(
+            int(self._manual_window_size),
+            changed=False,
+        )
         if running_manual:
-            # Drop queued stale queries so new fader positions are heard quickly.
+            motion_detected = fader_delta >= self._manual_fader_motion_threshold
+            if motion_detected:
+                # Drop queued stale chunks so next decoded chunk includes recent controls.
+                dropped = self._drop_pending_latents()
+
+        msg_parts = [f"manual faders updated (delta={fader_delta:.3f})"]
+        if dropped > 0:
+            msg_parts.append(f"dropped {dropped} queued batches")
+        return True, ", ".join(msg_parts)
+
+    def set_manual_wander_params(
+        self, k: int = None, speed: float = None
+    ) -> Tuple[bool, str]:
+        """Set manual navigation wandering parameters."""
+        try:
+            self.manual.set_wander_params(k=k, speed=speed)
+        except Exception as exc:
+            return False, str(exc)
+        return True, f"manual wander params updated (k={k}, speed={speed})"
+
+    def set_manual_window_size(self, window_size) -> Tuple[bool, str]:
+        try:
+            requested = int(window_size)
+        except Exception:
+            return False, f"invalid manual window size: {window_size}"
+
+        clamped = max(self.MANUAL_WINDOW_MIN, min(self.MANUAL_WINDOW_MAX, requested))
+        with self._lock:
+            changed = clamped != self._manual_window_size
+            self._manual_window_size = int(clamped)
+            running_manual = self._running.is_set() and self._active_mode == "manual"
+
+        self._set_manual_window_stats(self._manual_window_size, changed=changed)
+        dropped = 0
+        if running_manual and changed:
             dropped = self._drop_pending_latents()
         if dropped > 0:
-            return True, f"manual faders updated (dropped {dropped} queued frames)"
-        return True, "manual faders updated"
+            return True, f"manual window size set to {clamped} (dropped {dropped} queued batches)"
+        return True, f"manual window size set to {clamped}"
 
     def stop(self) -> Tuple[bool, str]:
         if not self._running.is_set():
@@ -286,11 +400,17 @@ class TransportController:
         hop_size = (window_size + 1) // 2
 
         if self.args.fixed_window:
-            print(f"[info] Fixed window sizing enabled (window={window_size}, hop={hop_size})")
+            print(
+                f"[info] Fixed window sizing enabled (window={window_size}, hop={hop_size})"
+            )
         elif self.args.boundary_window_updates:
-            print(f"[info] Adaptive window sizing with boundary-only updates (initial={window_size})")
+            print(
+                f"[info] Adaptive window sizing with boundary-only updates (initial={window_size})"
+            )
         else:
-            print(f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)")
+            print(
+                f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)"
+            )
 
         # Pre-buffer: fill audio buffer with ~1 second of audio before starting stream.
         print("[info] Pre-buffering audio...")
@@ -298,7 +418,9 @@ class TransportController:
         num_hops = max(4, int(1.0 / audio_per_hop) + 1)
 
         frame_buffer = [self.nav.step() for _ in range(window_size)]
-        z_batch_norm = self.manifold.generate_batch(frame_buffer, exploration=self.nav.ctrl_exploration)
+        z_batch_norm = self.manifold.generate_batch(
+            frame_buffer, exploration=self.nav.ctrl_exploration
+        )
         z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
         audio = decode_latents(self.vae, z_batch_raw)
         self.decoder.write_frame(audio)
@@ -307,18 +429,24 @@ class TransportController:
         for _ in range(num_hops - 1):
             new_frames = [self.nav.step() for _ in range(hop_size)]
             full_window = prev_half + new_frames
-            z_batch_norm = self.manifold.generate_batch(full_window, exploration=self.nav.ctrl_exploration)
+            z_batch_norm = self.manifold.generate_batch(
+                full_window, exploration=self.nav.ctrl_exploration
+            )
             z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
             audio = decode_latents(self.vae, z_batch_raw)
             self.decoder.write_frame(audio)
             prev_half = full_window[hop_size:]
 
-        print(f"[info] Pre-buffered {num_hops} windows ({self.decoder.buffer_duration():.2f}s)")
+        print(
+            f"[info] Pre-buffered {num_hops} windows ({self.decoder.buffer_duration():.2f}s)"
+        )
         print("[info] Pre-filling latent queue...")
         for _ in range(self._latent_queue.maxsize):
             new_frames = [self.nav.step() for _ in range(hop_size)]
             full_window = prev_half + new_frames
-            z_batch_norm = self.manifold.generate_batch(full_window, exploration=self.nav.ctrl_exploration)
+            z_batch_norm = self.manifold.generate_batch(
+                full_window, exploration=self.nav.ctrl_exploration
+            )
             z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
             self._latent_queue.put(z_batch_raw)
             prev_half = full_window[hop_size:]
@@ -339,20 +467,34 @@ class TransportController:
         self._runtime_stats["decode_ms_last"] = 0.0
         self._runtime_stats["decode_ms_sum"] = 0.0
         self._runtime_stats["decode_count"] = 0
+        with self._lock:
+            self._manual_render_faders = self._manual_live_faders.copy()
+        self._set_manual_window_stats(self._manual_window_size, changed=False)
+        print(
+            "[info] Manual decode window config: "
+            f"window={self._manual_window_size}, queue={self.MANUAL_QUEUE_SIZE}"
+        )
 
         # Keep manual prebuffer short for responsive fader changes.
         print("[info] Pre-buffering manual audio...")
-        frame_sec = 0.0465
-        pre_frames = max(4, int(self.MANUAL_PREBUFFER_SEC / frame_sec) + 1)
-        for _ in range(pre_frames):
-            z_raw = self._next_manual_latent()
+        pre_frames = max(4, int(self.MANUAL_PREBUFFER_SEC / self.MANUAL_FRAME_SEC) + 1)
+        pre_remaining = int(pre_frames)
+        while pre_remaining > 0:
+            batch_size = min(int(self._manual_window_size), pre_remaining)
+            z_raw = self._next_manual_latent_batch(batch_size)
             audio = decode_latents(self.vae, z_raw)
             self.decoder.write_frame(audio)
-        print(f"[info] Pre-buffered {pre_frames} manual frames ({self.decoder.buffer_duration():.2f}s)")
+            pre_remaining -= batch_size
+        print(
+            f"[info] Pre-buffered {pre_frames} manual frames ({self.decoder.buffer_duration():.2f}s)"
+        )
 
         for _ in range(self._latent_queue.maxsize):
-            self._latent_queue.put(self._next_manual_latent())
-        print(f"[info] Manual latent queue filled ({self._latent_queue.qsize()} batches)")
+            batch_size = self._manual_batch_window_size()
+            self._latent_queue.put(self._next_manual_latent_batch(batch_size))
+        print(
+            f"[info] Manual latent queue filled ({self._latent_queue.qsize()} batches)"
+        )
 
         self._start_threads(nav_loop=self._manual_nav_loop)
 
@@ -380,7 +522,9 @@ class TransportController:
         self._decode_thread.start()
 
         if self.args.audio_stats:
-            self._stats_thread = threading.Thread(target=self._audio_stats_loop, daemon=True)
+            self._stats_thread = threading.Thread(
+                target=self._audio_stats_loop, daemon=True
+            )
             self._stats_thread.start()
 
     def _next_manual_latent(self) -> np.ndarray:
@@ -393,6 +537,45 @@ class TransportController:
         z_norm = self.Z_concat[idx]
         z_raw = z_norm[None, :] * self.Z_std[None, :] + self.Z_mean[None, :]
         return z_raw.astype(np.float32)
+
+    def _next_manual_latent_batch(self, window_size: int) -> np.ndarray:
+        window = max(1, int(window_size))
+        with self._lock:
+            start_faders = self._manual_render_faders.copy()
+            target_faders = self._manual_live_faders.copy()
+
+        if window == 1:
+            fader_path = target_faders[None, :]
+        else:
+            alphas = np.linspace(0.0, 1.0, window, dtype=np.float32)[:, None]
+            fader_path = (1.0 - alphas) * start_faders[None, :] + alphas * target_faders[None, :]
+
+        batch = np.empty((window, self.Z_concat.shape[1]), dtype=np.float32)
+        for i in range(window):
+            frame = self.manual.step_with_faders(fader_path[i])
+            idx = int(np.clip(frame.nearest_index, 0, self.Z_concat.shape[0] - 1))
+            dist = float(frame.distance)
+            with self._stats_lock:
+                self._manual_last_index = idx
+                self._manual_last_distance = dist
+            z_norm = self.Z_concat[idx]
+            batch[i] = z_norm * self.Z_std + self.Z_mean
+
+        with self._lock:
+            self._manual_render_faders = target_faders.copy()
+
+        return batch
+
+    def _set_manual_window_stats(self, window_size: int, changed: bool) -> None:
+        with self._stats_lock:
+            if changed:
+                self._runtime_stats["window_changes"] += 1
+            self._runtime_stats["current_window"] = int(window_size)
+            self._runtime_stats["current_hop"] = int(window_size)
+
+    def _manual_batch_window_size(self) -> int:
+        self._set_manual_window_stats(self._manual_window_size, changed=False)
+        return int(self._manual_window_size)
 
     def _policy_nav_loop(self):
         nav_mode = "fixed" if self.args.fixed_window else "adaptive"
@@ -417,7 +600,7 @@ class TransportController:
                     current_window = int(active_window)
                     current_hop = int(active_hop)
                 else:
-                    current_window = max(2, min(64, round(2 ** current_window_log2)))
+                    current_window = max(2, min(64, round(2**current_window_log2)))
                     current_hop = (current_window + 1) // 2
 
                 frame = self.nav.step()
@@ -426,15 +609,21 @@ class TransportController:
                 if not self.args.fixed_window:
                     target_log2 = math.log2(max(2, frame.predicted_window_size))
                     if self.args.boundary_window_updates:
-                        pending_window_log2 = smooth_window_log2(pending_window_log2, target_log2)
+                        pending_window_log2 = smooth_window_log2(
+                            pending_window_log2, target_log2
+                        )
                     else:
-                        current_window_log2 = smooth_window_log2(current_window_log2, target_log2)
+                        current_window_log2 = smooth_window_log2(
+                            current_window_log2, target_log2
+                        )
 
                 if len(frame_buffer) >= current_hop:
                     target_prev_len = current_window - current_hop
                     if len(prev_half) < target_prev_len:
                         while len(prev_half) < target_prev_len:
-                            prev_half.append(prev_half[-1] if prev_half else frame_buffer[0])
+                            prev_half.append(
+                                prev_half[-1] if prev_half else frame_buffer[0]
+                            )
                     elif len(prev_half) > target_prev_len:
                         prev_half = prev_half[-target_prev_len:]
 
@@ -460,13 +649,16 @@ class TransportController:
                         self._runtime_stats["current_window"] = int(current_window)
                         self._runtime_stats["current_hop"] = int(current_hop)
 
-                    if (not self.args.fixed_window) and self.args.boundary_window_updates:
-                        active_window = max(2, min(64, round(2 ** pending_window_log2)))
+                    if (
+                        not self.args.fixed_window
+                    ) and self.args.boundary_window_updates:
+                        active_window = max(2, min(64, round(2**pending_window_log2)))
                         active_hop = (active_window + 1) // 2
                         current_window_log2 = pending_window_log2
         except Exception as e:
             print(f"[error] Navigation loop exception: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             print("[info] Navigation loop stopped")
@@ -478,7 +670,8 @@ class TransportController:
                 if self._latent_queue.full():
                     time.sleep(0.005)
                     continue
-                z_raw = self._next_manual_latent()
+                batch_size = self._manual_batch_window_size()
+                z_raw = self._next_manual_latent_batch(batch_size)
                 try:
                     self._latent_queue.put(z_raw, timeout=0.1)
                 except queue.Full:
@@ -486,6 +679,7 @@ class TransportController:
         except Exception as e:
             print(f"[error] Manual navigation loop exception: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             print("[info] Manual navigation loop stopped")
@@ -522,6 +716,7 @@ class TransportController:
         except Exception as e:
             print(f"[error] Decode loop exception: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
             print("[info] Decode loop stopped")
@@ -535,14 +730,18 @@ class TransportController:
             curr_underruns = int(self.decoder.underruns)
             delta_underruns = curr_underruns - last_underruns
             last_underruns = curr_underruns
-            qsize = int(self._latent_queue.qsize()) if self._latent_queue is not None else 0
+            qsize = (
+                int(self._latent_queue.qsize()) if self._latent_queue is not None else 0
+            )
             with self._stats_lock:
                 current_window = int(self._runtime_stats["current_window"])
                 current_hop = int(self._runtime_stats["current_hop"])
                 window_changes = int(self._runtime_stats["window_changes"])
                 decode_ms_last = float(self._runtime_stats["decode_ms_last"])
                 decode_count = int(self._runtime_stats["decode_count"])
-                decode_ms_avg = float(self._runtime_stats["decode_ms_sum"]) / max(1, decode_count)
+                decode_ms_avg = float(self._runtime_stats["decode_ms_sum"]) / max(
+                    1, decode_count
+                )
             print(
                 f"[audio] buf={self.decoder.buffer_duration():.3f}s "
                 f"queue={qsize} "
@@ -557,12 +756,35 @@ class TransportController:
     def get_extra_state(self) -> dict:
         with self._lock:
             selected_mode = self.selected_mode
+            manual_decode_window = int(self._manual_window_size)
         manual_engine_state = self.manual.get_state()
         with self._stats_lock:
+            # Ensure all values are JSON-serializable
+            faders = manual_engine_state.get("faders", [0.5] * 8)
+            if hasattr(faders, "tolist"):
+                faders = faders.tolist()
+            elif not isinstance(faders, list):
+                faders = [float(f) for f in faders]
+
+            # Convert all fader values to float to ensure JSON serialization
+            faders_float = [float(f) for f in faders]
+
             manual_info = {
                 "nearest_index": int(self._manual_last_index),
                 "distance": float(self._manual_last_distance),
-                "faders": manual_engine_state.get("faders", [0.5] * 8),
+                "faders": faders_float,
+                "decode_window": manual_decode_window,
+                "decode_window_min": int(self.MANUAL_WINDOW_MIN),
+                "decode_window_max": int(self.MANUAL_WINDOW_MAX),
+                "search_mode": str(manual_engine_state.get("search_mode", "legacy")),
+                "coarse_k": int(manual_engine_state.get("coarse_k", 0)),
+                "refine_k": int(manual_engine_state.get("refine_k", 0)),
+                "wander_k": int(manual_engine_state.get("wander_k", 1)),
+                "wander_speed": float(manual_engine_state.get("wander_speed", 0.0)),
+                "is_wandering": bool(manual_engine_state.get("is_wandering", False)),
+                "wander_progress": float(
+                    manual_engine_state.get("wander_progress", 0.0)
+                ),
             }
         return {
             "transport": {
@@ -582,21 +804,38 @@ class TransportController:
                 ok, msg = self.set_mode(mode)
                 print(f"[ws] transport set_mode({mode}) -> {msg}")
                 return True
-            if action == "start":
+            elif action == "start":
                 ok, msg = self.start()
                 print(f"[ws] transport start -> {msg}")
                 return True
-            if action == "stop":
+            elif action == "stop":
                 ok, msg = self.stop()
                 print(f"[ws] transport stop -> {msg}")
                 return True
-            return True
+            else:
+                print(f"[ws] Unknown transport action: {action}")
+                return False
 
         if msg_type == "manual_controls":
             faders = data.get("faders", [])
             ok, msg = self.set_manual_faders(faders)
             if not ok:
                 print(f"[ws] manual_controls error: {msg}")
+            return True
+
+        if msg_type == "manual_wander":
+            wander_k = data.get("k")
+            wander_speed = data.get("speed")
+            ok, msg = self.set_manual_wander_params(k=wander_k, speed=wander_speed)
+            if not ok:
+                print(f"[ws] manual_wander error: {msg}")
+            return True
+
+        if msg_type == "manual_window":
+            window_size = data.get("size")
+            ok, msg = self.set_manual_window_size(window_size)
+            if not ok:
+                print(f"[ws] manual_window error: {msg}")
             return True
 
         return False
@@ -606,12 +845,18 @@ def main():
     ap = argparse.ArgumentParser(
         description="Real-time decoding with selectable policy/manual navigation."
     )
-    ap.add_argument("--corpus_dir", required=True, help="Directory containing corpus.npz")
+    ap.add_argument(
+        "--corpus_dir", required=True, help="Directory containing corpus.npz"
+    )
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
     ap.add_argument("--osc_ip", default="127.0.0.1")
     ap.add_argument("--osc_port", type=int, default=9000)
-    ap.add_argument("--ws_port", type=int, default=8765,
-                    help="WebSocket port for visualization (0 to disable).")
+    ap.add_argument(
+        "--ws_port",
+        type=int,
+        default=8765,
+        help="WebSocket port for visualization (0 to disable).",
+    )
     ap.add_argument(
         "--manual_artifact",
         default=None,
@@ -624,6 +869,42 @@ def main():
         help="Navigation mode selected at startup.",
     )
     ap.add_argument(
+        "--manual_wander_k",
+        type=int,
+        default=4,
+        help="Manual mode wandering neighborhood size (1 disables wandering).",
+    )
+    ap.add_argument(
+        "--manual_wander_speed",
+        type=float,
+        default=0.5,
+        help="Manual mode wander transition speed (0.0 instant, 1.0 slowest).",
+    )
+    ap.add_argument(
+        "--manual_coarse_k",
+        type=int,
+        default=96,
+        help="Manual two-stage search: coarse candidate count in control space.",
+    )
+    ap.add_argument(
+        "--manual_refine_k",
+        type=int,
+        default=16,
+        help="Manual two-stage search: refined neighbor count in descriptor space.",
+    )
+    ap.add_argument(
+        "--manual_window_size",
+        type=int,
+        default=6,
+        help="Fixed manual decode batch size (larger = smoother, higher control latency).",
+    )
+    ap.add_argument(
+        "--manual_fader_motion_threshold",
+        type=float,
+        default=0.01,
+        help="Minimum max-abs fader delta to count as active motion.",
+    )
+    ap.add_argument(
         "--autostart",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -631,10 +912,15 @@ def main():
     )
 
     # Decoder controls.
-    ap.add_argument("--output_gain", type=float, default=1.0,
-                    help="Initial output gain (0-2).")
-    ap.add_argument("--smoothing", type=float, default=0.1,
-                    help="Crossfade smoothing between frames (0-1).")
+    ap.add_argument(
+        "--output_gain", type=float, default=1.0, help="Initial output gain (0-2)."
+    )
+    ap.add_argument(
+        "--smoothing",
+        type=float,
+        default=0.1,
+        help="Crossfade smoothing between frames (0-1).",
+    )
     ap.add_argument(
         "--audio_stats",
         action=argparse.BooleanOptionalAction,
@@ -655,30 +941,67 @@ def main():
     ap.add_argument("--manifold_sparse_quantile", type=float, default=0.75)
 
     # Policy controls.
-    ap.add_argument("--policy_path", default=None,
-                    help="Checkpoint .pt for navigation policy.")
-    ap.add_argument("--policy_temperature", type=float, default=1.0,
-                    help="Base temperature for policy sampling.")
-    ap.add_argument("--policy_sample", action=argparse.BooleanOptionalAction, default=True,
-                    help="Stochastically sample from policy (default: yes).")
+    ap.add_argument(
+        "--policy_path", default=None, help="Checkpoint .pt for navigation policy."
+    )
+    ap.add_argument(
+        "--policy_temperature",
+        type=float,
+        default=1.0,
+        help="Base temperature for policy sampling.",
+    )
+    ap.add_argument(
+        "--policy_sample",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stochastically sample from policy (default: yes).",
+    )
 
     # Control parameters (policy mode).
-    ap.add_argument("--ctrl_width", type=float, default=0.5,
-                    help="Initial width control (0-1): temperature scaling.")
-    ap.add_argument("--ctrl_energy", type=float, default=0.5,
-                    help="Initial energy control (0-1): displacement magnitude.")
-    ap.add_argument("--ctrl_gravity", type=float, default=0.5,
-                    help="Initial gravity control (0-1): forward/backward bias.")
-    ap.add_argument("--ctrl_memory", type=float, default=0.0,
-                    help="Initial memory control (0-1): pull toward recent positions.")
-    ap.add_argument("--ctrl_coherence", type=float, default=0.0,
-                    help="Initial coherence control (0-1): stay within same file.")
-    ap.add_argument("--ctrl_exploration", type=float, default=0.0,
-                    help="Initial exploration control (0-1): entropy injection.")
+    ap.add_argument(
+        "--ctrl_width",
+        type=float,
+        default=0.5,
+        help="Initial width control (0-1): temperature scaling.",
+    )
+    ap.add_argument(
+        "--ctrl_energy",
+        type=float,
+        default=0.5,
+        help="Initial energy control (0-1): displacement magnitude.",
+    )
+    ap.add_argument(
+        "--ctrl_gravity",
+        type=float,
+        default=0.5,
+        help="Initial gravity control (0-1): forward/backward bias.",
+    )
+    ap.add_argument(
+        "--ctrl_memory",
+        type=float,
+        default=0.0,
+        help="Initial memory control (0-1): pull toward recent positions.",
+    )
+    ap.add_argument(
+        "--ctrl_coherence",
+        type=float,
+        default=0.0,
+        help="Initial coherence control (0-1): stay within same file.",
+    )
+    ap.add_argument(
+        "--ctrl_exploration",
+        type=float,
+        default=0.0,
+        help="Initial exploration control (0-1): entropy injection.",
+    )
 
     # Window size for policy batched decoding.
-    ap.add_argument("--window_size", type=int, default=2,
-                    help="Initial window size in latent frames (2-64).")
+    ap.add_argument(
+        "--window_size",
+        type=int,
+        default=2,
+        help="Initial window size in latent frames (2-64).",
+    )
     ap.add_argument(
         "--fixed_window",
         action=argparse.BooleanOptionalAction,
@@ -709,7 +1032,9 @@ def main():
     manual_artifact_path = args.manual_artifact
     if manual_artifact_path is None:
         manual_artifact_path = os.path.join(args.corpus_dir, "manual_navigation.npz")
-    manual_data = load_manual_artifact(manual_artifact_path, expected_frames=Z_concat.shape[0])
+    manual_data = load_manual_artifact(
+        manual_artifact_path, expected_frames=Z_concat.shape[0]
+    )
     print(f"[info] Using manual artifact: {manual_artifact_path}")
 
     nav = load_navigation_engine(
@@ -737,7 +1062,28 @@ def main():
         manual_points=manual_data["manual_pca_points"],
         fader_p01=manual_data["manual_fader_p01"],
         fader_p99=manual_data["manual_fader_p99"],
+        desc_weighted=manual_data["manual_desc_weighted"],
+        pca_components=manual_data["manual_pca_components"],
+        pca_mean=manual_data["manual_pca_mean"],
+        coarse_k=int(args.manual_coarse_k),
+        refine_k=int(args.manual_refine_k),
         leafsize=int(manual_data["kdtree_leafsize"]),
+        wander_k=int(args.manual_wander_k),
+        wander_speed=float(args.manual_wander_speed),
+    )
+    print(
+        "[info] Manual wandering config: "
+        f"k={int(args.manual_wander_k)}, speed={float(args.manual_wander_speed):.2f}"
+    )
+    print(
+        "[info] Manual decode config: "
+        f"window={int(args.manual_window_size)}, "
+        f"motion_eps={float(args.manual_fader_motion_threshold):.3f}"
+    )
+    print(
+        "[info] Manual retrieval config: "
+        f"artifact_v={int(manual_data['version'])}, mode={manual_engine.search_mode}, "
+        f"coarse_k={int(args.manual_coarse_k)}, refine_k={int(args.manual_refine_k)}"
     )
 
     print("[info] Loading VAE decoder...")
@@ -775,6 +1121,7 @@ def main():
     if args.ws_port > 0:
         try:
             from stable_audio_wanderer.runtime.ws_server import start_ws_server
+
             ws_server, ws_thread = start_ws_server(
                 nav,
                 decoder,
