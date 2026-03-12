@@ -338,6 +338,24 @@ class TransportController:
             msg_parts.append(f"dropped {dropped} queued batches")
         return True, ", ".join(msg_parts)
 
+    def set_manual_axis(self, axis: int, value) -> Tuple[bool, str]:
+        try:
+            axis_i = int(axis)
+            value_f = float(value)
+        except Exception:
+            return False, f"invalid manual axis/value: axis={axis}, value={value}"
+
+        if axis_i < 0 or axis_i >= int(self.manual.control_dim):
+            return False, f"manual axis out of range: {axis_i}"
+
+        with self._lock:
+            controls = self._manual_live_faders.copy()
+        controls[axis_i] = float(np.clip(value_f, 0.0, 1.0))
+        ok, msg = self.set_manual_faders(controls.tolist())
+        if ok:
+            return True, f"manual axis {axis_i} set to {controls[axis_i]:.3f}"
+        return False, msg
+
     def set_manual_wander_params(
         self, k: int = None, speed: float = None
     ) -> Tuple[bool, str]:
@@ -887,6 +905,12 @@ def main():
     ap.add_argument("--osc_ip", default="127.0.0.1")
     ap.add_argument("--osc_port", type=int, default=9000)
     ap.add_argument(
+        "--osc_debug",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print incoming OSC messages (including unmapped paths).",
+    )
+    ap.add_argument(
         "--ws_port",
         type=int,
         default=8765,
@@ -1198,7 +1222,14 @@ def main():
         print(f"[info] Autostart: {msg}")
 
     try:
-        run_server(nav, decoder, ip=args.osc_ip, port=args.osc_port)
+        run_server(
+            nav,
+            decoder,
+            ip=args.osc_ip,
+            port=args.osc_port,
+            manual_controller=controller,
+            osc_debug=bool(args.osc_debug),
+        )
     except KeyboardInterrupt:
         print("\n[info] Shutting down...")
     finally:

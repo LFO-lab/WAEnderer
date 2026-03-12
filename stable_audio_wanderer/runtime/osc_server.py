@@ -11,6 +11,8 @@ def run_server(
     decoder=None,
     ip: str = "127.0.0.1",
     port: int = 9000,
+    manual_controller=None,
+    osc_debug: bool = False,
 ):
     """
     Start OSC server for navigation and decoder control.
@@ -32,13 +34,25 @@ def run_server(
             /decoder/gain value        - Set output gain (0-2)
             /decoder/smoothing value   - Set crossfade smoothing (0-1)
 
+        Manual controls:
+            /manual/x value            - Set manual X control (0-1)
+            /manual/y value            - Set manual Y control (0-1)
+            /manual/z value            - Set manual Z control (0-1)
+            /manual/xyz x y z          - Set manual XYZ controls together (0-1 each)
+
     Args:
         nav: Navigation engine instance
         decoder: DecoderPlayer instance (optional)
         ip: Server IP address
         port: Server port
+        manual_controller: Transport controller exposing set_manual_axis(axis, value)
+        osc_debug: Print incoming OSC messages and handler outcomes.
     """
     dispatcher = Dispatcher()
+
+    def _dbg(msg: str):
+        if bool(osc_debug):
+            print(f"[osc-debug] {msg}")
 
     def _as_scalar(args):
         if len(args) == 0:
@@ -51,55 +65,169 @@ def run_server(
     # --- Navigation cursor ---
     def on_cursor(addr, *coords):
         if len(coords) == 0:
+            _dbg(f"{addr} ignored (no args)")
             return
         arr = np.asarray(coords, dtype=np.float32)
         arr = np.clip(arr, 0.0, 1.0)
+        # In manual mode, route /cursor to manual XYZ controls for convenience.
+        if manual_controller is not None:
+            selected_mode = str(getattr(manual_controller, "selected_mode", "policy"))
+            active_mode = str(getattr(manual_controller, "_active_mode", selected_mode))
+            if selected_mode == "manual" or active_mode == "manual":
+                set_all = getattr(manual_controller, "set_manual_faders", None)
+                if set_all is not None:
+                    vec = arr[:3]
+                    if vec.shape[0] < 3:
+                        vec = np.pad(vec, (0, 3 - vec.shape[0]), mode="edge")
+                    ok, msg = set_all(vec.tolist())
+                    _dbg(f"{addr} -> manual xyz {vec.tolist()} ({msg})")
+                    return
         nav.set_cursor_nd(arr)
+        _dbg(f"{addr} -> nav cursor {arr.tolist()}")
 
     # --- Policy controls ---
     def on_width(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(width=v)
+            _dbg(f"{addr} {v}")
 
     def on_energy(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(energy=v)
+            _dbg(f"{addr} {v}")
 
     def on_gravity(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(gravity=v)
+            _dbg(f"{addr} {v}")
 
     def on_memory(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(memory=v)
+            _dbg(f"{addr} {v}")
 
     def on_coherence(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(coherence=v)
+            _dbg(f"{addr} {v}")
 
     def on_exploration(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
             nav.set_policy_controls(exploration=v)
+            _dbg(f"{addr} {v}")
 
     def on_reset(addr, *vals):
         nav.reset_policy()
+        _dbg(f"{addr}")
 
     # --- Decoder controls ---
     def on_decoder_gain(addr, *vals):
         v = _as_scalar(vals)
         if v is not None and decoder is not None:
             decoder.set_gain(v)
+            _dbg(f"{addr} {v}")
 
     def on_decoder_smoothing(addr, *vals):
         v = _as_scalar(vals)
         if v is not None and decoder is not None:
             decoder.set_smoothing(v)
+            _dbg(f"{addr} {v}")
+
+    # --- Manual controls ---
+    def on_manual_x(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_axis", None)
+        if setter is None:
+            return
+        try:
+            ok, msg = setter(0, v)
+            if not ok:
+                print(f"[osc] /manual/x error: {msg}")
+            _dbg(f"{addr} {v} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/x exception: {exc}")
+
+    def on_manual_y(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_axis", None)
+        if setter is None:
+            return
+        try:
+            ok, msg = setter(1, v)
+            if not ok:
+                print(f"[osc] /manual/y error: {msg}")
+            _dbg(f"{addr} {v} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/y exception: {exc}")
+
+    def on_manual_z(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_axis", None)
+        if setter is None:
+            return
+        try:
+            ok, msg = setter(2, v)
+            if not ok:
+                print(f"[osc] /manual/z error: {msg}")
+            _dbg(f"{addr} {v} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/z exception: {exc}")
+
+    def on_manual_xyz(addr, *vals):
+        if manual_controller is None:
+            _dbg(f"{addr} ignored (no controller)")
+            return
+        if len(vals) < 3:
+            print("[osc] /manual/xyz expects 3 floats: x y z")
+            return
+        try:
+            arr = np.asarray(vals[:3], dtype=np.float32)
+            arr = np.clip(arr, 0.0, 1.0)
+        except Exception as exc:
+            print(f"[osc] /manual/xyz parse error: {exc}")
+            return
+
+        set_all = getattr(manual_controller, "set_manual_faders", None)
+        if set_all is not None:
+            try:
+                ok, msg = set_all(arr.tolist())
+                if not ok:
+                    print(f"[osc] /manual/xyz error: {msg}")
+                _dbg(f"{addr} {arr.tolist()} ({msg})")
+                return
+            except Exception as exc:
+                print(f"[osc] /manual/xyz exception: {exc}")
+                return
+
+        set_axis = getattr(manual_controller, "set_manual_axis", None)
+        if set_axis is None:
+            return
+        for axis, value in enumerate(arr.tolist()):
+            try:
+                ok, msg = set_axis(axis, value)
+                if not ok:
+                    print(f"[osc] /manual/xyz axis {axis} error: {msg}")
+                _dbg(f"{addr} axis={axis} value={value} ({msg})")
+            except Exception as exc:
+                print(f"[osc] /manual/xyz axis {axis} exception: {exc}")
+
+    def on_unmapped(addr, *vals):
+        _dbg(f"unmapped {addr} args={list(vals)}")
 
     # Register handlers
     dispatcher.map("/cursor", on_cursor)
@@ -114,6 +242,11 @@ def run_server(
 
     dispatcher.map("/decoder/gain", on_decoder_gain)
     dispatcher.map("/decoder/smoothing", on_decoder_smoothing)
+    dispatcher.map("/manual/x", on_manual_x)
+    dispatcher.map("/manual/y", on_manual_y)
+    dispatcher.map("/manual/z", on_manual_z)
+    dispatcher.map("/manual/xyz", on_manual_xyz)
+    dispatcher.set_default_handler(on_unmapped)
 
     server = BlockingOSCUDPServer((ip, port), dispatcher)
 
@@ -121,5 +254,8 @@ def run_server(
     print("  /cursor d0 [d1 [d2 ...]] — set navigation cursor (values in [0..1])")
     print("  Policy: /policy/width, /energy, /gravity, /memory, /coherence, /exploration (0..1), /policy/reset")
     print("  Decoder: /decoder/gain (0..2), /decoder/smoothing (0..1)")
+    print("  Manual: /manual/x, /manual/y, /manual/z (0..1), /manual/xyz x y z")
+    if bool(osc_debug):
+        print("  OSC debug: enabled (logs matched and unmatched OSC messages)")
 
     server.serve_forever()

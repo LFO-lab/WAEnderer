@@ -116,6 +116,7 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--autostart` | `false` | Start transport immediately on launch |
 | `--policy_path` | optional | Path to policy checkpoint |
 | `--osc_port` | 9000 | OSC server port |
+| `--osc_debug` | `false` | Log incoming OSC messages, including unmapped paths |
 | `--ws_port` | 8765 | WebSocket server port |
 | `--output_gain` | 1.0 | Initial output gain |
 | `--smoothing` | 0.1 | Crossfade smoothing |
@@ -209,7 +210,17 @@ Audio Files
 /cursor x [y [z ...]]   Set cursor position (up to 64D)
 ```
 
-Manual mode faders are web-only in this release (no OSC manual-fader endpoints).
+**Manual Controls** (0.0 - 1.0):
+```
+/manual/x              Set manual X axis
+/manual/y              Set manual Y axis
+/manual/z              Set manual Z axis
+/manual/xyz x y z      Set all three manual axes at once
+```
+
+`/cursor` routing note:
+- In `policy` mode, `/cursor ...` controls latent cursor as before.
+- In `manual` mode, `/cursor ...` is routed to manual `X/Y/Z` controls (first 3 values).
 
 ### Web UI
 
