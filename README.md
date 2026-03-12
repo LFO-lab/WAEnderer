@@ -5,7 +5,7 @@ A real-time 64-dimensional latent space navigation instrument for exploring audi
 ## Features
 
 - **64D Latent Navigation** - Explore audio corpora in continuous latent space
-- **Manual Navigation Mode** - 8-fader nearest-frame retrieval in MFCC/PCA control space
+- **Manual Navigation Mode** - 3-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
 - **Learned Navigation Policy** - GRU network with 6 expressive control dimensions
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
 - **Real-Time VAE Decoding** - Overlap-add synthesis with adaptive window sizing
@@ -26,7 +26,7 @@ pip install -r requirements.txt
 | Category | Packages |
 |----------|----------|
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
-| Navigation | `scikit-learn`, `scipy`, `faiss-cpu` |
+| Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
 | Runtime | `sounddevice`, `python-osc`, `websockets` |
 | VAE | `diffusers`, `transformers`, `accelerate`, `safetensors` |
 
@@ -49,16 +49,23 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 | `--latent_nav_k` | 32 | k-NN neighbors for geometry |
 | `--encode_chunk_sec` | 60.0 | VAE encode chunk size in seconds (0 disables chunking) |
 | `--encode_chunk_overlap_sec` | 1.0 | VAE encode chunk overlap in seconds |
+| `--manual_reducer` | `pca` | Manual embedding reducer (`pca` or `umap`) |
+| `--manual_embed_dim` | 3 | Manual embedding dimensionality (current UI expects 3) |
+| `--manual_umap_n_neighbors` | 30 | UMAP `n_neighbors` (when reducer is `umap`) |
+| `--manual_umap_min_dist` | 0.05 | UMAP `min_dist` (when reducer is `umap`) |
+| `--manual_umap_metric` | `euclidean` | UMAP metric |
+| `--manual_umap_random_state` | 42 | UMAP random seed |
 
 Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
 
 `corpus.npz` now includes manual-navigation fields:
-- `manual_pca_points` `[N, 8]`
-- `manual_pca_components` `[8, D_desc]`
-- `manual_pca_mean` `[D_desc]`
+- `manual_embed_points` `[N, 3]`
+- `manual_embed_reducer` `["pca"|"umap"]`
+- `manual_pca_components` `[3, D_desc]` (PCA mode only)
+- `manual_pca_mean` `[D_desc]` (PCA mode only)
 - `manual_desc_weighted` `[N, D_desc]`
-- `manual_fader_p01` `[8]`
-- `manual_fader_p99` `[8]`
+- `manual_fader_p01` `[3]`
+- `manual_fader_p99` `[3]`
 
 ### 2. Train Policy
 
@@ -103,6 +110,7 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--manual_wander_speed` | 0.5 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
 | `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
 | `--manual_refine_k` | 16 | Refined descriptor-nearest subset size for manual retrieval/wander |
+| `--manual_desc_interp_k` | 8 | Descriptor interpolation neighbors (mainly for UMAP query rerank) |
 | `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,64]` per chunk) |
 | `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
@@ -206,10 +214,11 @@ Manual mode faders are web-only in this release (no OSC manual-fader endpoints).
 ### Web UI
 
 The web interface (`web/index.html`) provides:
-- Real-time 2D projection of corpus and trajectory
+- Real-time policy 2D projection and manual 3D corpus view
 - Policy/manual mode tabs with transport Start/Stop buttons
 - Sliders for all 6 policy navigation controls
-- 8 manual faders for KD-tree nearest-frame retrieval
+- 3 manual XYZ controls for timbre-space navigation
+- Manual 3D camera nudges (left/right/over/under/forward/backward)
 - Decoder gain and smoothing controls
 - Visualization options (point size, trail length, heatmap)
 - Connection status and position readout
@@ -231,12 +240,13 @@ The `corpus.npz` file contains:
 | `geom_local_sigma` | `[N]` | Local density scale |
 | `geom_pca_components` | `[D, 64]` | Full-rank PCA matrix |
 | `geom_pca_mean` | `[64]` | PCA centering mean |
-| `manual_pca_points` | `[N, 8]` | Manual navigation control coordinates (weighted descriptor PCA) |
-| `manual_pca_components` | `[8, D_desc]` | PCA basis over weighted descriptor space |
-| `manual_pca_mean` | `[D_desc]` | PCA centering mean in weighted descriptor space |
+| `manual_embed_points` | `[N, 3]` | Manual navigation control coordinates (descriptor embedding) |
+| `manual_embed_reducer` | `["pca"|"umap"]` | Embedding method used for manual space |
+| `manual_pca_components` | `[3, D_desc]` | PCA basis over weighted descriptor space (PCA reducer only) |
+| `manual_pca_mean` | `[D_desc]` | PCA centering mean in weighted descriptor space (PCA reducer only) |
 | `manual_desc_weighted` | `[N, D_desc]` | Full weighted timbre descriptor vectors for two-stage reranking |
-| `manual_fader_p01` | `[8]` | Per-dimension 1st percentile range floor |
-| `manual_fader_p99` | `[8]` | Per-dimension 99th percentile range ceiling |
+| `manual_fader_p01` | `[3]` | Per-dimension 1st percentile range floor |
+| `manual_fader_p99` | `[3]` | Per-dimension 99th percentile range ceiling |
 
 Geometry fields (`geom_*`) and manual fields (`manual_*`) are required for full dual-mode performance.
 
@@ -294,7 +304,7 @@ stable-audio-wanderer/
 │   │   └── decoder.py     # VAE decoding
 │   └── runtime/
 │       ├── player.py          # Navigation engine
-│       ├── manual_player.py   # 8-fader manual KD-tree engine
+│       ├── manual_player.py   # 3-axis manual timbre embedding engine
 │       ├── manifold.py        # Manifold constraint
 │       ├── decoder_player.py  # Audio streaming
 │       ├── osc_server.py      # OSC control

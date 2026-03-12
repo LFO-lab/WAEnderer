@@ -7,7 +7,7 @@ Pipeline:
   - Keep full latent trajectories per file (no mean pooling)
   - Normalize latents with global Z_mean/Z_std
   - Compute causal-context geometry/index over all frames
-  - Compute manual 8D PCA control points + robust fader ranges
+  - Compute manual 3D embedding control points (PCA or UMAP) + robust ranges
 """
 import os
 import argparse
@@ -36,13 +36,15 @@ from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
 
-MANUAL_PCA_DIM = 8
+MANUAL_EMBED_DIM = 3
 MANUAL_PERCENTILE_LOW = 1.0
 MANUAL_PERCENTILE_HIGH = 99.0
 MANUAL_MFCC_TOTAL = 20
 MANUAL_MFCC_SLICE = slice(1, 14)  # Use MFCC 1..13 (exclude c0)
 MANUAL_N_FFT = 2048
 MANUAL_ROLLOFF = 0.85
+MANUAL_REDUCER_PCA = "pca"
+MANUAL_REDUCER_UMAP = "umap"
 
 MANUAL_DESCRIPTOR_NAMES = [
     "mfcc_01",
@@ -276,9 +278,73 @@ def compute_latent_aligned_descriptors(
     return descriptor
 
 
-def compute_manual_navigation_features(descriptor_concat: np.ndarray) -> Dict[str, np.ndarray]:
+def _compute_pca_embedding(
+    desc_weighted: np.ndarray,
+    embed_dim: int,
+) -> Dict[str, np.ndarray]:
+    pca_mean = desc_weighted.mean(axis=0).astype(np.float32)
+    centered = desc_weighted - pca_mean[None, :]
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+
+    desc_dim = int(desc_weighted.shape[1])
+    components = np.zeros((embed_dim, desc_dim), dtype=np.float32)
+    available = int(min(embed_dim, vt.shape[0], vt.shape[1]))
+    if available > 0:
+        components[:available] = vt[:available].astype(np.float32)
+
+    points = (centered @ components.T).astype(np.float32)
+    return {
+        "manual_embed_points": points,
+        "manual_pca_components": components,
+        "manual_pca_mean": pca_mean,
+    }
+
+
+def _compute_umap_embedding(
+    desc_weighted: np.ndarray,
+    embed_dim: int,
+    umap_n_neighbors: int,
+    umap_min_dist: float,
+    umap_metric: str,
+    umap_random_state: int,
+) -> Dict[str, np.ndarray]:
+    try:
+        import umap
+    except ImportError as exc:
+        raise RuntimeError(
+            "UMAP reducer requested but umap-learn is not installed. "
+            "Install with `pip install umap-learn`."
+        ) from exc
+
+    reducer = umap.UMAP(
+        n_components=int(embed_dim),
+        n_neighbors=int(max(2, umap_n_neighbors)),
+        min_dist=float(max(0.0, umap_min_dist)),
+        metric=str(umap_metric),
+        random_state=int(umap_random_state),
+        low_memory=True,
+    )
+    points = reducer.fit_transform(desc_weighted).astype(np.float32)
+    return {
+        "manual_embed_points": points,
+        "manual_umap_n_neighbors": np.array(int(max(2, umap_n_neighbors)), dtype=np.int32),
+        "manual_umap_min_dist": np.array(float(max(0.0, umap_min_dist)), dtype=np.float32),
+        "manual_umap_metric": np.array([str(umap_metric)], dtype=np.str_),
+        "manual_umap_random_state": np.array(int(umap_random_state), dtype=np.int32),
+    }
+
+
+def compute_manual_navigation_features(
+    descriptor_concat: np.ndarray,
+    reducer: str = MANUAL_REDUCER_PCA,
+    embed_dim: int = MANUAL_EMBED_DIM,
+    umap_n_neighbors: int = 30,
+    umap_min_dist: float = 0.05,
+    umap_metric: str = "euclidean",
+    umap_random_state: int = 42,
+) -> Dict[str, np.ndarray]:
     """
-    Convert descriptor stack [N, D] to weighted timbre space + 8D PCA control space.
+    Convert descriptor stack [N, D] to weighted timbre space + manual embedding controls.
     """
     desc = np.asarray(descriptor_concat, dtype=np.float32)
     expected_dim = len(MANUAL_DESCRIPTOR_NAMES)
@@ -286,6 +352,8 @@ def compute_manual_navigation_features(descriptor_concat: np.ndarray) -> Dict[st
         raise ValueError(f"Expected descriptor stack [N, {expected_dim}], got {desc.shape}")
     if desc.shape[0] == 0:
         raise ValueError("No descriptor frames available for manual feature extraction.")
+    if int(embed_dim) != 3:
+        raise ValueError(f"manual embedding dimension must be 3 for the current UI, got {embed_dim}")
 
     desc_norm, desc_center, desc_scale = _robust_standardize(desc)
     scales = _descriptor_scales()
@@ -294,24 +362,30 @@ def compute_manual_navigation_features(descriptor_concat: np.ndarray) -> Dict[st
     pitch_gate = (pitch_conf**2).astype(np.float32)
     desc_weighted[:, PITCH_CHROMA_SLICE] *= pitch_gate[:, None]
 
-    pca_mean = desc_weighted.mean(axis=0).astype(np.float32)
-    centered = desc_weighted - pca_mean[None, :]
-    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    reducer_name = str(reducer).lower().strip()
+    if reducer_name == MANUAL_REDUCER_PCA:
+        embedding_arrays = _compute_pca_embedding(desc_weighted, int(embed_dim))
+    elif reducer_name == MANUAL_REDUCER_UMAP:
+        embedding_arrays = _compute_umap_embedding(
+            desc_weighted=desc_weighted,
+            embed_dim=int(embed_dim),
+            umap_n_neighbors=int(umap_n_neighbors),
+            umap_min_dist=float(umap_min_dist),
+            umap_metric=str(umap_metric),
+            umap_random_state=int(umap_random_state),
+        )
+    else:
+        raise ValueError(f"Unsupported manual reducer: {reducer_name}")
 
-    components = np.zeros((MANUAL_PCA_DIM, expected_dim), dtype=np.float32)
-    available = int(min(MANUAL_PCA_DIM, vt.shape[0], vt.shape[1]))
-    if available > 0:
-        components[:available] = vt[:available].astype(np.float32)
-
-    points = (centered @ components.T).astype(np.float32)
+    points = np.asarray(embedding_arrays["manual_embed_points"], dtype=np.float32)
     p01 = np.percentile(points, MANUAL_PERCENTILE_LOW, axis=0).astype(np.float32)
     p99 = np.percentile(points, MANUAL_PERCENTILE_HIGH, axis=0).astype(np.float32)
     p99 = np.maximum(p99, p01 + 1e-6).astype(np.float32)
 
-    return {
-        "manual_pca_points": points,
-        "manual_pca_components": components,
-        "manual_pca_mean": pca_mean,
+    out = {
+        "manual_embed_points": points,
+        "manual_embed_dim": np.array(int(embed_dim), dtype=np.int32),
+        "manual_embed_reducer": np.array([reducer_name], dtype=np.str_),
         "manual_desc_weighted": desc_weighted.astype(np.float32),
         "manual_desc_center": desc_center.astype(np.float32),
         "manual_desc_scale": desc_scale.astype(np.float32),
@@ -322,11 +396,17 @@ def compute_manual_navigation_features(descriptor_concat: np.ndarray) -> Dict[st
         "manual_fader_p01": p01,
         "manual_fader_p99": p99,
         "manual_n_mfcc": np.array(int(MANUAL_MFCC_TOTAL), dtype=np.int32),
-        "manual_n_mfcc_used": np.array(int(MANUAL_MFCC_SLICE.stop - MANUAL_MFCC_SLICE.start), dtype=np.int32),
-        "manual_pca_dim": np.array(int(MANUAL_PCA_DIM), dtype=np.int32),
+        "manual_n_mfcc_used": np.array(
+            int(MANUAL_MFCC_SLICE.stop - MANUAL_MFCC_SLICE.start), dtype=np.int32
+        ),
         "manual_percentile_low": np.array(float(MANUAL_PERCENTILE_LOW), dtype=np.float32),
         "manual_percentile_high": np.array(float(MANUAL_PERCENTILE_HIGH), dtype=np.float32),
     }
+    out.update(embedding_arrays)
+    # Backward-compat alias used by older code paths.
+    out["manual_pca_points"] = points
+    out["manual_pca_dim"] = np.array(int(embed_dim), dtype=np.int32)
+    return out
 
 
 def compute_window_targets(Z_concat: np.ndarray, meta: np.ndarray) -> np.ndarray:
@@ -462,6 +542,42 @@ def main():
                     help="Chunk overlap (seconds) for VAE encoding.")
     ap.add_argument("--compute_decoder_targets", action="store_true",
                     help="Compute decoder quality targets (expensive: 11 VAE decodes per segment).")
+    ap.add_argument(
+        "--manual_reducer",
+        choices=[MANUAL_REDUCER_PCA, MANUAL_REDUCER_UMAP],
+        default=MANUAL_REDUCER_PCA,
+        help="Reducer used for manual timbre embedding.",
+    )
+    ap.add_argument(
+        "--manual_embed_dim",
+        type=int,
+        default=MANUAL_EMBED_DIM,
+        help="Manual embedding dimensionality (current UI expects 3).",
+    )
+    ap.add_argument(
+        "--manual_umap_n_neighbors",
+        type=int,
+        default=30,
+        help="UMAP n_neighbors (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_min_dist",
+        type=float,
+        default=0.05,
+        help="UMAP min_dist (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_metric",
+        type=str,
+        default="euclidean",
+        help="UMAP metric (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_random_state",
+        type=int,
+        default=42,
+        help="UMAP random state for deterministic embeddings.",
+    )
 
     args = ap.parse_args()
 
@@ -539,14 +655,27 @@ def main():
             f"Manual descriptor frame count mismatch: {descriptor_concat.shape[0]} vs latent frames {Z_concat.shape[0]}"
         )
 
-    print("Computing manual navigation PCA features...")
-    manual_arrays = compute_manual_navigation_features(descriptor_concat)
+    print(
+        "Computing manual navigation embedding features "
+        f"(reducer={args.manual_reducer}, dim={int(args.manual_embed_dim)})..."
+    )
+    manual_arrays = compute_manual_navigation_features(
+        descriptor_concat,
+        reducer=str(args.manual_reducer),
+        embed_dim=int(args.manual_embed_dim),
+        umap_n_neighbors=int(args.manual_umap_n_neighbors),
+        umap_min_dist=float(args.manual_umap_min_dist),
+        umap_metric=str(args.manual_umap_metric),
+        umap_random_state=int(args.manual_umap_random_state),
+    )
     p01 = manual_arrays["manual_fader_p01"]
     p99 = manual_arrays["manual_fader_p99"]
     desc_dim = int(manual_arrays["manual_desc_dim"])
+    reducer_name = str(np.asarray(manual_arrays["manual_embed_reducer"]).reshape(-1)[0])
     print(
-        "  Manual PCA points:",
-        manual_arrays["manual_pca_points"].shape,
+        "  Manual embedding points:",
+        manual_arrays["manual_embed_points"].shape,
+        f"reducer={reducer_name}",
         f"desc_dim={desc_dim}",
         f"(fader p01 mean={p01.mean():.3f}, p99 mean={p99.mean():.3f})",
     )

@@ -1,5 +1,5 @@
 """
-Manual navigation engine backed by PCA-reduced MFCC features and KD-tree lookup.
+Manual navigation engine over low-dimensional timbre embeddings.
 """
 
 import threading
@@ -42,6 +42,8 @@ class ManualNavigationEngine:
         desc_weighted: Optional[np.ndarray] = None,
         pca_components: Optional[np.ndarray] = None,
         pca_mean: Optional[np.ndarray] = None,
+        reducer: str = "pca",
+        desc_interp_k: int = 8,
         coarse_k: int = 96,
         refine_k: int = 16,
         leafsize: int = 32,
@@ -53,17 +55,22 @@ class ManualNavigationEngine:
         p99 = np.asarray(fader_p99, dtype=np.float32).reshape(-1)
         if points.ndim != 2:
             raise ValueError(f"manual_points must be [N, D], got {points.shape}")
-        if points.shape[1] != 8:
-            raise ValueError(f"manual_points must have 8 dims, got {points.shape[1]}")
-        if p01.shape[0] != 8 or p99.shape[0] != 8:
-            raise ValueError("manual percentile ranges must have shape [8].")
+        if points.shape[1] != 3:
+            raise ValueError(f"manual_points must have 3 dims, got {points.shape[1]}")
+        if p01.shape[0] != points.shape[1] or p99.shape[0] != points.shape[1]:
+            raise ValueError("manual percentile ranges must match manual_points dim.")
         if points.shape[0] == 0:
             raise ValueError("manual_points is empty.")
 
         self.manual_points = points
+        self.control_dim = int(points.shape[1])
         self.fader_p01 = p01
         self.fader_p99 = p99
         self.tree = cKDTree(self.manual_points, leafsize=max(1, int(leafsize)))
+        self.reducer = str(reducer).lower().strip()
+        if self.reducer not in ("pca", "umap"):
+            raise ValueError(f"Unsupported reducer: {self.reducer}")
+        self.desc_interp_k = int(max(1, desc_interp_k))
         self.search_mode = "legacy"
         self.coarse_k = int(max(1, min(self.N, coarse_k)))
         self.refine_k = int(max(1, min(self.N, refine_k)))
@@ -71,29 +78,42 @@ class ManualNavigationEngine:
         self.pca_components = None
         self.pca_mean = None
 
-        if (
-            desc_weighted is not None
-            and pca_components is not None
-            and pca_mean is not None
-        ):
+        if desc_weighted is not None:
             desc = np.asarray(desc_weighted, dtype=np.float32)
-            components = np.asarray(pca_components, dtype=np.float32)
-            mean = np.asarray(pca_mean, dtype=np.float32).reshape(-1)
+            components = (
+                np.asarray(pca_components, dtype=np.float32)
+                if pca_components is not None
+                else np.asarray([], dtype=np.float32)
+            )
+            mean = (
+                np.asarray(pca_mean, dtype=np.float32).reshape(-1)
+                if pca_mean is not None
+                else np.asarray([], dtype=np.float32)
+            )
             if desc.ndim != 2 or desc.shape[0] != points.shape[0]:
                 raise ValueError(
                     "desc_weighted must be shape [N, D] aligned with manual_points."
                 )
-            if components.ndim != 2 or components.shape[0] != 8:
-                raise ValueError("pca_components must be shape [8, D].")
-            if mean.shape[0] != components.shape[1]:
-                raise ValueError("pca_mean must be shape [D] matching pca_components.")
-            if desc.shape[1] != components.shape[1]:
-                raise ValueError(
-                    "desc_weighted dim mismatch with pca_components second dimension."
-                )
             self.desc_weighted = desc
-            self.pca_components = components
-            self.pca_mean = mean
+            if components.size > 0 and mean.size > 0:
+                if components.ndim != 2 or components.shape[0] != self.control_dim:
+                    raise ValueError(
+                        f"pca_components must be shape [{self.control_dim}, D]."
+                    )
+                if mean.shape[0] != components.shape[1]:
+                    raise ValueError(
+                        "pca_mean must be shape [D] matching pca_components."
+                    )
+                if desc.shape[1] != components.shape[1]:
+                    raise ValueError(
+                        "desc_weighted dim mismatch with pca_components second dimension."
+                    )
+                self.pca_components = components
+                self.pca_mean = mean
+            if self.reducer == "pca" and (
+                self.pca_components is None or self.pca_mean is None
+            ):
+                raise ValueError("PCA reducer requires pca_components and pca_mean.")
             self.search_mode = "two_stage"
 
         # Wandering parameters
@@ -101,12 +121,12 @@ class ManualNavigationEngine:
         self.wander_speed = float(np.clip(wander_speed, 0.0, 1.0))
 
         # Wandering state
-        self._faders = np.full(8, 0.5, dtype=np.float32)
+        self._faders = np.full(self.control_dim, 0.5, dtype=np.float32)
         self._nearest_index = 0
         self._nearest_distance = float("inf")
-        self._current_position = None  # Current position in 8D space
+        self._current_position = None  # Current position in embedding space
         self._source_position = None  # Interpolation origin for active wander segment
-        self._target_position = None  # Target position in 8D space
+        self._target_position = None  # Target position in embedding space
         self._wander_progress = 0.0  # 0.0 to 1.0 interpolation
         self._current_target_idx = 0  # Current target index
         self._lock = threading.Lock()
@@ -117,8 +137,10 @@ class ManualNavigationEngine:
 
     def set_faders(self, faders) -> None:
         arr = np.asarray(faders, dtype=np.float32).reshape(-1)
-        if arr.shape[0] != 8:
-            raise ValueError(f"Expected 8 fader values, got {arr.shape[0]}")
+        if arr.shape[0] != self.control_dim:
+            raise ValueError(
+                f"Expected {self.control_dim} control values, got {arr.shape[0]}"
+            )
         arr = np.clip(arr, 0.0, 1.0)
         with self._lock:
             self._faders = arr
@@ -150,9 +172,32 @@ class ManualNavigationEngine:
         distances = np.atleast_1d(distances).astype(np.float32)
         return indices, distances
 
-    def _query_to_descriptor(self, query_point: np.ndarray) -> np.ndarray:
-        centered = query_point @ self.pca_components
-        return (self.pca_mean + centered).astype(np.float32)
+    def _query_to_descriptor(
+        self,
+        query_point: np.ndarray,
+        neighborhood_hint: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        if self.reducer == "pca" and self.pca_components is not None and self.pca_mean is not None:
+            centered = query_point @ self.pca_components
+            return (self.pca_mean + centered).astype(np.float32)
+
+        if neighborhood_hint is None or np.asarray(neighborhood_hint).size == 0:
+            idx, distances = self._find_neighborhood(
+                query_point, k=min(self.N, self.desc_interp_k)
+            )
+        else:
+            idx = np.asarray(neighborhood_hint, dtype=np.int32).reshape(-1)
+            if idx.shape[0] > self.desc_interp_k:
+                idx = idx[: self.desc_interp_k]
+            points = self.manual_points[idx]
+            distances = np.linalg.norm(points - query_point[None, :], axis=1).astype(
+                np.float32
+            )
+
+        weights = 1.0 / (distances + 1e-6)
+        weights = weights / (weights.sum() + 1e-8)
+        query_desc = (self.desc_weighted[idx] * weights[:, None]).sum(axis=0)
+        return query_desc.astype(np.float32)
 
     def _two_stage_neighborhood(
         self, query_point: np.ndarray, k_needed: int
@@ -160,7 +205,9 @@ class ManualNavigationEngine:
         coarse_size = int(min(self.N, max(k_needed, self.coarse_k)))
         coarse_indices, _ = self._find_neighborhood(query_point, coarse_size)
         coarse_indices = coarse_indices.reshape(-1)
-        query_desc = self._query_to_descriptor(query_point)
+        query_desc = self._query_to_descriptor(
+            query_point, neighborhood_hint=coarse_indices
+        )
         candidate_desc = self.desc_weighted[coarse_indices]
         distances = np.linalg.norm(candidate_desc - query_desc[None, :], axis=1).astype(
             np.float32
@@ -299,26 +346,36 @@ class ManualNavigationEngine:
 
     def step_with_faders(self, faders) -> ManualFrame:
         arr = np.asarray(faders, dtype=np.float32).reshape(-1)
-        if arr.shape[0] != 8:
-            raise ValueError(f"Expected 8 fader values, got {arr.shape[0]}")
+        if arr.shape[0] != self.control_dim:
+            raise ValueError(
+                f"Expected {self.control_dim} control values, got {arr.shape[0]}"
+            )
         arr = np.clip(arr, 0.0, 1.0)
         return self._step_from_faders(arr, update_stored_faders=True)
 
     def get_state(self) -> dict:
         with self._lock:
+            position = (
+                self._current_position.tolist()
+                if isinstance(self._current_position, np.ndarray)
+                else None
+            )
             return {
                 "faders": self._faders.tolist(),
+                "control_dim": int(self.control_dim),
                 "nearest_index": int(self._nearest_index),
                 "distance": float(self._nearest_distance),
                 "wander_k": int(self.wander_k),
                 "wander_speed": float(self.wander_speed),
                 "search_mode": str(self.search_mode),
+                "reducer": str(self.reducer),
                 "coarse_k": int(self.coarse_k),
                 "refine_k": int(self.refine_k),
                 "is_wandering": bool(
                     self.wander_k > 1 and self._wander_progress < 0.999
                 ),
                 "wander_progress": float(self._wander_progress),
+                "position": position,
             }
 
     def get_current_query(self) -> Tuple[np.ndarray, int, float]:

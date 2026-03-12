@@ -14,10 +14,10 @@ def test_manual_navigation_wandering():
     # Create test data
     np.random.seed(42)
     n_points = 100
-    n_dims = 8
+    n_dims = 3
     manual_points = np.random.randn(n_points, n_dims).astype(np.float32)
-    fader_p01 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    fader_p99 = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    fader_p01 = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    fader_p99 = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
     # Test 1: Default behavior (wandering disabled)
     print("\n1. Testing default behavior (wander_k=1, wander_speed=0.0)")
@@ -26,7 +26,7 @@ def test_manual_navigation_wandering():
     )
 
     # Set faders to middle position
-    engine.set_faders([0.5] * 8)
+    engine.set_faders([0.5] * 3)
 
     # Step multiple times - should always return same nearest neighbor
     frames = [engine.step() for _ in range(10)]
@@ -46,7 +46,7 @@ def test_manual_navigation_wandering():
     )
 
     # Set faders to middle position
-    engine.set_faders([0.5] * 8)
+    engine.set_faders([0.5] * 3)
 
     # Step multiple times - should show variation
     frames = [engine.step() for _ in range(80)]
@@ -66,7 +66,7 @@ def test_manual_navigation_wandering():
     )
 
     # Set faders to middle position
-    engine.set_faders([0.5] * 8)
+    engine.set_faders([0.5] * 3)
 
     # Step multiple times - should change targets more frequently
     frames = [engine.step() for _ in range(60)]
@@ -84,7 +84,7 @@ def test_manual_navigation_wandering():
     )
 
     # Set faders
-    engine.set_faders([0.3] * 8)
+    engine.set_faders([0.3] * 3)
 
     # Get initial state
     state1 = engine.get_state()
@@ -108,14 +108,14 @@ def test_manual_navigation_wandering():
     )
 
     # Set initial faders
-    engine.set_faders([0.5] * 8)
+    engine.set_faders([0.5] * 3)
 
     # Step a few times to start wandering
     for _ in range(5):
         engine.step()
 
     # Change faders significantly
-    engine.set_faders([0.9] * 8)
+    engine.set_faders([0.9] * 3)
 
     # Next step should reset to new nearest neighbor
     frame = engine.step()

@@ -110,7 +110,6 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
 
     artifact = np.load(path, allow_pickle=True)
     required = [
-        "manual_pca_points",
         "manual_fader_p01",
         "manual_fader_p99",
         "frame_file_ids",
@@ -120,70 +119,92 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     if missing:
         raise RuntimeError(f"Manual artifact missing keys: {missing}")
 
-    points = artifact["manual_pca_points"].astype(np.float32)
+    if "manual_embed_points" in artifact:
+        points = artifact["manual_embed_points"].astype(np.float32)
+    elif "manual_pca_points" in artifact:
+        points = artifact["manual_pca_points"].astype(np.float32)
+    else:
+        raise RuntimeError("Manual artifact missing manual_embed_points.")
+
     p01 = artifact["manual_fader_p01"].astype(np.float32).reshape(-1)
     p99 = artifact["manual_fader_p99"].astype(np.float32).reshape(-1)
     frame_file_ids = artifact["frame_file_ids"].astype(np.int32).reshape(-1)
     frame_t = artifact["frame_t"].astype(np.int32).reshape(-1)
     leaf = int(_read_scalar(artifact, "kdtree_leafsize", 32))
     version = int(_read_scalar(artifact, "version", 0))
+    reducer_name = str(_read_scalar(artifact, "manual_embed_reducer", "pca")).lower()
+    if reducer_name not in ("pca", "umap"):
+        reducer_name = "pca"
     pca_components = None
     pca_mean = None
     desc_weighted = None
-    if version == 2:
-        required_v2 = [
-            "manual_pca_components",
-            "manual_pca_mean",
-            "manual_desc_weighted",
-        ]
-        missing_v2 = [k for k in required_v2 if k not in artifact]
-        if missing_v2:
-            raise RuntimeError(f"Manual artifact v2 missing keys: {missing_v2}")
-        pca_components = artifact["manual_pca_components"].astype(np.float32)
-        pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
+    if version == 3:
+        if "manual_desc_weighted" not in artifact:
+            raise RuntimeError("Manual artifact v3 missing manual_desc_weighted.")
         desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
+        if "manual_pca_components" in artifact and "manual_pca_mean" in artifact:
+            pca_components = artifact["manual_pca_components"].astype(np.float32)
+            pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
+    elif version == 2:
+        if "manual_desc_weighted" not in artifact:
+            raise RuntimeError("Manual artifact v2 missing manual_desc_weighted.")
+        desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
+        if "manual_pca_components" in artifact and "manual_pca_mean" in artifact:
+            pca_components = artifact["manual_pca_components"].astype(np.float32)
+            pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
+        reducer_name = "pca"
+        print(
+            "[warn] Manual artifact version 2 loaded. "
+            "Re-run preprocess.py/train_policy.py for v3 metadata."
+        )
     elif version == 1:
         print(
             "[warn] Manual artifact version 1 loaded (legacy MFCC-only retrieval). "
             "Re-run train_policy.py --navigation_mode manual to enable descriptor rerank."
         )
+        reducer_name = "pca"
     else:
         raise RuntimeError(f"Unsupported manual artifact version: {version}")
-    if points.ndim != 2 or points.shape[1] != 8:
-        raise RuntimeError(f"manual_pca_points must be [N, 8], got {points.shape}")
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise RuntimeError(f"manual_embed_points must be [N, 3], got {points.shape}")
     if points.shape[0] != expected_frames:
         raise RuntimeError(
-            f"manual_pca_points frame count mismatch: {points.shape[0]} vs expected {expected_frames}"
+            f"manual_embed_points frame count mismatch: {points.shape[0]} vs expected {expected_frames}"
         )
     if (
         frame_file_ids.shape[0] != points.shape[0]
         or frame_t.shape[0] != points.shape[0]
     ):
         raise RuntimeError("Manual artifact frame metadata length mismatch.")
-    if p01.shape[0] != 8 or p99.shape[0] != 8:
-        raise RuntimeError("manual_fader_p01/manual_fader_p99 must both be shape [8].")
+    if p01.shape[0] != 3 or p99.shape[0] != 3:
+        raise RuntimeError("manual_fader_p01/manual_fader_p99 must both be shape [3].")
+    if reducer_name == "pca" and version >= 2 and pca_components is None:
+        raise RuntimeError(
+            "PCA reducer requires manual_pca_components/manual_pca_mean in artifact."
+        )
     if pca_components is not None:
-        if pca_components.ndim != 2 or pca_components.shape[0] != 8:
+        if pca_components.ndim != 2 or pca_components.shape[0] != 3:
             raise RuntimeError(
-                f"manual_pca_components must be [8, D], got {pca_components.shape}"
+                f"manual_pca_components must be [3, D], got {pca_components.shape}"
             )
         if pca_mean is None or pca_mean.shape[0] != pca_components.shape[1]:
             raise RuntimeError(
                 f"manual_pca_mean mismatch: {None if pca_mean is None else pca_mean.shape[0]} "
                 f"vs {pca_components.shape[1]}"
             )
-        if desc_weighted is None or desc_weighted.shape != (
-            points.shape[0],
-            pca_components.shape[1],
+        if (
+            desc_weighted is not None
+            and desc_weighted.shape != (points.shape[0], pca_components.shape[1])
         ):
             raise RuntimeError(
-                "manual_desc_weighted must be [N, D] aligned with manual_pca_points and "
+                "manual_desc_weighted must be [N, D] aligned with manual_embed_points and "
                 f"manual_pca_components, got {None if desc_weighted is None else desc_weighted.shape}"
             )
 
     return {
         "version": int(version),
-        "manual_pca_points": points,
+        "manual_embed_points": points,
+        "manual_embed_reducer": reducer_name,
         "manual_pca_components": pca_components,
         "manual_pca_mean": pca_mean,
         "manual_desc_weighted": desc_weighted,
@@ -252,8 +273,10 @@ class TransportController:
         self._manual_fader_motion_threshold = float(
             np.clip(float(args.manual_fader_motion_threshold), 0.0, 1.0)
         )
-        self._manual_live_faders = np.full(8, 0.5, dtype=np.float32)
-        self._manual_render_faders = np.full(8, 0.5, dtype=np.float32)
+        self._manual_live_faders = np.full(self.manual.control_dim, 0.5, dtype=np.float32)
+        self._manual_render_faders = np.full(
+            self.manual.control_dim, 0.5, dtype=np.float32
+        )
 
         self._runtime_stats = {
             "current_window": int(max(2, min(args.window_size, 64))),
@@ -280,8 +303,10 @@ class TransportController:
     def set_manual_faders(self, faders) -> Tuple[bool, str]:
         try:
             next_faders = np.asarray(faders, dtype=np.float32).reshape(-1)
-            if next_faders.shape[0] != 8:
-                raise ValueError(f"Expected 8 fader values, got {next_faders.shape[0]}")
+            if next_faders.shape[0] != self.manual.control_dim:
+                raise ValueError(
+                    f"Expected {self.manual.control_dim} control values, got {next_faders.shape[0]}"
+                )
             next_faders = np.clip(next_faders, 0.0, 1.0)
         except Exception as exc:
             return False, str(exc)
@@ -760,7 +785,9 @@ class TransportController:
         manual_engine_state = self.manual.get_state()
         with self._stats_lock:
             # Ensure all values are JSON-serializable
-            faders = manual_engine_state.get("faders", [0.5] * 8)
+            faders = manual_engine_state.get(
+                "faders", [0.5] * int(self.manual.control_dim)
+            )
             if hasattr(faders, "tolist"):
                 faders = faders.tolist()
             elif not isinstance(faders, list):
@@ -768,15 +795,23 @@ class TransportController:
 
             # Convert all fader values to float to ensure JSON serialization
             faders_float = [float(f) for f in faders]
+            position = manual_engine_state.get("position")
+            if hasattr(position, "tolist"):
+                position = position.tolist()
+            if isinstance(position, list):
+                position = [float(v) for v in position]
 
             manual_info = {
                 "nearest_index": int(self._manual_last_index),
                 "distance": float(self._manual_last_distance),
                 "faders": faders_float,
+                "control_dim": int(manual_engine_state.get("control_dim", 3)),
+                "position": position,
                 "decode_window": manual_decode_window,
                 "decode_window_min": int(self.MANUAL_WINDOW_MIN),
                 "decode_window_max": int(self.MANUAL_WINDOW_MAX),
                 "search_mode": str(manual_engine_state.get("search_mode", "legacy")),
+                "reducer": str(manual_engine_state.get("reducer", "pca")),
                 "coarse_k": int(manual_engine_state.get("coarse_k", 0)),
                 "refine_k": int(manual_engine_state.get("refine_k", 0)),
                 "wander_k": int(manual_engine_state.get("wander_k", 1)),
@@ -891,6 +926,12 @@ def main():
         type=int,
         default=16,
         help="Manual two-stage search: refined neighbor count in descriptor space.",
+    )
+    ap.add_argument(
+        "--manual_desc_interp_k",
+        type=int,
+        default=8,
+        help="Manual two-stage search: descriptor interpolation neighbors for non-linear reducers.",
     )
     ap.add_argument(
         "--manual_window_size",
@@ -1059,12 +1100,14 @@ def main():
     manifold = ManifoldConstrainedGenerator(nav.GG, geometry, manifold_cfg)
 
     manual_engine = ManualNavigationEngine(
-        manual_points=manual_data["manual_pca_points"],
+        manual_points=manual_data["manual_embed_points"],
         fader_p01=manual_data["manual_fader_p01"],
         fader_p99=manual_data["manual_fader_p99"],
         desc_weighted=manual_data["manual_desc_weighted"],
         pca_components=manual_data["manual_pca_components"],
         pca_mean=manual_data["manual_pca_mean"],
+        reducer=str(manual_data["manual_embed_reducer"]),
+        desc_interp_k=int(args.manual_desc_interp_k),
         coarse_k=int(args.manual_coarse_k),
         refine_k=int(args.manual_refine_k),
         leafsize=int(manual_data["kdtree_leafsize"]),
@@ -1082,8 +1125,9 @@ def main():
     )
     print(
         "[info] Manual retrieval config: "
-        f"artifact_v={int(manual_data['version'])}, mode={manual_engine.search_mode}, "
-        f"coarse_k={int(args.manual_coarse_k)}, refine_k={int(args.manual_refine_k)}"
+        f"artifact_v={int(manual_data['version'])}, reducer={manual_data['manual_embed_reducer']}, "
+        f"mode={manual_engine.search_mode}, coarse_k={int(args.manual_coarse_k)}, "
+        f"refine_k={int(args.manual_refine_k)}, interp_k={int(args.manual_desc_interp_k)}"
     )
 
     print("[info] Loading VAE decoder...")
@@ -1129,6 +1173,10 @@ def main():
                 on_exit_request=request_shutdown,
                 message_handler=controller.handle_ws_message,
                 extra_state_provider=controller.get_extra_state,
+                manual_points_3d=manual_data["manual_embed_points"],
+                manual_file_ids=manual_data["frame_file_ids"],
+                manual_fader_p01=manual_data["manual_fader_p01"],
+                manual_fader_p99=manual_data["manual_fader_p99"],
             )
             print(f"[info] WebSocket server running on ws://127.0.0.1:{args.ws_port}")
         except Exception as e:

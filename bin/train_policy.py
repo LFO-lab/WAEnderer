@@ -411,9 +411,8 @@ def _save_manual_navigation_artifact(
     leafsize: int,
 ):
     required = [
-        "manual_pca_points",
-        "manual_pca_components",
-        "manual_pca_mean",
+        "manual_embed_points",
+        "manual_embed_reducer",
         "manual_desc_weighted",
         "manual_fader_p01",
         "manual_fader_p99",
@@ -427,34 +426,44 @@ def _save_manual_navigation_artifact(
             f"Missing keys: {missing}"
         )
 
-    points = np.asarray(data["manual_pca_points"], dtype=np.float32)
-    pca_components = np.asarray(data["manual_pca_components"], dtype=np.float32)
-    pca_mean = np.asarray(data["manual_pca_mean"], dtype=np.float32).reshape(-1)
+    points = np.asarray(data["manual_embed_points"], dtype=np.float32)
+    reducer_name = str(np.asarray(data["manual_embed_reducer"]).reshape(-1)[0]).lower()
+    if reducer_name not in ("pca", "umap"):
+        raise RuntimeError(f"Unsupported manual reducer in corpus: {reducer_name}")
+
+    pca_components = None
+    pca_mean = None
+    if "manual_pca_components" in data and "manual_pca_mean" in data:
+        pca_components = np.asarray(data["manual_pca_components"], dtype=np.float32)
+        pca_mean = np.asarray(data["manual_pca_mean"], dtype=np.float32).reshape(-1)
     desc_weighted = np.asarray(data["manual_desc_weighted"], dtype=np.float32)
     p01 = np.asarray(data["manual_fader_p01"], dtype=np.float32).reshape(-1)
     p99 = np.asarray(data["manual_fader_p99"], dtype=np.float32).reshape(-1)
     frame_file_ids = np.asarray(data["frame_file_ids"], dtype=np.int32).reshape(-1)
     frame_t = np.asarray(data["frame_t"], dtype=np.int32).reshape(-1)
 
-    if points.ndim != 2 or points.shape[1] != 8:
-        raise RuntimeError(f"manual_pca_points must be [N, 8], got {points.shape}")
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise RuntimeError(f"manual_embed_points must be [N, 3], got {points.shape}")
     if points.shape[0] != frame_file_ids.shape[0] or points.shape[0] != frame_t.shape[0]:
         raise RuntimeError("manual points and frame metadata length mismatch.")
-    if p01.shape[0] != 8 or p99.shape[0] != 8:
-        raise RuntimeError("manual_fader_p01/p99 must both be shape [8].")
-    if pca_components.ndim != 2 or pca_components.shape[0] != 8:
-        raise RuntimeError(
-            f"manual_pca_components must be [8, D], got {pca_components.shape}"
-        )
-    if pca_mean.shape[0] != pca_components.shape[1]:
-        raise RuntimeError(
-            f"manual_pca_mean shape mismatch: {pca_mean.shape[0]} vs {pca_components.shape[1]}"
-        )
+    if p01.shape[0] != 3 or p99.shape[0] != 3:
+        raise RuntimeError("manual_fader_p01/p99 must both be shape [3].")
     if desc_weighted.ndim != 2 or desc_weighted.shape[0] != points.shape[0]:
         raise RuntimeError(
             f"manual_desc_weighted must be [N, D] with N={points.shape[0]}, got {desc_weighted.shape}"
         )
-    if desc_weighted.shape[1] != pca_components.shape[1]:
+    if reducer_name == "pca":
+        if pca_components is None or pca_mean is None:
+            raise RuntimeError("PCA reducer requires manual_pca_components and manual_pca_mean.")
+        if pca_components.ndim != 2 or pca_components.shape[0] != 3:
+            raise RuntimeError(
+                f"manual_pca_components must be [3, D], got {pca_components.shape}"
+            )
+        if pca_mean.shape[0] != pca_components.shape[1]:
+            raise RuntimeError(
+                f"manual_pca_mean shape mismatch: {pca_mean.shape[0]} vs {pca_components.shape[1]}"
+            )
+    if pca_components is not None and desc_weighted.shape[1] != pca_components.shape[1]:
         raise RuntimeError(
             f"manual_desc_weighted dim mismatch: {desc_weighted.shape[1]} vs {pca_components.shape[1]}"
         )
@@ -475,10 +484,10 @@ def _save_manual_navigation_artifact(
 
     source_corpus = np.array([os.path.abspath(corpus_npz)], dtype=np.str_)
     artifact = {
-        "version": np.array(2, dtype=np.int32),
-        "manual_pca_points": points.astype(np.float32),
-        "manual_pca_components": pca_components.astype(np.float32),
-        "manual_pca_mean": pca_mean.astype(np.float32),
+        "version": np.array(3, dtype=np.int32),
+        "manual_embed_points": points.astype(np.float32),
+        "manual_embed_reducer": np.array([reducer_name], dtype=np.str_),
+        "manual_embed_dim": np.array(int(points.shape[1]), dtype=np.int32),
         "manual_desc_weighted": desc_weighted.astype(np.float32),
         "manual_desc_dim": np.array(int(desc_weighted.shape[1]), dtype=np.int32),
         "manual_fader_p01": p01.astype(np.float32),
@@ -488,12 +497,21 @@ def _save_manual_navigation_artifact(
         "kdtree_leafsize": np.array(int(leaf), dtype=np.int32),
         "source_corpus_path": source_corpus,
     }
+    # Backward-compat alias for older loaders.
+    artifact["manual_pca_points"] = points.astype(np.float32)
+    if pca_components is not None and pca_mean is not None:
+        artifact["manual_pca_components"] = pca_components.astype(np.float32)
+        artifact["manual_pca_mean"] = pca_mean.astype(np.float32)
     optional_keys = [
         "manual_desc_names",
         "manual_desc_center",
         "manual_desc_scale",
         "manual_desc_scales",
         "manual_pitch_confidence_index",
+        "manual_umap_n_neighbors",
+        "manual_umap_min_dist",
+        "manual_umap_metric",
+        "manual_umap_random_state",
     ]
     for key in optional_keys:
         if key in data:

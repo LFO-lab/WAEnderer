@@ -14,11 +14,15 @@ let activeControls = new Set();
 // Corpus data
 let corpusPoints = [];
 let corpusFileIds = [];
+let manualCorpusPoints3D = [];
+let manualCorpusFileIds = [];
 let totalCorpusPoints = 0;
 
 // Navigation state
 let currentPosition = [0.5, 0.5];
 let trajectory = [];
+let manualPosition3D = [0.5, 0.5, 0.5];
+let manualTrajectory3D = [];
 let currentIndex = 0;
 let currentVelocity = 0;
 let currentFileId = 0;
@@ -26,10 +30,17 @@ let selectedNavigationMode = 'policy';
 let transportRunning = false;
 let manualNearestIndex = 0;
 let manualNearestDistance = 0;
-let manualFaders = new Array(8).fill(0.5);
+let manualFaders = new Array(3).fill(0.5);
 let manualDecodeWindow = 6;
 let manualDecodeWindowMin = 1;
 let manualDecodeWindowMax = 64;
+let manualControlDim = 3;
+
+// Manual 3D camera controls
+let manualViewYaw = -0.6;
+let manualViewPitch = 0.35;
+let manualViewZoom = 1.0;
+let manualPickDragging = false;
 
 // Visualization settings
 let vizMode = 'scatter';
@@ -111,8 +122,10 @@ function setup() {
 
 function draw() {
     background(...COLORS.background);
-    
-    if (vizMode === 'scatter') {
+
+    if (selectedNavigationMode === 'manual') {
+        drawManual3DScene();
+    } else if (vizMode === 'scatter') {
         drawCorpusScatter();
         drawTrajectory();
         drawCursor();
@@ -124,11 +137,212 @@ function draw() {
         drawTrajectory();
         drawCursor();
     }
-    
+
     noFill();
     stroke(40, 40, 60);
     strokeWeight(2);
     rect(0, 0, width, height);
+}
+
+function projectManualPoint3D(point) {
+    const p = point || [0.5, 0.5, 0.5];
+    const x = (p[0] - 0.5) * 2.0;
+    const y = (p[1] - 0.5) * 2.0;
+    const z = (p[2] - 0.5) * 2.0;
+
+    const cy = cos(manualViewYaw);
+    const sy = sin(manualViewYaw);
+    const cp = cos(manualViewPitch);
+    const sp = sin(manualViewPitch);
+
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+
+    const camDist = 2.6 / max(0.35, manualViewZoom);
+    const depth = z2 + camDist;
+    const perspective = 1.0 / max(0.25, depth);
+
+    const screenX = width * 0.5 + x1 * perspective * width * 0.9;
+    const screenY = height * 0.5 - y2 * perspective * height * 0.9;
+
+    return {
+        x: screenX,
+        y: screenY,
+        depth,
+        perspective,
+    };
+}
+
+function cameraToWorldVector(vx, vy, vz) {
+    const cy = cos(manualViewYaw);
+    const sy = sin(manualViewYaw);
+    const cp = cos(manualViewPitch);
+    const sp = sin(manualViewPitch);
+
+    const y1 = vy * cp + vz * sp;
+    const z1 = -vy * sp + vz * cp;
+
+    const xw = vx * cy - z1 * sy;
+    const zw = vx * sy + z1 * cy;
+    return [xw, y1, zw];
+}
+
+function getManualRayFromScreen(mx, my) {
+    const u = (mx - width * 0.5) / (width * 0.9);
+    const v = -(my - height * 0.5) / (height * 0.9);
+    const camDist = 2.6 / max(0.35, manualViewZoom);
+
+    const origin = cameraToWorldVector(0, 0, -camDist);
+    const dirRaw = cameraToWorldVector(u, v, 1.0);
+    const mag = sqrt(dirRaw[0] * dirRaw[0] + dirRaw[1] * dirRaw[1] + dirRaw[2] * dirRaw[2]);
+    const dir = mag > 1e-6 ? [dirRaw[0] / mag, dirRaw[1] / mag, dirRaw[2] / mag] : [0, 0, 1];
+    return { origin, dir };
+}
+
+function pickManualPointFromMouse(mx, my) {
+    if (!manualCorpusPoints3D || manualCorpusPoints3D.length === 0) {
+        return;
+    }
+    const ray = getManualRayFromScreen(mx, my);
+
+    let bestIdx = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < manualCorpusPoints3D.length; i++) {
+        const pt = manualCorpusPoints3D[i];
+        const px = (pt[0] - 0.5) * 2.0;
+        const py = (pt[1] - 0.5) * 2.0;
+        const pz = (pt[2] - 0.5) * 2.0;
+
+        const dx = px - ray.origin[0];
+        const dy = py - ray.origin[1];
+        const dz = pz - ray.origin[2];
+        const t = dx * ray.dir[0] + dy * ray.dir[1] + dz * ray.dir[2];
+        if (t <= 0.0) continue;
+
+        const cx = ray.origin[0] + t * ray.dir[0];
+        const cy = ray.origin[1] + t * ray.dir[1];
+        const cz = ray.origin[2] + t * ray.dir[2];
+        const ex = px - cx;
+        const ey = py - cy;
+        const ez = pz - cz;
+        const score = ex * ex + ey * ey + ez * ez;
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestIdx = i;
+        }
+    }
+
+    const selected = manualCorpusPoints3D[bestIdx];
+    manualPosition3D = selected.slice(0, 3);
+    manualFaders = selected.slice(0, 3).map(v => constrain(v, 0, 1));
+    for (let i = 0; i < 3; i++) {
+        const display = document.getElementById(`val-manual-${i}`);
+        if (display) display.textContent = manualFaders[i].toFixed(2);
+        const input = document.getElementById(`manual-${i}`);
+        if (input && !activeControls.has(`manual-${i}`)) input.value = manualFaders[i];
+    }
+    sendManualControls();
+}
+
+function nudgeManualCamera(direction) {
+    const angleStep = 0.12;
+    const zoomStep = 1.12;
+    if (direction === 'left') {
+        manualViewYaw -= angleStep;
+    } else if (direction === 'right') {
+        manualViewYaw += angleStep;
+    } else if (direction === 'over') {
+        manualViewPitch = constrain(manualViewPitch + angleStep, -1.2, 1.2);
+    } else if (direction === 'under') {
+        manualViewPitch = constrain(manualViewPitch - angleStep, -1.2, 1.2);
+    } else if (direction === 'forward') {
+        manualViewZoom = constrain(manualViewZoom * zoomStep, 0.5, 2.5);
+    } else if (direction === 'backward') {
+        manualViewZoom = constrain(manualViewZoom / zoomStep, 0.5, 2.5);
+    }
+}
+
+function drawManual3DScene() {
+    drawManualAxes();
+
+    if (manualCorpusPoints3D.length > 0) {
+        const projected = [];
+        for (let i = 0; i < manualCorpusPoints3D.length; i++) {
+            projected.push({
+                i,
+                p: projectManualPoint3D(manualCorpusPoints3D[i]),
+            });
+        }
+        projected.sort((a, b) => b.p.depth - a.p.depth);
+
+        noStroke();
+        for (const item of projected) {
+            const fileId = manualCorpusFileIds[item.i] || 0;
+            const fileColor = COLORS.files[fileId % COLORS.files.length] || COLORS.files[0];
+            const pointSize = constrain(VIZ_CONFIG.pointSize * item.p.perspective * 4.0, 1.0, 12.0);
+            const alpha = map(pointSize, 1.0, 12.0, 30, 160);
+            fill(fileColor[0], fileColor[1], fileColor[2], alpha);
+            ellipse(item.p.x, item.p.y, pointSize, pointSize);
+        }
+    }
+
+    drawManualTrajectory3D();
+    drawManualCursor3D();
+}
+
+function drawManualAxes() {
+    const axisPoints = {
+        x0: projectManualPoint3D([0.0, 0.5, 0.5]),
+        x1: projectManualPoint3D([1.0, 0.5, 0.5]),
+        y0: projectManualPoint3D([0.5, 0.0, 0.5]),
+        y1: projectManualPoint3D([0.5, 1.0, 0.5]),
+        z0: projectManualPoint3D([0.5, 0.5, 0.0]),
+        z1: projectManualPoint3D([0.5, 0.5, 1.0]),
+    };
+
+    strokeWeight(1.5);
+    stroke(245, 110, 110, 120);
+    line(axisPoints.x0.x, axisPoints.x0.y, axisPoints.x1.x, axisPoints.x1.y);
+    stroke(110, 235, 180, 120);
+    line(axisPoints.y0.x, axisPoints.y0.y, axisPoints.y1.x, axisPoints.y1.y);
+    stroke(110, 170, 245, 120);
+    line(axisPoints.z0.x, axisPoints.z0.y, axisPoints.z1.x, axisPoints.z1.y);
+}
+
+function drawManualTrajectory3D() {
+    if (manualTrajectory3D.length < 2) return;
+    const color = COLORS.trajectory;
+    noFill();
+    for (let i = 1; i < manualTrajectory3D.length; i++) {
+        const a = projectManualPoint3D(manualTrajectory3D[i - 1]);
+        const b = projectManualPoint3D(manualTrajectory3D[i]);
+        const t = i / manualTrajectory3D.length;
+        const alpha = pow(t, VIZ_CONFIG.trailFadeExponent) * 180;
+        const weight = map(t, 0, 1, 1, 3);
+        stroke(color[0], color[1], color[2], alpha);
+        strokeWeight(weight);
+        line(a.x, a.y, b.x, b.y);
+    }
+}
+
+function drawManualCursor3D() {
+    if (!manualPosition3D) return;
+    const proj = projectManualPoint3D(manualPosition3D);
+    const pulse = 1.0 + sin(frameCount * 0.05) * 0.2;
+    const ring = constrain(24 * proj.perspective * pulse, 10, 28);
+
+    noFill();
+    stroke(COLORS.trajectory[0], COLORS.trajectory[1], COLORS.trajectory[2], 220);
+    strokeWeight(2.5);
+    ellipse(proj.x, proj.y, ring, ring);
+
+    noStroke();
+    fill(255, 255, 255, 230);
+    ellipse(proj.x, proj.y, max(4, ring * 0.2), max(4, ring * 0.2));
 }
 
 function drawCorpusScatter() {
@@ -498,6 +712,8 @@ function handleMessage(data) {
     if (data.type === 'corpus') {
         corpusPoints = data.positions_2d || [];
         corpusFileIds = data.file_ids || [];
+        manualCorpusPoints3D = data.manual_positions_3d || [];
+        manualCorpusFileIds = data.manual_file_ids || corpusFileIds;
         totalCorpusPoints = data.total_points || 0;
         if (typeof data.navigation_mode === 'string') {
             selectedNavigationMode = data.navigation_mode;
@@ -509,7 +725,9 @@ function handleMessage(data) {
             COLORS.files[fileId % COLORS.files.length]
         );
 
-        console.log(`Received corpus: ${corpusPoints.length} points`);
+        console.log(
+            `Received corpus: policy2d=${corpusPoints.length}, manual3d=${manualCorpusPoints3D.length}`
+        );
 
     } else if (data.type === 'state') {
         const nav = data.navigation || {};
@@ -528,20 +746,28 @@ function handleMessage(data) {
         if (selectedNavigationMode === 'manual') {
             manualNearestIndex = manual.nearest_index || 0;
             manualNearestDistance = manual.distance || 0;
-            const clampedIdx = constrain(manualNearestIndex, 0, Math.max(corpusPoints.length - 1, 0));
+            manualControlDim = Number(manual.control_dim || 3);
+            const clampedIdx = constrain(
+                manualNearestIndex,
+                0,
+                Math.max(manualCorpusPoints3D.length - 1, 0)
+            );
             currentIndex = clampedIdx;
-            if (corpusPoints.length > 0) {
-                currentPosition = corpusPoints[clampedIdx];
+            if (manualCorpusPoints3D.length > 0) {
+                manualPosition3D = manualCorpusPoints3D[clampedIdx];
+            }
+            if (Array.isArray(manual.position_3d) && manual.position_3d.length === 3) {
+                manualPosition3D = manual.position_3d.slice(0, 3);
             }
             currentVelocity = 0;
-            currentFileId = corpusFileIds[clampedIdx] || 0;
-            trajectory.push(currentPosition);
-            if (trajectory.length > trailLength) {
-                trajectory = trajectory.slice(-trailLength);
+            currentFileId = manualCorpusFileIds[clampedIdx] || corpusFileIds[clampedIdx] || 0;
+            manualTrajectory3D.push(manualPosition3D);
+            if (manualTrajectory3D.length > trailLength) {
+                manualTrajectory3D = manualTrajectory3D.slice(-trailLength);
             }
-            if (Array.isArray(manual.faders) && manual.faders.length === 8) {
-                manualFaders = manual.faders.slice(0, 8);
-                for (let i = 0; i < 8; i++) {
+            if (Array.isArray(manual.faders) && manual.faders.length === manualControlDim) {
+                manualFaders = manual.faders.slice(0, manualControlDim);
+                for (let i = 0; i < manualControlDim; i++) {
                     const display = document.getElementById(`val-manual-${i}`);
                     if (display) display.textContent = manualFaders[i].toFixed(2);
                     const input = document.getElementById(`manual-${i}`);
@@ -577,8 +803,10 @@ function handleMessage(data) {
                 trajectory = nav.trajectory_2d;
             }
         }
-        
-        updateHeatmap();
+
+        if (selectedNavigationMode !== 'manual') {
+            updateHeatmap();
+        }
         updateInfoDisplay(data);
         
         if (data.controls) {
@@ -711,8 +939,8 @@ function setupControls() {
         }
     });
 
-    // Manual controls (8 faders)
-    for (let i = 0; i < 8; i++) {
+    // Manual controls (X/Y/Z)
+    for (let i = 0; i < manualFaders.length; i++) {
         const input = document.getElementById(`manual-${i}`);
         const display = document.getElementById(`val-manual-${i}`);
         const inputId = `manual-${i}`;
@@ -748,6 +976,22 @@ function setupControls() {
             manualDecodeWindow = value;
             if (manualWindowDisplay) manualWindowDisplay.textContent = String(value);
             sendManualWindowSize(value);
+        });
+    }
+
+    const cameraButtons = [
+        { id: 'cam-left', dir: 'left' },
+        { id: 'cam-right', dir: 'right' },
+        { id: 'cam-over', dir: 'over' },
+        { id: 'cam-under', dir: 'under' },
+        { id: 'cam-forward', dir: 'forward' },
+        { id: 'cam-backward', dir: 'backward' },
+    ];
+    for (const button of cameraButtons) {
+        const el = document.getElementById(button.id);
+        if (!el) continue;
+        el.addEventListener('click', () => {
+            nudgeManualCamera(button.dir);
         });
     }
     
@@ -831,6 +1075,10 @@ function applyNavigationModeUI() {
     policyPanel.classList.toggle('panel-hidden', !isPolicy);
     manualPanel.classList.toggle('panel-hidden', isPolicy);
 
+    if (isPolicy) {
+        manualPickDragging = false;
+    }
+
     modePolicyBtn.disabled = transportRunning;
     modeManualBtn.disabled = transportRunning;
 }
@@ -909,7 +1157,12 @@ function sendExit() {
 
 // Handle mouse clicks on canvas
 function mousePressed() {
-    if (selectedNavigationMode !== 'policy') {
+    if (selectedNavigationMode === 'manual') {
+        if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
+            return;
+        }
+        manualPickDragging = true;
+        pickManualPointFromMouse(mouseX, mouseY);
         return;
     }
     if (mouseX >= 0 && mouseX <= width && mouseY >= 0 && mouseY <= height) {
@@ -922,6 +1175,27 @@ function mousePressed() {
                 coords: [x, y]
             }));
         }
+    }
+}
+
+function mouseDragged() {
+    if (selectedNavigationMode !== 'manual' || !manualPickDragging) {
+        return;
+    }
+    if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
+        return;
+    }
+    pickManualPointFromMouse(mouseX, mouseY);
+}
+
+function mouseReleased() {
+    manualPickDragging = false;
+}
+
+function mouseWheel(event) {
+    // Keep wheel events available for page scroll/UI controls in manual mode.
+    if (selectedNavigationMode === 'manual') {
+        return true;
     }
 }
 

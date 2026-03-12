@@ -39,6 +39,10 @@ class WSBroadcaster:
         on_exit_request: Optional[Callable[[str], None]] = None,
         message_handler: Optional[Callable[[dict], bool]] = None,
         extra_state_provider: Optional[Callable[[], dict]] = None,
+        manual_points_3d: Optional[np.ndarray] = None,
+        manual_file_ids: Optional[np.ndarray] = None,
+        manual_fader_p01: Optional[np.ndarray] = None,
+        manual_fader_p99: Optional[np.ndarray] = None,
     ):
         """
         Initialize broadcaster.
@@ -68,10 +72,21 @@ class WSBroadcaster:
         self._on_exit_request = on_exit_request
         self._message_handler = message_handler
         self._extra_state_provider = extra_state_provider
+        self._manual_points_3d = None
+        self._manual_points_3d_norm = None
+        self._manual_points_3d_min = None
+        self._manual_points_3d_range = None
+        self._manual_file_ids = None
 
         # Precompute 2D projection if corpus is higher dimensional
         self._projection_matrix = None
         self._setup_projection()
+        self._setup_manual_space(
+            manual_points_3d,
+            manual_file_ids,
+            manual_fader_p01,
+            manual_fader_p99,
+        )
     
     def _setup_projection(self):
         """Setup 2D projection for visualization."""
@@ -97,6 +112,56 @@ class WSBroadcaster:
         self._ZZ_2d_range = self._ZZ_2d.max(axis=0) - self._ZZ_2d_min
         self._ZZ_2d_range = np.maximum(self._ZZ_2d_range, 1e-6)
         self._ZZ_2d_norm = (self._ZZ_2d - self._ZZ_2d_min) / self._ZZ_2d_range
+
+    def _setup_manual_space(
+        self,
+        manual_points_3d: Optional[np.ndarray],
+        manual_file_ids: Optional[np.ndarray],
+        manual_fader_p01: Optional[np.ndarray],
+        manual_fader_p99: Optional[np.ndarray],
+    ):
+        if manual_points_3d is None:
+            return
+        points = np.asarray(manual_points_3d, dtype=np.float32)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+            print(
+                f"[ws] Ignoring invalid manual_points_3d shape: {getattr(points, 'shape', None)}"
+            )
+            return
+
+        self._manual_points_3d = points
+        p01 = None
+        p99 = None
+        if manual_fader_p01 is not None and manual_fader_p99 is not None:
+            p01 = np.asarray(manual_fader_p01, dtype=np.float32).reshape(-1)
+            p99 = np.asarray(manual_fader_p99, dtype=np.float32).reshape(-1)
+            if p01.shape[0] != 3 or p99.shape[0] != 3:
+                p01 = None
+                p99 = None
+
+        if p01 is not None and p99 is not None:
+            self._manual_points_3d_min = p01
+            self._manual_points_3d_range = np.maximum(p99 - p01, 1e-6)
+            self._manual_points_3d_norm = np.clip(
+                (points - self._manual_points_3d_min) / self._manual_points_3d_range,
+                0.0,
+                1.0,
+            )
+        else:
+            self._manual_points_3d_min = points.min(axis=0)
+            self._manual_points_3d_range = np.maximum(
+                points.max(axis=0) - self._manual_points_3d_min, 1e-6
+            )
+            self._manual_points_3d_norm = (points - self._manual_points_3d_min) / self._manual_points_3d_range
+
+        if manual_file_ids is not None:
+            fids = np.asarray(manual_file_ids, dtype=np.int32).reshape(-1)
+            if fids.shape[0] == points.shape[0]:
+                self._manual_file_ids = fids
+        if self._manual_file_ids is None and hasattr(self.nav, "_file_ids"):
+            fids = np.asarray(self.nav._file_ids, dtype=np.int32).reshape(-1)
+            if fids.shape[0] == points.shape[0]:
+                self._manual_file_ids = fids
     
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
@@ -190,7 +255,31 @@ class WSBroadcaster:
                     state["navigation"]["mode"] = nav_mode
                 manual_state = extra.get("manual")
                 if isinstance(manual_state, dict):
-                    state["manual"] = manual_state
+                    manual = dict(manual_state)
+                    if self._manual_points_3d_norm is not None:
+                        pos_raw = manual.get("position")
+                        pos_norm = None
+                        if (
+                            isinstance(pos_raw, (list, tuple))
+                            and len(pos_raw) >= 3
+                        ):
+                            pos_arr = np.asarray(pos_raw[:3], dtype=np.float32)
+                            pos_norm = (
+                                (pos_arr - self._manual_points_3d_min)
+                                / self._manual_points_3d_range
+                            )
+                            pos_norm = np.clip(pos_norm, 0.0, 1.0)
+                        else:
+                            idx = int(manual.get("nearest_index", -1))
+                            if 0 <= idx < self._manual_points_3d_norm.shape[0]:
+                                pos_norm = self._manual_points_3d_norm[idx]
+                        if pos_norm is not None:
+                            manual["position_3d"] = [
+                                float(pos_norm[0]),
+                                float(pos_norm[1]),
+                                float(pos_norm[2]),
+                            ]
+                    state["manual"] = manual
 
         return json.dumps(state)
     
@@ -206,6 +295,18 @@ class WSBroadcaster:
             positions = self._ZZ_2d_norm.tolist()
             file_ids = self.nav._file_ids.tolist()
 
+        manual_positions = []
+        manual_file_ids = file_ids
+        if self._manual_points_3d_norm is not None and self._manual_points_3d_norm.shape[0] == n_points:
+            if n_points > 2000:
+                manual_positions = self._manual_points_3d_norm[indices].tolist()
+                if self._manual_file_ids is not None:
+                    manual_file_ids = self._manual_file_ids[indices].tolist()
+            else:
+                manual_positions = self._manual_points_3d_norm.tolist()
+                if self._manual_file_ids is not None:
+                    manual_file_ids = self._manual_file_ids.tolist()
+
         nav_mode = "policy"
         if self._extra_state_provider is not None:
             try:
@@ -220,6 +321,8 @@ class WSBroadcaster:
             "total_points": n_points,
             "positions_2d": positions,
             "file_ids": file_ids,
+            "manual_positions_3d": manual_positions,
+            "manual_file_ids": manual_file_ids,
             "navigation_mode": nav_mode,
         })
     
@@ -398,6 +501,10 @@ def start_ws_server(
     on_exit_request: Optional[Callable[[str], None]] = None,
     message_handler: Optional[Callable[[dict], bool]] = None,
     extra_state_provider: Optional[Callable[[], dict]] = None,
+    manual_points_3d: Optional[np.ndarray] = None,
+    manual_file_ids: Optional[np.ndarray] = None,
+    manual_fader_p01: Optional[np.ndarray] = None,
+    manual_fader_p99: Optional[np.ndarray] = None,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
@@ -411,6 +518,10 @@ def start_ws_server(
         on_exit_request: Optional callback invoked when web UI requests exit.
         message_handler: Optional callback for custom inbound WebSocket messages.
         extra_state_provider: Optional callback adding fields to broadcast state payloads.
+        manual_points_3d: Optional manual embedding corpus points [N,3] for manual-mode rendering.
+        manual_file_ids: Optional file ids aligned with manual_points_3d.
+        manual_fader_p01: Optional manual control-space lower bounds used for normalization.
+        manual_fader_p99: Optional manual control-space upper bounds used for normalization.
 
     Returns:
         Tuple of (WSBroadcaster, Thread)
@@ -422,6 +533,10 @@ def start_ws_server(
         on_exit_request=on_exit_request,
         message_handler=message_handler,
         extra_state_provider=extra_state_provider,
+        manual_points_3d=manual_points_3d,
+        manual_file_ids=manual_file_ids,
+        manual_fader_p01=manual_fader_p01,
+        manual_fader_p99=manual_fader_p99,
     )
     thread = broadcaster.start(host, port)
     return broadcaster, thread

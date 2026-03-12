@@ -263,6 +263,27 @@
             margin-bottom: 8px;
         }
 
+        .camera-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .camera-btn {
+            width: 100%;
+            margin-top: 0;
+            padding: 6px 8px;
+            font-size: 11px;
+            background: #1a1a24;
+            border: 1px solid #2a2a3a;
+            color: #cfd3df;
+        }
+
+        .camera-btn:hover {
+            background: #262636;
+        }
+
         .panel-hidden {
             display: none;
         }
@@ -420,7 +441,16 @@
             </div>
 
             <div id="manual-panel" class="panel-hidden">
-                <h2>Manual Faders</h2>
+                <h2>Manual XYZ</h2>
+                <h3>Camera</h3>
+                <div class="camera-grid">
+                    <button id="cam-left" class="camera-btn" type="button">Left</button>
+                    <button id="cam-right" class="camera-btn" type="button">Right</button>
+                    <button id="cam-over" class="camera-btn" type="button">Over</button>
+                    <button id="cam-under" class="camera-btn" type="button">Under</button>
+                    <button id="cam-forward" class="camera-btn" type="button">Forward</button>
+                    <button id="cam-backward" class="camera-btn" type="button">Backward</button>
+                </div>
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">
@@ -433,14 +463,14 @@
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">
-                            <span>Fader 1</span>
+                            <span>X</span>
                             <span class="control-value" id="val-manual-0">0.50</span>
                         </div>
                         <input type="range" id="manual-0" min="0" max="1" step="0.01" value="0.5">
                     </div>
                     <div class="control-group">
                         <div class="control-label">
-                            <span>Fader 2</span>
+                            <span>Y</span>
                             <span class="control-value" id="val-manual-1">0.50</span>
                         </div>
                         <input type="range" id="manual-1" min="0" max="1" step="0.01" value="0.5">
@@ -449,49 +479,10 @@
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">
-                            <span>Fader 3</span>
+                            <span>Z</span>
                             <span class="control-value" id="val-manual-2">0.50</span>
                         </div>
                         <input type="range" id="manual-2" min="0" max="1" step="0.01" value="0.5">
-                    </div>
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Fader 4</span>
-                            <span class="control-value" id="val-manual-3">0.50</span>
-                        </div>
-                        <input type="range" id="manual-3" min="0" max="1" step="0.01" value="0.5">
-                    </div>
-                </div>
-                <div class="control-row">
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Fader 5</span>
-                            <span class="control-value" id="val-manual-4">0.50</span>
-                        </div>
-                        <input type="range" id="manual-4" min="0" max="1" step="0.01" value="0.5">
-                    </div>
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Fader 6</span>
-                            <span class="control-value" id="val-manual-5">0.50</span>
-                        </div>
-                        <input type="range" id="manual-5" min="0" max="1" step="0.01" value="0.5">
-                    </div>
-                </div>
-                <div class="control-row">
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Fader 7</span>
-                            <span class="control-value" id="val-manual-6">0.50</span>
-                        </div>
-                        <input type="range" id="manual-6" min="0" max="1" step="0.01" value="0.5">
-                    </div>
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Fader 8</span>
-                            <span class="control-value" id="val-manual-7">0.50</span>
-                        </div>
-                        <input type="range" id="manual-7" min="0" max="1" step="0.01" value="0.5">
                     </div>
                 </div>
             </div>
