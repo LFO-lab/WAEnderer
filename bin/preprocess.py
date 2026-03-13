@@ -7,7 +7,7 @@ Pipeline:
   - Keep full latent trajectories per file (no mean pooling)
   - Normalize latents with global Z_mean/Z_std
   - Compute causal-context geometry/index over all frames
-  - Compute manual 3D embedding control points (PCA or UMAP) + robust ranges
+  - Compute manual embedding control points (PCA or UMAP) + robust ranges
 """
 import os
 import argparse
@@ -36,7 +36,7 @@ from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
 
-MANUAL_EMBED_DIM = 3
+MANUAL_EMBED_DIM = 4
 MANUAL_PERCENTILE_LOW = 1.0
 MANUAL_PERCENTILE_HIGH = 99.0
 MANUAL_MFCC_TOTAL = 20
@@ -352,8 +352,10 @@ def compute_manual_navigation_features(
         raise ValueError(f"Expected descriptor stack [N, {expected_dim}], got {desc.shape}")
     if desc.shape[0] == 0:
         raise ValueError("No descriptor frames available for manual feature extraction.")
-    if int(embed_dim) != 3:
-        raise ValueError(f"manual embedding dimension must be 3 for the current UI, got {embed_dim}")
+    if int(embed_dim) < 3 or int(embed_dim) > 4:
+        raise ValueError(
+            f"manual embedding dimension must be 3 or 4 for current controls, got {embed_dim}"
+        )
 
     desc_norm, desc_center, desc_scale = _robust_standardize(desc)
     scales = _descriptor_scales()
@@ -552,7 +554,7 @@ def main():
         "--manual_embed_dim",
         type=int,
         default=MANUAL_EMBED_DIM,
-        help="Manual embedding dimensionality (current UI expects 3).",
+        help="Manual embedding dimensionality (3 or 4; dim4 maps to W/color axis).",
     )
     ap.add_argument(
         "--manual_umap_n_neighbors",

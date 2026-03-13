@@ -76,6 +76,7 @@ class WSBroadcaster:
         self._manual_points_3d_norm = None
         self._manual_points_3d_min = None
         self._manual_points_3d_range = None
+        self._manual_color_values_norm = None
         self._manual_file_ids = None
 
         # Precompute 2D projection if corpus is higher dimensional
@@ -123,44 +124,62 @@ class WSBroadcaster:
         if manual_points_3d is None:
             return
         points = np.asarray(manual_points_3d, dtype=np.float32)
-        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+        if points.ndim != 2 or points.shape[1] < 3 or points.shape[0] == 0:
             print(
-                f"[ws] Ignoring invalid manual_points_3d shape: {getattr(points, 'shape', None)}"
+                f"[ws] Ignoring invalid manual embedding shape: {getattr(points, 'shape', None)}"
             )
             return
 
-        self._manual_points_3d = points
+        points_xyz = points[:, :3].astype(np.float32)
+        self._manual_points_3d = points_xyz
+
+        if points.shape[1] >= 4:
+            color_axis = points[:, 3].astype(np.float32)
+            c01 = float(np.percentile(color_axis, 1.0))
+            c99 = float(np.percentile(color_axis, 99.0))
+            c_range = max(c99 - c01, 1e-6)
+            self._manual_color_values_norm = np.clip(
+                (color_axis - c01) / c_range,
+                0.0,
+                1.0,
+            )
+
         p01 = None
         p99 = None
         if manual_fader_p01 is not None and manual_fader_p99 is not None:
             p01 = np.asarray(manual_fader_p01, dtype=np.float32).reshape(-1)
             p99 = np.asarray(manual_fader_p99, dtype=np.float32).reshape(-1)
-            if p01.shape[0] != 3 or p99.shape[0] != 3:
+            if p01.shape[0] < 3 or p99.shape[0] < 3:
                 p01 = None
                 p99 = None
+            else:
+                p01 = p01[:3]
+                p99 = p99[:3]
 
         if p01 is not None and p99 is not None:
             self._manual_points_3d_min = p01
             self._manual_points_3d_range = np.maximum(p99 - p01, 1e-6)
             self._manual_points_3d_norm = np.clip(
-                (points - self._manual_points_3d_min) / self._manual_points_3d_range,
+                (points_xyz - self._manual_points_3d_min) / self._manual_points_3d_range,
                 0.0,
                 1.0,
             )
         else:
-            self._manual_points_3d_min = points.min(axis=0)
+            self._manual_points_3d_min = points_xyz.min(axis=0)
             self._manual_points_3d_range = np.maximum(
-                points.max(axis=0) - self._manual_points_3d_min, 1e-6
+                points_xyz.max(axis=0) - self._manual_points_3d_min, 1e-6
             )
-            self._manual_points_3d_norm = (points - self._manual_points_3d_min) / self._manual_points_3d_range
+            self._manual_points_3d_norm = (
+                points_xyz - self._manual_points_3d_min
+            ) / self._manual_points_3d_range
 
         if manual_file_ids is not None:
             fids = np.asarray(manual_file_ids, dtype=np.int32).reshape(-1)
-            if fids.shape[0] == points.shape[0]:
+            if fids.shape[0] == points_xyz.shape[0]:
                 self._manual_file_ids = fids
         if self._manual_file_ids is None and hasattr(self.nav, "_file_ids"):
             fids = np.asarray(self.nav._file_ids, dtype=np.int32).reshape(-1)
-            if fids.shape[0] == points.shape[0]:
+            if fids.shape[0] == points_xyz.shape[0]:
                 self._manual_file_ids = fids
     
     def _get_state_json(self) -> str:
@@ -296,14 +315,21 @@ class WSBroadcaster:
             file_ids = self.nav._file_ids.tolist()
 
         manual_positions = []
+        manual_color_values = []
         manual_file_ids = file_ids
         if self._manual_points_3d_norm is not None and self._manual_points_3d_norm.shape[0] == n_points:
             if n_points > 2000:
                 manual_positions = self._manual_points_3d_norm[indices].tolist()
+                if self._manual_color_values_norm is not None:
+                    manual_color_values = (
+                        self._manual_color_values_norm[indices].astype(np.float32).tolist()
+                    )
                 if self._manual_file_ids is not None:
                     manual_file_ids = self._manual_file_ids[indices].tolist()
             else:
                 manual_positions = self._manual_points_3d_norm.tolist()
+                if self._manual_color_values_norm is not None:
+                    manual_color_values = self._manual_color_values_norm.astype(np.float32).tolist()
                 if self._manual_file_ids is not None:
                     manual_file_ids = self._manual_file_ids.tolist()
 
@@ -322,6 +348,7 @@ class WSBroadcaster:
             "positions_2d": positions,
             "file_ids": file_ids,
             "manual_positions_3d": manual_positions,
+            "manual_color_values": manual_color_values,
             "manual_file_ids": manual_file_ids,
             "navigation_mode": nav_mode,
         })
@@ -518,7 +545,8 @@ def start_ws_server(
         on_exit_request: Optional callback invoked when web UI requests exit.
         message_handler: Optional callback for custom inbound WebSocket messages.
         extra_state_provider: Optional callback adding fields to broadcast state payloads.
-        manual_points_3d: Optional manual embedding corpus points [N,3] for manual-mode rendering.
+        manual_points_3d: Optional manual embedding corpus points [N,D>=3] for manual-mode rendering.
+            Dim 0..2 are XYZ; dim 3 (if present) is used as a color scalar.
         manual_file_ids: Optional file ids aligned with manual_points_3d.
         manual_fader_p01: Optional manual control-space lower bounds used for normalization.
         manual_fader_p99: Optional manual control-space upper bounds used for normalization.

@@ -5,7 +5,7 @@ A real-time 64-dimensional latent space navigation instrument for exploring audi
 ## Features
 
 - **64D Latent Navigation** - Explore audio corpora in continuous latent space
-- **Manual Navigation Mode** - 3-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
+- **Manual Navigation Mode** - 4-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
 - **Learned Navigation Policy** - GRU network with 6 expressive control dimensions
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
 - **Real-Time VAE Decoding** - Overlap-add synthesis with adaptive window sizing
@@ -50,7 +50,7 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 | `--encode_chunk_sec` | 60.0 | VAE encode chunk size in seconds (0 disables chunking) |
 | `--encode_chunk_overlap_sec` | 1.0 | VAE encode chunk overlap in seconds |
 | `--manual_reducer` | `pca` | Manual embedding reducer (`pca` or `umap`) |
-| `--manual_embed_dim` | 3 | Manual embedding dimensionality (current UI expects 3) |
+| `--manual_embed_dim` | 4 | Manual embedding dimensionality (`3` or `4`; dim4 maps to W/color axis) |
 | `--manual_umap_n_neighbors` | 30 | UMAP `n_neighbors` (when reducer is `umap`) |
 | `--manual_umap_min_dist` | 0.05 | UMAP `min_dist` (when reducer is `umap`) |
 | `--manual_umap_metric` | `euclidean` | UMAP metric |
@@ -59,13 +59,13 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
 
 `corpus.npz` now includes manual-navigation fields:
-- `manual_embed_points` `[N, 3]`
+- `manual_embed_points` `[N, 3 or 4]`
 - `manual_embed_reducer` `["pca"|"umap"]`
-- `manual_pca_components` `[3, D_desc]` (PCA mode only)
+- `manual_pca_components` `[embed_dim, D_desc]` (PCA mode only)
 - `manual_pca_mean` `[D_desc]` (PCA mode only)
 - `manual_desc_weighted` `[N, D_desc]`
-- `manual_fader_p01` `[3]`
-- `manual_fader_p99` `[3]`
+- `manual_fader_p01` `[embed_dim]`
+- `manual_fader_p99` `[embed_dim]`
 
 ### 2. Train Policy
 
@@ -106,12 +106,13 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--corpus_dir` | required | Path to corpus directory |
 | `--manual_artifact` | `<corpus_dir>/manual_navigation.npz` | Manual navigation artifact path (required at startup) |
 | `--initial_navigation_mode` | `policy` | Initial selected mode (`policy` or `manual`) |
-| `--manual_wander_k` | 4 | Manual timbre-neighbor wander neighborhood size (`1` disables) |
-| `--manual_wander_speed` | 0.5 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
+| `--manual_wander_k` | 1 | Manual timbre-neighbor wander neighborhood size (`1` disables) |
+| `--manual_wander_speed` | 0.0001 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
 | `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
 | `--manual_refine_k` | 16 | Refined descriptor-nearest subset size for manual retrieval/wander |
 | `--manual_desc_interp_k` | 8 | Descriptor interpolation neighbors (mainly for UMAP query rerank) |
 | `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,64]` per chunk) |
+| `--manual_buffer_ratio` | 0.15 | Manual target buffer ratio vs current chunk duration (higher = safer, higher latency) |
 | `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
 | `--policy_path` | optional | Path to policy checkpoint |
@@ -215,12 +216,15 @@ Audio Files
 /manual/x              Set manual X axis
 /manual/y              Set manual Y axis
 /manual/z              Set manual Z axis
+/manual/w              Set manual W axis
+/manual/wander_k k     Set manual wander neighborhood size (1..64)
 /manual/xyz x y z      Set all three manual axes at once
+/manual/xyzw x y z w   Set all four manual axes at once
 ```
 
 `/cursor` routing note:
 - In `policy` mode, `/cursor ...` controls latent cursor as before.
-- In `manual` mode, `/cursor ...` is routed to manual `X/Y/Z` controls (first 3 values).
+- In `manual` mode, `/cursor ...` is routed to manual controls (`X/Y/Z[/W]`, up to control dim).
 
 ### Web UI
 
@@ -228,7 +232,7 @@ The web interface (`web/index.html`) provides:
 - Real-time policy 2D projection and manual 3D corpus view
 - Policy/manual mode tabs with transport Start/Stop buttons
 - Sliders for all 6 policy navigation controls
-- 3 manual XYZ controls for timbre-space navigation
+- 4 manual XYZW controls for timbre-space navigation, plus manual wander-k
 - Manual 3D camera nudges (left/right/over/under/forward/backward)
 - Decoder gain and smoothing controls
 - Visualization options (point size, trail length, heatmap)
@@ -251,13 +255,13 @@ The `corpus.npz` file contains:
 | `geom_local_sigma` | `[N]` | Local density scale |
 | `geom_pca_components` | `[D, 64]` | Full-rank PCA matrix |
 | `geom_pca_mean` | `[64]` | PCA centering mean |
-| `manual_embed_points` | `[N, 3]` | Manual navigation control coordinates (descriptor embedding) |
+| `manual_embed_points` | `[N, 3 or 4]` | Manual navigation control coordinates (descriptor embedding) |
 | `manual_embed_reducer` | `["pca"|"umap"]` | Embedding method used for manual space |
-| `manual_pca_components` | `[3, D_desc]` | PCA basis over weighted descriptor space (PCA reducer only) |
+| `manual_pca_components` | `[embed_dim, D_desc]` | PCA basis over weighted descriptor space (PCA reducer only) |
 | `manual_pca_mean` | `[D_desc]` | PCA centering mean in weighted descriptor space (PCA reducer only) |
 | `manual_desc_weighted` | `[N, D_desc]` | Full weighted timbre descriptor vectors for two-stage reranking |
-| `manual_fader_p01` | `[3]` | Per-dimension 1st percentile range floor |
-| `manual_fader_p99` | `[3]` | Per-dimension 99th percentile range ceiling |
+| `manual_fader_p01` | `[embed_dim]` | Per-dimension 1st percentile range floor |
+| `manual_fader_p99` | `[embed_dim]` | Per-dimension 99th percentile range ceiling |
 
 Geometry fields (`geom_*`) and manual fields (`manual_*`) are required for full dual-mode performance.
 

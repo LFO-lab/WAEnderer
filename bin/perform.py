@@ -165,8 +165,8 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
         reducer_name = "pca"
     else:
         raise RuntimeError(f"Unsupported manual artifact version: {version}")
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise RuntimeError(f"manual_embed_points must be [N, 3], got {points.shape}")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise RuntimeError(f"manual_embed_points must be [N, D>=3], got {points.shape}")
     if points.shape[0] != expected_frames:
         raise RuntimeError(
             f"manual_embed_points frame count mismatch: {points.shape[0]} vs expected {expected_frames}"
@@ -176,16 +176,34 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
         or frame_t.shape[0] != points.shape[0]
     ):
         raise RuntimeError("Manual artifact frame metadata length mismatch.")
-    if p01.shape[0] != 3 or p99.shape[0] != 3:
-        raise RuntimeError("manual_fader_p01/manual_fader_p99 must both be shape [3].")
+    if p01.shape[0] != points.shape[1] or p99.shape[0] != points.shape[1]:
+        # Backward compatibility: older 4D artifacts stored p01/p99 for XYZ only.
+        if (
+            p01.shape[0] == p99.shape[0]
+            and 3 <= p01.shape[0] < points.shape[1]
+        ):
+            extra = points[:, p01.shape[0] : points.shape[1]]
+            extra_p01 = np.percentile(extra, 1.0, axis=0).astype(np.float32)
+            extra_p99 = np.percentile(extra, 99.0, axis=0).astype(np.float32)
+            extra_p99 = np.maximum(extra_p99, extra_p01 + 1e-6).astype(np.float32)
+            p01 = np.concatenate([p01, extra_p01], axis=0).astype(np.float32)
+            p99 = np.concatenate([p99, extra_p99], axis=0).astype(np.float32)
+            print(
+                "[warn] Manual artifact had legacy p01/p99 dimensionality; "
+                f"extended to {points.shape[1]} dims from embedding percentiles."
+            )
+        else:
+            raise RuntimeError(
+                f"manual_fader_p01/manual_fader_p99 must both be shape [{points.shape[1]}]."
+            )
     if reducer_name == "pca" and version >= 2 and pca_components is None:
         raise RuntimeError(
             "PCA reducer requires manual_pca_components/manual_pca_mean in artifact."
         )
     if pca_components is not None:
-        if pca_components.ndim != 2 or pca_components.shape[0] != 3:
+        if pca_components.ndim != 2 or pca_components.shape[0] != points.shape[1]:
             raise RuntimeError(
-                f"manual_pca_components must be [3, D], got {pca_components.shape}"
+                f"manual_pca_components must be [{points.shape[1]}, D], got {pca_components.shape}"
             )
         if pca_mean is None or pca_mean.shape[0] != pca_components.shape[1]:
             raise RuntimeError(
@@ -223,6 +241,7 @@ class TransportController:
     MANUAL_QUEUE_SIZE = 2
     MANUAL_WINDOW_MIN = 1
     MANUAL_WINDOW_MAX = 64
+    MANUAL_WINDOW_SLEW_MAX_STEP = 4
     TARGET_BUFFER_HIGH_POLICY = 1.0
     TARGET_BUFFER_HIGH_MANUAL = 0.22
     MANUAL_PREBUFFER_SEC = 0.22
@@ -269,6 +288,10 @@ class TransportController:
         self._manual_window_size = max(
             self.MANUAL_WINDOW_MIN,
             min(self.MANUAL_WINDOW_MAX, int(args.manual_window_size)),
+        )
+        self._manual_window_runtime_size = int(self._manual_window_size)
+        self._manual_buffer_ratio = float(
+            np.clip(float(getattr(args, "manual_buffer_ratio", 0.15)), 0.1, 2.0)
         )
         self._manual_fader_motion_threshold = float(
             np.clip(float(args.manual_fader_motion_threshold), 0.0, 1.0)
@@ -376,15 +399,20 @@ class TransportController:
         with self._lock:
             changed = clamped != self._manual_window_size
             self._manual_window_size = int(clamped)
-            running_manual = self._running.is_set() and self._active_mode == "manual"
 
-        self._set_manual_window_stats(self._manual_window_size, changed=changed)
-        dropped = 0
-        if running_manual and changed:
-            dropped = self._drop_pending_latents()
-        if dropped > 0:
-            return True, f"manual window size set to {clamped} (dropped {dropped} queued batches)"
+        if changed:
+            return True, f"manual window target set to {clamped} (slewed for smooth audio)"
         return True, f"manual window size set to {clamped}"
+
+    def set_manual_buffer_ratio(self, ratio) -> Tuple[bool, str]:
+        try:
+            ratio_f = float(ratio)
+        except Exception:
+            return False, f"invalid manual buffer ratio: {ratio}"
+        ratio_f = float(np.clip(ratio_f, 0.1, 2.0))
+        with self._lock:
+            self._manual_buffer_ratio = ratio_f
+        return True, f"manual buffer ratio set to {ratio_f:.2f}"
 
     def stop(self) -> Tuple[bool, str]:
         if not self._running.is_set():
@@ -512,18 +540,23 @@ class TransportController:
         self._runtime_stats["decode_count"] = 0
         with self._lock:
             self._manual_render_faders = self._manual_live_faders.copy()
-        self._set_manual_window_stats(self._manual_window_size, changed=False)
+            self._manual_window_runtime_size = int(self._manual_window_size)
+            start_window = int(self._manual_window_runtime_size)
+        self._set_manual_window_stats(start_window, changed=False)
+        manual_target_buffer_high = self._manual_target_buffer_high()
+        manual_prebuffer_sec = max(self.MANUAL_PREBUFFER_SEC, manual_target_buffer_high)
         print(
             "[info] Manual decode window config: "
-            f"window={self._manual_window_size}, queue={self.MANUAL_QUEUE_SIZE}"
+            f"window={start_window}, queue={self.MANUAL_QUEUE_SIZE}, "
+            f"target_buf={manual_target_buffer_high:.2f}s"
         )
 
-        # Keep manual prebuffer short for responsive fader changes.
+        # Scale prebuffer with window size so large decode batches do not underrun.
         print("[info] Pre-buffering manual audio...")
-        pre_frames = max(4, int(self.MANUAL_PREBUFFER_SEC / self.MANUAL_FRAME_SEC) + 1)
+        pre_frames = max(4, int(manual_prebuffer_sec / self.MANUAL_FRAME_SEC) + 1)
         pre_remaining = int(pre_frames)
         while pre_remaining > 0:
-            batch_size = min(int(self._manual_window_size), pre_remaining)
+            batch_size = min(int(start_window), pre_remaining)
             z_raw = self._next_manual_latent_batch(batch_size)
             audio = decode_latents(self.vae, z_raw)
             self.decoder.write_frame(audio)
@@ -617,8 +650,33 @@ class TransportController:
             self._runtime_stats["current_hop"] = int(window_size)
 
     def _manual_batch_window_size(self) -> int:
-        self._set_manual_window_stats(self._manual_window_size, changed=False)
-        return int(self._manual_window_size)
+        with self._lock:
+            target = int(self._manual_window_size)
+            current = int(self._manual_window_runtime_size)
+            changed = False
+            if current != target:
+                delta = target - current
+                step = min(
+                    self.MANUAL_WINDOW_SLEW_MAX_STEP,
+                    max(1, (abs(delta) // 8) + 1),
+                )
+                current += int(np.sign(delta)) * min(abs(delta), int(step))
+                self._manual_window_runtime_size = int(current)
+                changed = True
+        self._set_manual_window_stats(int(current), changed=changed)
+        return int(current)
+
+    def _manual_target_buffer_high(self) -> float:
+        with self._lock:
+            window = int(max(self.MANUAL_WINDOW_MIN, self._manual_window_runtime_size))
+            ratio = float(self._manual_buffer_ratio)
+        chunk_sec = float(window) * float(self.MANUAL_FRAME_SEC)
+        return float(
+            max(
+                self.TARGET_BUFFER_HIGH_MANUAL,
+                min(3.0, ratio * chunk_sec),
+            )
+        )
 
     def _policy_nav_loop(self):
         nav_mode = "fixed" if self.args.fixed_window else "adaptive"
@@ -735,7 +793,7 @@ class TransportController:
                 with self._lock:
                     active_mode = self._active_mode
                 target_buffer_high = (
-                    self.TARGET_BUFFER_HIGH_MANUAL
+                    self._manual_target_buffer_high()
                     if active_mode == "manual"
                     else self.TARGET_BUFFER_HIGH_POLICY
                 )
@@ -800,6 +858,19 @@ class TransportController:
         with self._lock:
             selected_mode = self.selected_mode
             manual_decode_window = int(self._manual_window_size)
+            manual_decode_window_active = int(self._manual_window_runtime_size)
+            manual_buffer_ratio = float(self._manual_buffer_ratio)
+        manual_target_buffer_high = float(
+            max(
+                self.TARGET_BUFFER_HIGH_MANUAL,
+                min(
+                    3.0,
+                    manual_buffer_ratio
+                    * manual_decode_window_active
+                    * self.MANUAL_FRAME_SEC,
+                ),
+            )
+        )
         manual_engine_state = self.manual.get_state()
         with self._stats_lock:
             # Ensure all values are JSON-serializable
@@ -826,8 +897,11 @@ class TransportController:
                 "control_dim": int(manual_engine_state.get("control_dim", 3)),
                 "position": position,
                 "decode_window": manual_decode_window,
+                "decode_window_active": manual_decode_window_active,
                 "decode_window_min": int(self.MANUAL_WINDOW_MIN),
                 "decode_window_max": int(self.MANUAL_WINDOW_MAX),
+                "buffer_ratio": manual_buffer_ratio,
+                "target_buffer_high": manual_target_buffer_high,
                 "search_mode": str(manual_engine_state.get("search_mode", "legacy")),
                 "reducer": str(manual_engine_state.get("reducer", "pca")),
                 "coarse_k": int(manual_engine_state.get("coarse_k", 0)),
@@ -891,6 +965,13 @@ class TransportController:
                 print(f"[ws] manual_window error: {msg}")
             return True
 
+        if msg_type == "manual_buffer":
+            ratio = data.get("ratio")
+            ok, msg = self.set_manual_buffer_ratio(ratio)
+            if not ok:
+                print(f"[ws] manual_buffer error: {msg}")
+            return True
+
         return False
 
 
@@ -930,13 +1011,13 @@ def main():
     ap.add_argument(
         "--manual_wander_k",
         type=int,
-        default=4,
+        default=1,
         help="Manual mode wandering neighborhood size (1 disables wandering).",
     )
     ap.add_argument(
         "--manual_wander_speed",
         type=float,
-        default=0.5,
+        default=0.0001,
         help="Manual mode wander transition speed (0.0 instant, 1.0 slowest).",
     )
     ap.add_argument(
@@ -968,6 +1049,12 @@ def main():
         type=float,
         default=0.01,
         help="Minimum max-abs fader delta to count as active motion.",
+    )
+    ap.add_argument(
+        "--manual_buffer_ratio",
+        type=float,
+        default=0.15,
+        help="Manual mode buffer target ratio relative to chunk duration (higher = safer, more latency).",
     )
     ap.add_argument(
         "--autostart",
@@ -1140,12 +1227,13 @@ def main():
     )
     print(
         "[info] Manual wandering config: "
-        f"k={int(args.manual_wander_k)}, speed={float(args.manual_wander_speed):.2f}"
+        f"k={int(args.manual_wander_k)}, speed={float(args.manual_wander_speed):.4f}"
     )
     print(
         "[info] Manual decode config: "
         f"window={int(args.manual_window_size)}, "
-        f"motion_eps={float(args.manual_fader_motion_threshold):.3f}"
+        f"motion_eps={float(args.manual_fader_motion_threshold):.3f}, "
+        f"buffer_ratio={float(args.manual_buffer_ratio):.2f}"
     )
     print(
         "[info] Manual retrieval config: "

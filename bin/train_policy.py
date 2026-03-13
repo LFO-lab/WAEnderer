@@ -442,12 +442,14 @@ def _save_manual_navigation_artifact(
     frame_file_ids = np.asarray(data["frame_file_ids"], dtype=np.int32).reshape(-1)
     frame_t = np.asarray(data["frame_t"], dtype=np.int32).reshape(-1)
 
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise RuntimeError(f"manual_embed_points must be [N, 3], got {points.shape}")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise RuntimeError(f"manual_embed_points must be [N, D>=3], got {points.shape}")
     if points.shape[0] != frame_file_ids.shape[0] or points.shape[0] != frame_t.shape[0]:
         raise RuntimeError("manual points and frame metadata length mismatch.")
-    if p01.shape[0] != 3 or p99.shape[0] != 3:
-        raise RuntimeError("manual_fader_p01/p99 must both be shape [3].")
+    if p01.shape[0] != points.shape[1] or p99.shape[0] != points.shape[1]:
+        raise RuntimeError(
+            f"manual_fader_p01/p99 must both be shape [{points.shape[1]}]."
+        )
     if desc_weighted.ndim != 2 or desc_weighted.shape[0] != points.shape[0]:
         raise RuntimeError(
             f"manual_desc_weighted must be [N, D] with N={points.shape[0]}, got {desc_weighted.shape}"
@@ -455,9 +457,9 @@ def _save_manual_navigation_artifact(
     if reducer_name == "pca":
         if pca_components is None or pca_mean is None:
             raise RuntimeError("PCA reducer requires manual_pca_components and manual_pca_mean.")
-        if pca_components.ndim != 2 or pca_components.shape[0] != 3:
+        if pca_components.ndim != 2 or pca_components.shape[0] != points.shape[1]:
             raise RuntimeError(
-                f"manual_pca_components must be [3, D], got {pca_components.shape}"
+                f"manual_pca_components must be [{points.shape[1]}, D], got {pca_components.shape}"
             )
         if pca_mean.shape[0] != pca_components.shape[1]:
             raise RuntimeError(

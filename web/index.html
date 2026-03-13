@@ -104,6 +104,16 @@
         input[type="range"]::-webkit-slider-thumb:hover {
             background: #6ab0ff;
         }
+
+        input[type="color"] {
+            width: 100%;
+            height: 30px;
+            border: 1px solid #2a2a3a;
+            border-radius: 4px;
+            background: #1a1a24;
+            padding: 2px;
+            cursor: pointer;
+        }
         
         select {
             width: 100%;
@@ -284,6 +294,16 @@
             background: #262636;
         }
 
+        .camera-btn.active {
+            background: #4a9eff;
+            border-color: #4a9eff;
+            color: #ffffff;
+        }
+
+        .camera-btn.active:hover {
+            background: #63adff;
+        }
+
         .panel-hidden {
             display: none;
         }
@@ -441,7 +461,7 @@
             </div>
 
             <div id="manual-panel" class="panel-hidden">
-                <h2>Manual XYZ</h2>
+                <h2>Manual XYZW</h2>
                 <h3>Camera</h3>
                 <div class="camera-grid">
                     <button id="cam-left" class="camera-btn" type="button">Left</button>
@@ -454,10 +474,50 @@
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">
+                            <span>Camera Speed</span>
+                            <span class="control-value" id="val-cam-speed">1.00</span>
+                        </div>
+                        <input type="range" id="cam-speed" min="0" max="3" step="0.01" value="1.00">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Color A</span>
+                        </div>
+                        <input type="color" id="manual-color-a" value="#4a9eff">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Color B</span>
+                        </div>
+                        <input type="color" id="manual-color-b" value="#ff8d4a">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
                             <span>Decode Window</span>
                             <span class="control-value" id="val-manual-window">6</span>
                         </div>
                         <input type="range" id="manual-window" min="1" max="64" step="1" value="6">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Responsiveness</span>
+                        </div>
+                        <input type="number" id="manual-buffer-ratio" min="0.10" max="2.00" step="0.01" value="0.15">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Randomness</span>
+                            <span class="control-value" id="val-manual-wander-k">1</span>
+                        </div>
+                        <input type="range" id="manual-wander-k" min="1" max="64" step="1" value="1">
                     </div>
                 </div>
                 <div class="control-row">
@@ -483,6 +543,15 @@
                             <span class="control-value" id="val-manual-2">0.50</span>
                         </div>
                         <input type="range" id="manual-2" min="0" max="1" step="0.01" value="0.5">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>W</span>
+                            <span class="control-value" id="val-manual-3">0.50</span>
+                        </div>
+                        <input type="range" id="manual-3" min="0" max="1" step="0.01" value="0.5">
                     </div>
                 </div>
             </div>

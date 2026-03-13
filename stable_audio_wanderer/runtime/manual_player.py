@@ -55,8 +55,8 @@ class ManualNavigationEngine:
         p99 = np.asarray(fader_p99, dtype=np.float32).reshape(-1)
         if points.ndim != 2:
             raise ValueError(f"manual_points must be [N, D], got {points.shape}")
-        if points.shape[1] != 3:
-            raise ValueError(f"manual_points must have 3 dims, got {points.shape[1]}")
+        if points.shape[1] < 3:
+            raise ValueError(f"manual_points must have at least 3 dims, got {points.shape[1]}")
         if p01.shape[0] != points.shape[1] or p99.shape[0] != points.shape[1]:
             raise ValueError("manual percentile ranges must match manual_points dim.")
         if points.shape[0] == 0:

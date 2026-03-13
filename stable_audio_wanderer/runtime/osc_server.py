@@ -38,7 +38,10 @@ def run_server(
             /manual/x value            - Set manual X control (0-1)
             /manual/y value            - Set manual Y control (0-1)
             /manual/z value            - Set manual Z control (0-1)
+            /manual/w value            - Set manual W control (0-1)
+            /manual/wander_k value     - Set manual wander neighborhood size (1-64)
             /manual/xyz x y z          - Set manual XYZ controls together (0-1 each)
+            /manual/xyzw x y z w       - Set manual XYZW controls together (0-1 each)
 
     Args:
         nav: Navigation engine instance
@@ -62,6 +65,15 @@ def run_server(
         except Exception:
             return None
 
+    def _manual_control_dim() -> int:
+        if manual_controller is None:
+            return 3
+        engine = getattr(manual_controller, "manual", None)
+        try:
+            return max(1, int(getattr(engine, "control_dim", 3)))
+        except Exception:
+            return 3
+
     # --- Navigation cursor ---
     def on_cursor(addr, *coords):
         if len(coords) == 0:
@@ -76,11 +88,12 @@ def run_server(
             if selected_mode == "manual" or active_mode == "manual":
                 set_all = getattr(manual_controller, "set_manual_faders", None)
                 if set_all is not None:
-                    vec = arr[:3]
-                    if vec.shape[0] < 3:
-                        vec = np.pad(vec, (0, 3 - vec.shape[0]), mode="edge")
+                    control_dim = _manual_control_dim()
+                    vec = arr[:control_dim]
+                    if vec.shape[0] < control_dim:
+                        vec = np.pad(vec, (0, control_dim - vec.shape[0]), mode="edge")
                     ok, msg = set_all(vec.tolist())
-                    _dbg(f"{addr} -> manual xyz {vec.tolist()} ({msg})")
+                    _dbg(f"{addr} -> manual {vec.tolist()} ({msg})")
                     return
         nav.set_cursor_nd(arr)
         _dbg(f"{addr} -> nav cursor {arr.tolist()}")
@@ -188,6 +201,22 @@ def run_server(
         except Exception as exc:
             print(f"[osc] /manual/z exception: {exc}")
 
+    def on_manual_w(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_axis", None)
+        if setter is None:
+            return
+        try:
+            ok, msg = setter(3, v)
+            if not ok:
+                print(f"[osc] /manual/w error: {msg}")
+            _dbg(f"{addr} {v} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/w exception: {exc}")
+
     def on_manual_xyz(addr, *vals):
         if manual_controller is None:
             _dbg(f"{addr} ignored (no controller)")
@@ -202,18 +231,6 @@ def run_server(
             print(f"[osc] /manual/xyz parse error: {exc}")
             return
 
-        set_all = getattr(manual_controller, "set_manual_faders", None)
-        if set_all is not None:
-            try:
-                ok, msg = set_all(arr.tolist())
-                if not ok:
-                    print(f"[osc] /manual/xyz error: {msg}")
-                _dbg(f"{addr} {arr.tolist()} ({msg})")
-                return
-            except Exception as exc:
-                print(f"[osc] /manual/xyz exception: {exc}")
-                return
-
         set_axis = getattr(manual_controller, "set_manual_axis", None)
         if set_axis is None:
             return
@@ -225,6 +242,49 @@ def run_server(
                 _dbg(f"{addr} axis={axis} value={value} ({msg})")
             except Exception as exc:
                 print(f"[osc] /manual/xyz axis {axis} exception: {exc}")
+
+    def on_manual_xyzw(addr, *vals):
+        if manual_controller is None:
+            _dbg(f"{addr} ignored (no controller)")
+            return
+        if len(vals) < 4:
+            print("[osc] /manual/xyzw expects 4 floats: x y z w")
+            return
+        try:
+            arr = np.asarray(vals[:4], dtype=np.float32)
+            arr = np.clip(arr, 0.0, 1.0)
+        except Exception as exc:
+            print(f"[osc] /manual/xyzw parse error: {exc}")
+            return
+
+        set_axis = getattr(manual_controller, "set_manual_axis", None)
+        if set_axis is None:
+            return
+        for axis, value in enumerate(arr.tolist()):
+            try:
+                ok, msg = set_axis(axis, value)
+                if not ok:
+                    print(f"[osc] /manual/xyzw axis {axis} error: {msg}")
+                _dbg(f"{addr} axis={axis} value={value} ({msg})")
+            except Exception as exc:
+                print(f"[osc] /manual/xyzw axis {axis} exception: {exc}")
+
+    def on_manual_wander_k(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_wander_params", None)
+        if setter is None:
+            return
+        try:
+            k = int(max(1, min(64, round(v))))
+            ok, msg = setter(k=k, speed=None)
+            if not ok:
+                print(f"[osc] /manual/wander_k error: {msg}")
+            _dbg(f"{addr} {k} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/wander_k exception: {exc}")
 
     def on_unmapped(addr, *vals):
         _dbg(f"unmapped {addr} args={list(vals)}")
@@ -245,7 +305,10 @@ def run_server(
     dispatcher.map("/manual/x", on_manual_x)
     dispatcher.map("/manual/y", on_manual_y)
     dispatcher.map("/manual/z", on_manual_z)
+    dispatcher.map("/manual/w", on_manual_w)
+    dispatcher.map("/manual/wander_k", on_manual_wander_k)
     dispatcher.map("/manual/xyz", on_manual_xyz)
+    dispatcher.map("/manual/xyzw", on_manual_xyzw)
     dispatcher.set_default_handler(on_unmapped)
 
     server = BlockingOSCUDPServer((ip, port), dispatcher)
@@ -254,7 +317,7 @@ def run_server(
     print("  /cursor d0 [d1 [d2 ...]] — set navigation cursor (values in [0..1])")
     print("  Policy: /policy/width, /energy, /gravity, /memory, /coherence, /exploration (0..1), /policy/reset")
     print("  Decoder: /decoder/gain (0..2), /decoder/smoothing (0..1)")
-    print("  Manual: /manual/x, /manual/y, /manual/z (0..1), /manual/xyz x y z")
+    print("  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/xyz x y z, /manual/xyzw x y z w")
     if bool(osc_debug):
         print("  OSC debug: enabled (logs matched and unmatched OSC messages)")
 

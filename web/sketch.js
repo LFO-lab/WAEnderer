@@ -15,6 +15,7 @@ let activeControls = new Set();
 let corpusPoints = [];
 let corpusFileIds = [];
 let manualCorpusPoints3D = [];
+let manualCorpusColorValues = [];
 let manualCorpusFileIds = [];
 let totalCorpusPoints = 0;
 
@@ -30,17 +31,37 @@ let selectedNavigationMode = 'policy';
 let transportRunning = false;
 let manualNearestIndex = 0;
 let manualNearestDistance = 0;
-let manualFaders = new Array(3).fill(0.5);
+let manualFaders = new Array(4).fill(0.5);
 let manualDecodeWindow = 6;
 let manualDecodeWindowMin = 1;
 let manualDecodeWindowMax = 64;
-let manualControlDim = 3;
+let manualWindowLastSent = 6;
+let manualBufferRatio = 0.15;
+let manualWanderK = 1;
+let manualControlDim = 4;
 
 // Manual 3D camera controls
-let manualViewYaw = -0.6;
-let manualViewPitch = 0.35;
-let manualViewZoom = 1.0;
+let manualViewYawDeg = -34.4;
+let manualViewPitchDeg = 20.1;
+let manualViewDistance = 2.6;
+let manualCameraSpeed = 1.0;
 let manualPickDragging = false;
+let manualColorA = [74, 158, 255];
+let manualColorB = [255, 141, 74];
+const MANUAL_CAMERA_STANDARD_DISTANCE = 2.6;
+const MANUAL_CAMERA_MIN_DISTANCE = 0.08;
+const MANUAL_CAMERA_MAX_DISTANCE = 8.0;
+const MANUAL_CAMERA_ANGULAR_SPEED_DEG = 63.0;
+const MANUAL_CAMERA_RADIAL_SPEED = 2.0;
+const MANUAL_CAMERA_TOGGLE_DEFAULTS = {
+    left: false,
+    right: false,
+    over: false,
+    under: false,
+    forward: false,
+    backward: false,
+};
+let manualCameraToggles = { ...MANUAL_CAMERA_TOGGLE_DEFAULTS };
 
 // Visualization settings
 let vizMode = 'scatter';
@@ -124,6 +145,7 @@ function draw() {
     background(...COLORS.background);
 
     if (selectedNavigationMode === 'manual') {
+        updateManualCameraMotion();
         drawManual3DScene();
     } else if (vizMode === 'scatter') {
         drawCorpusScatter();
@@ -150,10 +172,12 @@ function projectManualPoint3D(point) {
     const y = (p[1] - 0.5) * 2.0;
     const z = (p[2] - 0.5) * 2.0;
 
-    const cy = cos(manualViewYaw);
-    const sy = sin(manualViewYaw);
-    const cp = cos(manualViewPitch);
-    const sp = sin(manualViewPitch);
+    const yaw = radians(manualViewYawDeg);
+    const pitch = radians(manualViewPitchDeg);
+    const cy = cos(yaw);
+    const sy = sin(yaw);
+    const cp = cos(pitch);
+    const sp = sin(pitch);
 
     const x1 = x * cy + z * sy;
     const z1 = -x * sy + z * cy;
@@ -161,8 +185,7 @@ function projectManualPoint3D(point) {
     const y2 = y * cp - z1 * sp;
     const z2 = y * sp + z1 * cp;
 
-    const camDist = 2.6 / max(0.35, manualViewZoom);
-    const depth = z2 + camDist;
+    const depth = z2 + manualViewDistance;
     const perspective = 1.0 / max(0.25, depth);
 
     const screenX = width * 0.5 + x1 * perspective * width * 0.9;
@@ -177,10 +200,12 @@ function projectManualPoint3D(point) {
 }
 
 function cameraToWorldVector(vx, vy, vz) {
-    const cy = cos(manualViewYaw);
-    const sy = sin(manualViewYaw);
-    const cp = cos(manualViewPitch);
-    const sp = sin(manualViewPitch);
+    const yaw = radians(manualViewYawDeg);
+    const pitch = radians(manualViewPitchDeg);
+    const cy = cos(yaw);
+    const sy = sin(yaw);
+    const cp = cos(pitch);
+    const sp = sin(pitch);
 
     const y1 = vy * cp + vz * sp;
     const z1 = -vy * sp + vz * cp;
@@ -193,9 +218,8 @@ function cameraToWorldVector(vx, vy, vz) {
 function getManualRayFromScreen(mx, my) {
     const u = (mx - width * 0.5) / (width * 0.9);
     const v = -(my - height * 0.5) / (height * 0.9);
-    const camDist = 2.6 / max(0.35, manualViewZoom);
 
-    const origin = cameraToWorldVector(0, 0, -camDist);
+    const origin = cameraToWorldVector(0, 0, -manualViewDistance);
     const dirRaw = cameraToWorldVector(u, v, 1.0);
     const mag = sqrt(dirRaw[0] * dirRaw[0] + dirRaw[1] * dirRaw[1] + dirRaw[2] * dirRaw[2]);
     const dir = mag > 1e-6 ? [dirRaw[0] / mag, dirRaw[1] / mag, dirRaw[2] / mag] : [0, 0, 1];
@@ -238,8 +262,18 @@ function pickManualPointFromMouse(mx, my) {
 
     const selected = manualCorpusPoints3D[bestIdx];
     manualPosition3D = selected.slice(0, 3);
-    manualFaders = selected.slice(0, 3).map(v => constrain(v, 0, 1));
-    for (let i = 0; i < 3; i++) {
+    const nextFaders = new Array(manualControlDim).fill(0.5);
+    for (let i = 0; i < Math.min(3, manualControlDim); i++) {
+        nextFaders[i] = constrain(selected[i], 0, 1);
+    }
+    if (manualControlDim >= 4) {
+        const colorValue = manualCorpusColorValues[bestIdx];
+        if (Number.isFinite(colorValue)) {
+            nextFaders[3] = constrain(colorValue, 0, 1);
+        }
+    }
+    manualFaders = nextFaders;
+    for (let i = 0; i < manualControlDim; i++) {
         const display = document.getElementById(`val-manual-${i}`);
         if (display) display.textContent = manualFaders[i].toFixed(2);
         const input = document.getElementById(`manual-${i}`);
@@ -248,28 +282,100 @@ function pickManualPointFromMouse(mx, my) {
     sendManualControls();
 }
 
-function nudgeManualCamera(direction) {
-    const angleStep = 0.12;
-    const zoomStep = 1.12;
-    if (direction === 'left') {
-        manualViewYaw -= angleStep;
-    } else if (direction === 'right') {
-        manualViewYaw += angleStep;
-    } else if (direction === 'over') {
-        manualViewPitch = constrain(manualViewPitch + angleStep, -1.2, 1.2);
-    } else if (direction === 'under') {
-        manualViewPitch = constrain(manualViewPitch - angleStep, -1.2, 1.2);
-    } else if (direction === 'forward') {
-        manualViewZoom = constrain(manualViewZoom * zoomStep, 0.5, 2.5);
-    } else if (direction === 'backward') {
-        manualViewZoom = constrain(manualViewZoom / zoomStep, 0.5, 2.5);
+function updateManualCameraButtonStates() {
+    const cameraButtons = [
+        { id: 'cam-left', dir: 'left' },
+        { id: 'cam-right', dir: 'right' },
+        { id: 'cam-over', dir: 'over' },
+        { id: 'cam-under', dir: 'under' },
+        { id: 'cam-forward', dir: 'forward' },
+        { id: 'cam-backward', dir: 'backward' },
+    ];
+    for (const button of cameraButtons) {
+        const el = document.getElementById(button.id);
+        if (!el) continue;
+        el.classList.toggle('active', Boolean(manualCameraToggles[button.dir]));
     }
+}
+
+function resetManualCameraToggles() {
+    manualCameraToggles = { ...MANUAL_CAMERA_TOGGLE_DEFAULTS };
+    updateManualCameraButtonStates();
+}
+
+function setManualCameraToggle(direction, enabled) {
+    const opposite = {
+        left: 'right',
+        right: 'left',
+        over: 'under',
+        under: 'over',
+        forward: 'backward',
+        backward: 'forward',
+    };
+    if (!(direction in manualCameraToggles)) {
+        return;
+    }
+    if (enabled) {
+        manualCameraToggles[direction] = true;
+        const oppositeDirection = opposite[direction];
+        if (oppositeDirection) {
+            manualCameraToggles[oppositeDirection] = false;
+        }
+    } else {
+        manualCameraToggles[direction] = false;
+    }
+    updateManualCameraButtonStates();
+}
+
+function wrapManualCameraDistance() {
+    if (!Number.isFinite(manualViewDistance)) {
+        manualViewDistance = MANUAL_CAMERA_STANDARD_DISTANCE;
+    }
+    if (
+        manualViewDistance <= MANUAL_CAMERA_MIN_DISTANCE
+        || manualViewDistance >= MANUAL_CAMERA_MAX_DISTANCE
+    ) {
+        manualViewDistance = MANUAL_CAMERA_STANDARD_DISTANCE;
+    }
+}
+
+function wrapAngleDegrees(value) {
+    let wrapped = value % 360.0;
+    if (wrapped < 0.0) {
+        wrapped += 360.0;
+    }
+    return wrapped;
+}
+
+function updateManualCameraMotion() {
+    const dt = max(0, deltaTime) / 1000.0;
+    if (dt <= 0) {
+        return;
+    }
+
+    const yawDir = (manualCameraToggles.right ? 1 : 0) - (manualCameraToggles.left ? 1 : 0);
+    const pitchDir = (manualCameraToggles.over ? 1 : 0) - (manualCameraToggles.under ? 1 : 0);
+    const radialDir = (manualCameraToggles.backward ? 1 : 0) - (manualCameraToggles.forward ? 1 : 0);
+    if (yawDir === 0 && pitchDir === 0 && radialDir === 0) {
+        return;
+    }
+
+    const speed = max(0, manualCameraSpeed);
+    manualViewYawDeg = wrapAngleDegrees(
+        manualViewYawDeg + yawDir * MANUAL_CAMERA_ANGULAR_SPEED_DEG * speed * dt
+    );
+    manualViewPitchDeg = wrapAngleDegrees(
+        manualViewPitchDeg + pitchDir * MANUAL_CAMERA_ANGULAR_SPEED_DEG * speed * dt
+    );
+    manualViewDistance += radialDir * MANUAL_CAMERA_RADIAL_SPEED * speed * dt;
+    wrapManualCameraDistance();
 }
 
 function drawManual3DScene() {
     drawManualAxes();
 
     if (manualCorpusPoints3D.length > 0) {
+        const hasColorAxis = manualCorpusColorValues.length === manualCorpusPoints3D.length;
         const projected = [];
         for (let i = 0; i < manualCorpusPoints3D.length; i++) {
             projected.push({
@@ -281,8 +387,23 @@ function drawManual3DScene() {
 
         noStroke();
         for (const item of projected) {
-            const fileId = manualCorpusFileIds[item.i] || 0;
-            const fileColor = COLORS.files[fileId % COLORS.files.length] || COLORS.files[0];
+            let fileColor;
+            if (hasColorAxis) {
+                const colorValue = manualCorpusColorValues[item.i];
+                const blend = constrain(
+                    Number.isFinite(colorValue) ? colorValue : 0.5,
+                    0.0,
+                    1.0
+                );
+                fileColor = [
+                    lerp(manualColorA[0], manualColorB[0], blend),
+                    lerp(manualColorA[1], manualColorB[1], blend),
+                    lerp(manualColorA[2], manualColorB[2], blend),
+                ];
+            } else {
+                const fileId = manualCorpusFileIds[item.i] || 0;
+                fileColor = COLORS.files[fileId % COLORS.files.length] || COLORS.files[0];
+            }
             const pointSize = constrain(VIZ_CONFIG.pointSize * item.p.perspective * 4.0, 1.0, 12.0);
             const alpha = map(pointSize, 1.0, 12.0, 30, 160);
             fill(fileColor[0], fileColor[1], fileColor[2], alpha);
@@ -713,6 +834,7 @@ function handleMessage(data) {
         corpusPoints = data.positions_2d || [];
         corpusFileIds = data.file_ids || [];
         manualCorpusPoints3D = data.manual_positions_3d || [];
+        manualCorpusColorValues = data.manual_color_values || [];
         manualCorpusFileIds = data.manual_file_ids || corpusFileIds;
         totalCorpusPoints = data.total_points || 0;
         if (typeof data.navigation_mode === 'string') {
@@ -726,7 +848,7 @@ function handleMessage(data) {
         );
 
         console.log(
-            `Received corpus: policy2d=${corpusPoints.length}, manual3d=${manualCorpusPoints3D.length}`
+            `Received corpus: policy2d=${corpusPoints.length}, manual3d=${manualCorpusPoints3D.length}, manualColor=${manualCorpusColorValues.length}`
         );
 
     } else if (data.type === 'state') {
@@ -746,7 +868,7 @@ function handleMessage(data) {
         if (selectedNavigationMode === 'manual') {
             manualNearestIndex = manual.nearest_index || 0;
             manualNearestDistance = manual.distance || 0;
-            manualControlDim = Number(manual.control_dim || 3);
+            manualControlDim = Number(manual.control_dim || 4);
             const clampedIdx = constrain(
                 manualNearestIndex,
                 0,
@@ -782,8 +904,25 @@ function handleMessage(data) {
             }
             if (typeof manual.decode_window === 'number') {
                 manualDecodeWindow = Math.round(manual.decode_window);
+                manualWindowLastSent = manualDecodeWindow;
                 const display = document.getElementById('val-manual-window');
                 if (display) display.textContent = String(manualDecodeWindow);
+            }
+            if (typeof manual.buffer_ratio === 'number') {
+                manualBufferRatio = Number(manual.buffer_ratio);
+                const input = document.getElementById('manual-buffer-ratio');
+                if (input && !activeControls.has('manual-buffer-ratio')) {
+                    input.value = manualBufferRatio.toFixed(2);
+                }
+            }
+            if (typeof manual.wander_k === 'number') {
+                manualWanderK = Math.round(Number(manual.wander_k));
+                const display = document.getElementById('val-manual-wander-k');
+                if (display) display.textContent = String(manualWanderK);
+                const input = document.getElementById('manual-wander-k');
+                if (input && !activeControls.has('manual-wander-k')) {
+                    input.value = String(manualWanderK);
+                }
             }
             const windowInput = document.getElementById('manual-window');
             if (windowInput) {
@@ -939,7 +1078,7 @@ function setupControls() {
         }
     });
 
-    // Manual controls (X/Y/Z)
+    // Manual controls (X/Y/Z/W)
     for (let i = 0; i < manualFaders.length; i++) {
         const input = document.getElementById(`manual-${i}`);
         const display = document.getElementById(`val-manual-${i}`);
@@ -953,8 +1092,16 @@ function setupControls() {
             input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
 
             input.addEventListener('input', (e) => {
+                if (i >= manualControlDim) {
+                    return;
+                }
                 const value = parseFloat(e.target.value);
-                manualFaders[i] = value;
+                const next = manualFaders.slice(0, manualControlDim);
+                while (next.length < manualControlDim) {
+                    next.push(0.5);
+                }
+                next[i] = value;
+                manualFaders = next;
                 if (display) display.textContent = value.toFixed(2);
                 sendManualControls();
             });
@@ -971,11 +1118,70 @@ function setupControls() {
         manualWindowInput.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
         manualWindowInput.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
 
+        const commitManualWindowSize = () => {
+            const parsed = Math.round(parseFloat(manualWindowInput.value));
+            if (!Number.isFinite(parsed)) return;
+            const clamped = Math.max(
+                manualDecodeWindowMin,
+                Math.min(manualDecodeWindowMax, parsed)
+            );
+            manualDecodeWindow = clamped;
+            manualWindowInput.value = String(clamped);
+            if (manualWindowDisplay) manualWindowDisplay.textContent = String(clamped);
+            if (clamped !== manualWindowLastSent) {
+                manualWindowLastSent = clamped;
+                sendManualWindowSize(clamped);
+            }
+        };
+
         manualWindowInput.addEventListener('input', (e) => {
             const value = Math.round(parseFloat(e.target.value));
             manualDecodeWindow = value;
             if (manualWindowDisplay) manualWindowDisplay.textContent = String(value);
-            sendManualWindowSize(value);
+        });
+        manualWindowInput.addEventListener('change', commitManualWindowSize);
+        manualWindowInput.addEventListener('mouseup', commitManualWindowSize);
+        manualWindowInput.addEventListener('touchend', commitManualWindowSize);
+    }
+
+    const manualBufferInput = document.getElementById('manual-buffer-ratio');
+    if (manualBufferInput) {
+        const inputId = 'manual-buffer-ratio';
+        const commitManualBufferRatio = () => {
+            const parsed = parseFloat(manualBufferInput.value);
+            if (!Number.isFinite(parsed)) return;
+            const clamped = Math.max(0.10, Math.min(2.00, parsed));
+            manualBufferRatio = clamped;
+            manualBufferInput.value = clamped.toFixed(2);
+            sendManualBufferRatio(clamped);
+            setTimeout(() => activeControls.delete(inputId), 100);
+        };
+        manualBufferInput.addEventListener('focus', () => activeControls.add(inputId));
+        manualBufferInput.addEventListener('change', commitManualBufferRatio);
+        manualBufferInput.addEventListener('blur', commitManualBufferRatio);
+        manualBufferInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                commitManualBufferRatio();
+            }
+        });
+    }
+
+    const manualWanderInput = document.getElementById('manual-wander-k');
+    const manualWanderDisplay = document.getElementById('val-manual-wander-k');
+    if (manualWanderInput) {
+        const inputId = 'manual-wander-k';
+        manualWanderInput.addEventListener('mousedown', () => activeControls.add(inputId));
+        manualWanderInput.addEventListener('touchstart', () => activeControls.add(inputId));
+        manualWanderInput.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualWanderInput.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualWanderInput.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+        manualWanderInput.addEventListener('input', (e) => {
+            const value = Math.round(parseFloat(e.target.value));
+            if (!Number.isFinite(value)) return;
+            manualWanderK = Math.max(1, Math.min(64, value));
+            if (manualWanderDisplay) manualWanderDisplay.textContent = String(manualWanderK);
+            sendManualWander(manualWanderK);
         });
     }
 
@@ -991,7 +1197,44 @@ function setupControls() {
         const el = document.getElementById(button.id);
         if (!el) continue;
         el.addEventListener('click', () => {
-            nudgeManualCamera(button.dir);
+            setManualCameraToggle(button.dir, !manualCameraToggles[button.dir]);
+        });
+    }
+    updateManualCameraButtonStates();
+
+    const camSpeedInput = document.getElementById('cam-speed');
+    const camSpeedDisplay = document.getElementById('val-cam-speed');
+    if (camSpeedInput) {
+        const inputId = 'cam-speed';
+        camSpeedInput.addEventListener('mousedown', () => activeControls.add(inputId));
+        camSpeedInput.addEventListener('touchstart', () => activeControls.add(inputId));
+        camSpeedInput.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+        camSpeedInput.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+        camSpeedInput.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+        camSpeedInput.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            manualCameraSpeed = value;
+            if (camSpeedDisplay) camSpeedDisplay.textContent = value.toFixed(2);
+        });
+    }
+
+    const manualColorAInput = document.getElementById('manual-color-a');
+    const manualColorBInput = document.getElementById('manual-color-b');
+    if (manualColorAInput) {
+        const parsed = hexToRgbTriplet(manualColorAInput.value);
+        if (parsed) manualColorA = parsed;
+        manualColorAInput.addEventListener('input', (e) => {
+            const next = hexToRgbTriplet(e.target.value);
+            if (next) manualColorA = next;
+        });
+    }
+    if (manualColorBInput) {
+        const parsed = hexToRgbTriplet(manualColorBInput.value);
+        if (parsed) manualColorB = parsed;
+        manualColorBInput.addEventListener('input', (e) => {
+            const next = hexToRgbTriplet(e.target.value);
+            if (next) manualColorB = next;
         });
     }
     
@@ -1077,6 +1320,7 @@ function applyNavigationModeUI() {
 
     if (isPolicy) {
         manualPickDragging = false;
+        resetManualCameraToggles();
     }
 
     modePolicyBtn.disabled = transportRunning;
@@ -1130,9 +1374,13 @@ function sendTransportAction(action) {
 
 function sendManualControls() {
     if (ws && wsConnected) {
+        const faders = manualFaders.slice(0, manualControlDim);
+        while (faders.length < manualControlDim) {
+            faders.push(0.5);
+        }
         ws.send(JSON.stringify({
             type: 'manual_controls',
-            faders: manualFaders,
+            faders,
         }));
     }
 }
@@ -1142,6 +1390,24 @@ function sendManualWindowSize(size) {
         ws.send(JSON.stringify({
             type: 'manual_window',
             size: Math.round(size),
+        }));
+    }
+}
+
+function sendManualBufferRatio(ratio) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'manual_buffer',
+            ratio: Number(ratio),
+        }));
+    }
+}
+
+function sendManualWander(k) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'manual_wander',
+            k: Math.max(1, Math.min(64, Math.round(Number(k)))),
         }));
     }
 }
@@ -1197,6 +1463,19 @@ function mouseWheel(event) {
     if (selectedNavigationMode === 'manual') {
         return true;
     }
+}
+
+function hexToRgbTriplet(hex) {
+    if (typeof hex !== 'string') return null;
+    const trimmed = hex.trim();
+    const match = /^#?([0-9a-fA-F]{6})$/.exec(trimmed);
+    if (!match) return null;
+    const value = match[1];
+    return [
+        parseInt(value.slice(0, 2), 16),
+        parseInt(value.slice(2, 4), 16),
+        parseInt(value.slice(4, 6), 16),
+    ];
 }
 
 // Utility: HSL to RGB conversion
