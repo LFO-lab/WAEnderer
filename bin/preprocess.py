@@ -3,9 +3,11 @@
 Preprocess audio files into a 64D latent corpus with geometry.
 Pipeline:
   - Encode audio with Stable Audio Open VAE
+  - Extract latent-rate timbre descriptors for manual navigation
   - Keep full latent trajectories per file (no mean pooling)
   - Normalize latents with global Z_mean/Z_std
   - Compute causal-context geometry/index over all frames
+  - Compute manual embedding control points (PCA or UMAP) + robust ranges
 """
 import os
 import argparse
@@ -14,6 +16,9 @@ import glob
 from typing import List, Dict
 
 import numpy as np
+import torch
+import torchaudio
+import torchaudio.functional as AF
 from tqdm import tqdm
 
 from stable_audio_wanderer.config import (
@@ -30,6 +35,380 @@ from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
+
+MANUAL_EMBED_DIM = 4
+MANUAL_PERCENTILE_LOW = 1.0
+MANUAL_PERCENTILE_HIGH = 99.0
+MANUAL_MFCC_TOTAL = 20
+MANUAL_MFCC_SLICE = slice(1, 14)  # Use MFCC 1..13 (exclude c0)
+MANUAL_N_FFT = 2048
+MANUAL_ROLLOFF = 0.85
+MANUAL_REDUCER_PCA = "pca"
+MANUAL_REDUCER_UMAP = "umap"
+
+MANUAL_DESCRIPTOR_NAMES = [
+    "mfcc_01",
+    "mfcc_02",
+    "mfcc_03",
+    "mfcc_04",
+    "mfcc_05",
+    "mfcc_06",
+    "mfcc_07",
+    "mfcc_08",
+    "mfcc_09",
+    "mfcc_10",
+    "mfcc_11",
+    "mfcc_12",
+    "mfcc_13",
+    "spec_centroid",
+    "spec_spread",
+    "spec_skew",
+    "spec_kurtosis",
+    "spec_rolloff",
+    "spec_flatness",
+    "spec_crest",
+    "chroma_00",
+    "chroma_01",
+    "chroma_02",
+    "chroma_03",
+    "chroma_04",
+    "chroma_05",
+    "chroma_06",
+    "chroma_07",
+    "chroma_08",
+    "chroma_09",
+    "chroma_10",
+    "chroma_11",
+    "pitch_log_hz",
+    "pitch_conf",
+    "loudness_log_rms",
+]
+
+GROUP_SLICES = {
+    "mfcc": slice(0, 13),
+    "spectral_shape": slice(13, 18),  # centroid/spread/skew/kurtosis/rolloff
+    "texture": slice(18, 20),  # flatness/crest
+    "chroma": slice(20, 32),
+    "pitch": slice(32, 34),
+    "loudness": slice(34, 35),
+}
+
+GROUP_WEIGHTS = {
+    "mfcc": 0.50,
+    "spectral_shape": 0.22,
+    "texture": 0.18,
+    "chroma": 0.02,
+    "pitch": 0.01,
+    "loudness": 0.07,
+}
+
+PITCH_CONF_INDEX = 33
+PITCH_CHROMA_SLICE = slice(20, 34)
+
+
+def _align_feature_frames(feature_seq: np.ndarray, target_frames: int) -> np.ndarray:
+    """
+    Trim/pad a [T, D] feature sequence so its time axis matches target_frames.
+    """
+    feat = np.asarray(feature_seq, dtype=np.float32)
+    if feat.ndim != 2:
+        raise ValueError(f"Expected feature_seq [T, D], got {feat.shape}")
+    target = int(max(1, target_frames))
+    if feat.shape[0] > target:
+        return feat[:target]
+    if feat.shape[0] < target:
+        if feat.shape[0] == 0:
+            return np.zeros((target, feat.shape[1]), dtype=np.float32)
+        pad = np.repeat(feat[-1:], target - feat.shape[0], axis=0)
+        return np.concatenate([feat, pad], axis=0)
+    return feat
+
+
+def _build_mfcc_transform(hop_length: int):
+    """
+    Build MFCC extractor using latent-aligned hop length.
+    """
+    return torchaudio.transforms.MFCC(
+        sample_rate=int(SR),
+        n_mfcc=int(MANUAL_MFCC_TOTAL),
+        melkwargs={
+            "n_fft": int(MANUAL_N_FFT),
+            "win_length": int(MANUAL_N_FFT),
+            "hop_length": int(hop_length),
+            "n_mels": 64,
+            "center": False,
+            "power": 2.0,
+        },
+    )
+
+
+def _build_chroma_matrix(n_fft: int, sr: int) -> np.ndarray:
+    n_bins = int(n_fft // 2 + 1)
+    freqs = np.linspace(0.0, float(sr) * 0.5, n_bins, dtype=np.float32)
+    chroma = np.zeros((12, n_bins), dtype=np.float32)
+    valid = freqs > 1.0
+    midi = np.zeros_like(freqs, dtype=np.float32)
+    midi[valid] = 69.0 + 12.0 * np.log2(freqs[valid] / 440.0)
+    pitch_class = np.round(midi).astype(np.int32) % 12
+    for idx in range(n_bins):
+        if valid[idx]:
+            chroma[pitch_class[idx], idx] = 1.0
+    return chroma
+
+
+def _robust_standardize(features: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    center = np.median(features, axis=0, keepdims=True).astype(np.float32)
+    mad = np.median(np.abs(features - center), axis=0, keepdims=True).astype(np.float32)
+    scale = np.maximum(1e-6, mad * 1.4826).astype(np.float32)
+    normalized = (features - center) / scale
+    normalized = np.clip(normalized, -8.0, 8.0).astype(np.float32)
+    return normalized, center.reshape(-1), scale.reshape(-1)
+
+
+def _descriptor_scales() -> np.ndarray:
+    scales = np.zeros((len(MANUAL_DESCRIPTOR_NAMES),), dtype=np.float32)
+    for group_name, slc in GROUP_SLICES.items():
+        n_dims = max(1, slc.stop - slc.start)
+        group_weight = float(GROUP_WEIGHTS[group_name])
+        scales[slc] = np.sqrt(group_weight / float(n_dims))
+    return scales
+
+
+def compute_latent_aligned_descriptors(
+    wav_stereo: np.ndarray,
+    target_frames: int,
+    mfcc_transform,
+    hop_length: int,
+) -> np.ndarray:
+    """
+    Compute descriptor stack aligned to latent frame rate.
+    Returns [target_frames, D].
+    """
+    wav = np.asarray(wav_stereo, dtype=np.float32)
+    if wav.ndim != 2:
+        raise ValueError(f"Expected stereo wav [T, C], got {wav.shape}")
+    mono = wav.mean(axis=1, dtype=np.float32)
+    min_len = int(MANUAL_N_FFT + 1)
+    if mono.shape[0] < min_len:
+        mono = np.pad(mono, (0, min_len - mono.shape[0]))
+    x = torch.from_numpy(mono[None, :]).to(dtype=torch.float32)
+    window = torch.hann_window(int(MANUAL_N_FFT), dtype=torch.float32)
+
+    with torch.inference_mode():
+        mfcc_full = (
+            mfcc_transform(x).squeeze(0).transpose(0, 1).cpu().numpy().astype(np.float32)
+        )
+        stft = torch.stft(
+            x.squeeze(0),
+            n_fft=int(MANUAL_N_FFT),
+            hop_length=int(hop_length),
+            win_length=int(MANUAL_N_FFT),
+            window=window,
+            center=False,
+            return_complex=True,
+        )
+        power = (stft.abs().pow(2.0) + 1e-8).cpu().numpy().astype(np.float32)
+        pitch_hz = AF.detect_pitch_frequency(
+            x,
+            sample_rate=int(SR),
+            frame_time=float(hop_length) / float(SR),
+            freq_low=50,
+            freq_high=2000,
+        )
+        pitch_hz = pitch_hz.squeeze(0).cpu().numpy().astype(np.float32)
+
+    mfcc = _align_feature_frames(mfcc_full[:, MANUAL_MFCC_SLICE], int(target_frames))
+    n_bins, n_frames_stft = power.shape
+    freqs = np.linspace(0.0, float(SR) * 0.5, n_bins, dtype=np.float32)[:, None]
+    p_sum = power.sum(axis=0, keepdims=True) + 1e-8
+    centroid = (freqs * power).sum(axis=0, keepdims=True) / p_sum
+    diff = freqs - centroid
+    spread = np.sqrt((power * (diff**2)).sum(axis=0, keepdims=True) / p_sum + 1e-8)
+    skew = (power * (diff**3)).sum(axis=0, keepdims=True) / (p_sum * (spread**3 + 1e-8))
+    kurtosis = (power * (diff**4)).sum(axis=0, keepdims=True) / (
+        p_sum * (spread**4 + 1e-8)
+    )
+    cumulative = np.cumsum(power, axis=0)
+    roll_threshold = float(MANUAL_ROLLOFF) * p_sum
+    roll_idx = np.argmax(cumulative >= roll_threshold, axis=0)
+    rolloff = freqs.reshape(-1)[roll_idx][None, :]
+    flatness = np.exp(np.mean(np.log(power + 1e-8), axis=0, keepdims=True)) / (
+        np.mean(power, axis=0, keepdims=True) + 1e-8
+    )
+    crest = np.max(power, axis=0, keepdims=True) / (np.mean(power, axis=0, keepdims=True) + 1e-8)
+
+    chroma_map = _build_chroma_matrix(int(MANUAL_N_FFT), int(SR))
+    chroma = chroma_map @ power
+    chroma = chroma / (np.sum(chroma, axis=0, keepdims=True) + 1e-8)
+
+    loudness = np.log1p(np.sqrt(np.mean(power, axis=0, keepdims=True) + 1e-8))
+    pitch_log = np.log1p(np.clip(pitch_hz, 0.0, None))[:, None]
+    pitch_conf = np.clip((crest.reshape(-1) - 1.0) / 20.0, 0.0, 1.0)[:, None]
+
+    spectral_block = np.concatenate(
+        [
+            centroid.T,
+            spread.T,
+            skew.T,
+            kurtosis.T,
+            rolloff.T,
+            flatness.T,
+            crest.T,
+        ],
+        axis=1,
+    ).astype(np.float32)
+    chroma_block = chroma.T.astype(np.float32)
+    loudness_block = loudness.T.astype(np.float32)
+
+    spectral_block = _align_feature_frames(spectral_block, int(target_frames))
+    chroma_block = _align_feature_frames(chroma_block, int(target_frames))
+    loudness_block = _align_feature_frames(loudness_block, int(target_frames))
+    pitch_log = _align_feature_frames(pitch_log.astype(np.float32), int(target_frames))
+    pitch_conf = _align_feature_frames(pitch_conf.astype(np.float32), int(target_frames))
+
+    descriptor = np.concatenate(
+        [mfcc, spectral_block, chroma_block, pitch_log, pitch_conf, loudness_block],
+        axis=1,
+    ).astype(np.float32)
+    expected_dim = len(MANUAL_DESCRIPTOR_NAMES)
+    if descriptor.shape[1] != expected_dim:
+        raise RuntimeError(
+            f"Descriptor dimension mismatch: {descriptor.shape[1]} vs expected {expected_dim}"
+        )
+    return descriptor
+
+
+def _compute_pca_embedding(
+    desc_weighted: np.ndarray,
+    embed_dim: int,
+) -> Dict[str, np.ndarray]:
+    pca_mean = desc_weighted.mean(axis=0).astype(np.float32)
+    centered = desc_weighted - pca_mean[None, :]
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+
+    desc_dim = int(desc_weighted.shape[1])
+    components = np.zeros((embed_dim, desc_dim), dtype=np.float32)
+    available = int(min(embed_dim, vt.shape[0], vt.shape[1]))
+    if available > 0:
+        components[:available] = vt[:available].astype(np.float32)
+
+    points = (centered @ components.T).astype(np.float32)
+    return {
+        "manual_embed_points": points,
+        "manual_pca_components": components,
+        "manual_pca_mean": pca_mean,
+    }
+
+
+def _compute_umap_embedding(
+    desc_weighted: np.ndarray,
+    embed_dim: int,
+    umap_n_neighbors: int,
+    umap_min_dist: float,
+    umap_metric: str,
+    umap_random_state: int,
+) -> Dict[str, np.ndarray]:
+    try:
+        import umap
+    except ImportError as exc:
+        raise RuntimeError(
+            "UMAP reducer requested but umap-learn is not installed. "
+            "Install with `pip install umap-learn`."
+        ) from exc
+
+    reducer = umap.UMAP(
+        n_components=int(embed_dim),
+        n_neighbors=int(max(2, umap_n_neighbors)),
+        min_dist=float(max(0.0, umap_min_dist)),
+        metric=str(umap_metric),
+        random_state=int(umap_random_state),
+        low_memory=True,
+    )
+    points = reducer.fit_transform(desc_weighted).astype(np.float32)
+    return {
+        "manual_embed_points": points,
+        "manual_umap_n_neighbors": np.array(int(max(2, umap_n_neighbors)), dtype=np.int32),
+        "manual_umap_min_dist": np.array(float(max(0.0, umap_min_dist)), dtype=np.float32),
+        "manual_umap_metric": np.array([str(umap_metric)], dtype=np.str_),
+        "manual_umap_random_state": np.array(int(umap_random_state), dtype=np.int32),
+    }
+
+
+def compute_manual_navigation_features(
+    descriptor_concat: np.ndarray,
+    reducer: str = MANUAL_REDUCER_PCA,
+    embed_dim: int = MANUAL_EMBED_DIM,
+    umap_n_neighbors: int = 30,
+    umap_min_dist: float = 0.05,
+    umap_metric: str = "euclidean",
+    umap_random_state: int = 42,
+) -> Dict[str, np.ndarray]:
+    """
+    Convert descriptor stack [N, D] to weighted timbre space + manual embedding controls.
+    """
+    desc = np.asarray(descriptor_concat, dtype=np.float32)
+    expected_dim = len(MANUAL_DESCRIPTOR_NAMES)
+    if desc.ndim != 2 or desc.shape[1] != expected_dim:
+        raise ValueError(f"Expected descriptor stack [N, {expected_dim}], got {desc.shape}")
+    if desc.shape[0] == 0:
+        raise ValueError("No descriptor frames available for manual feature extraction.")
+    if int(embed_dim) < 3 or int(embed_dim) > 4:
+        raise ValueError(
+            f"manual embedding dimension must be 3 or 4 for current controls, got {embed_dim}"
+        )
+
+    desc_norm, desc_center, desc_scale = _robust_standardize(desc)
+    scales = _descriptor_scales()
+    desc_weighted = (desc_norm * scales[None, :]).astype(np.float32)
+    pitch_conf = np.clip(desc[:, PITCH_CONF_INDEX], 0.0, 1.0).astype(np.float32)
+    pitch_gate = (pitch_conf**2).astype(np.float32)
+    desc_weighted[:, PITCH_CHROMA_SLICE] *= pitch_gate[:, None]
+
+    reducer_name = str(reducer).lower().strip()
+    if reducer_name == MANUAL_REDUCER_PCA:
+        embedding_arrays = _compute_pca_embedding(desc_weighted, int(embed_dim))
+    elif reducer_name == MANUAL_REDUCER_UMAP:
+        embedding_arrays = _compute_umap_embedding(
+            desc_weighted=desc_weighted,
+            embed_dim=int(embed_dim),
+            umap_n_neighbors=int(umap_n_neighbors),
+            umap_min_dist=float(umap_min_dist),
+            umap_metric=str(umap_metric),
+            umap_random_state=int(umap_random_state),
+        )
+    else:
+        raise ValueError(f"Unsupported manual reducer: {reducer_name}")
+
+    points = np.asarray(embedding_arrays["manual_embed_points"], dtype=np.float32)
+    p01 = np.percentile(points, MANUAL_PERCENTILE_LOW, axis=0).astype(np.float32)
+    p99 = np.percentile(points, MANUAL_PERCENTILE_HIGH, axis=0).astype(np.float32)
+    p99 = np.maximum(p99, p01 + 1e-6).astype(np.float32)
+
+    out = {
+        "manual_embed_points": points,
+        "manual_embed_dim": np.array(int(embed_dim), dtype=np.int32),
+        "manual_embed_reducer": np.array([reducer_name], dtype=np.str_),
+        "manual_desc_weighted": desc_weighted.astype(np.float32),
+        "manual_desc_center": desc_center.astype(np.float32),
+        "manual_desc_scale": desc_scale.astype(np.float32),
+        "manual_desc_scales": scales.astype(np.float32),
+        "manual_desc_names": np.array(MANUAL_DESCRIPTOR_NAMES, dtype=np.str_),
+        "manual_desc_dim": np.array(int(expected_dim), dtype=np.int32),
+        "manual_pitch_confidence_index": np.array(int(PITCH_CONF_INDEX), dtype=np.int32),
+        "manual_fader_p01": p01,
+        "manual_fader_p99": p99,
+        "manual_n_mfcc": np.array(int(MANUAL_MFCC_TOTAL), dtype=np.int32),
+        "manual_n_mfcc_used": np.array(
+            int(MANUAL_MFCC_SLICE.stop - MANUAL_MFCC_SLICE.start), dtype=np.int32
+        ),
+        "manual_percentile_low": np.array(float(MANUAL_PERCENTILE_LOW), dtype=np.float32),
+        "manual_percentile_high": np.array(float(MANUAL_PERCENTILE_HIGH), dtype=np.float32),
+    }
+    out.update(embedding_arrays)
+    # Backward-compat alias used by older code paths.
+    out["manual_pca_points"] = points
+    out["manual_pca_dim"] = np.array(int(embed_dim), dtype=np.int32)
+    return out
 
 
 def compute_window_targets(Z_concat: np.ndarray, meta: np.ndarray) -> np.ndarray:
@@ -165,6 +544,42 @@ def main():
                     help="Chunk overlap (seconds) for VAE encoding.")
     ap.add_argument("--compute_decoder_targets", action="store_true",
                     help="Compute decoder quality targets (expensive: 11 VAE decodes per segment).")
+    ap.add_argument(
+        "--manual_reducer",
+        choices=[MANUAL_REDUCER_PCA, MANUAL_REDUCER_UMAP],
+        default=MANUAL_REDUCER_PCA,
+        help="Reducer used for manual timbre embedding.",
+    )
+    ap.add_argument(
+        "--manual_embed_dim",
+        type=int,
+        default=MANUAL_EMBED_DIM,
+        help="Manual embedding dimensionality (3 or 4; dim4 maps to W/color axis).",
+    )
+    ap.add_argument(
+        "--manual_umap_n_neighbors",
+        type=int,
+        default=30,
+        help="UMAP n_neighbors (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_min_dist",
+        type=float,
+        default=0.05,
+        help="UMAP min_dist (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_metric",
+        type=str,
+        default="euclidean",
+        help="UMAP metric (used when --manual_reducer=umap).",
+    )
+    ap.add_argument(
+        "--manual_umap_random_state",
+        type=int,
+        default=42,
+        help="UMAP random state for deterministic embeddings.",
+    )
 
     args = ap.parse_args()
 
@@ -180,18 +595,30 @@ def main():
     ae = load_vae(args.pretrained)
 
     latent_sequences_raw: List[np.ndarray] = []
+    manual_descriptor_sequences: List[np.ndarray] = []
     encode_chunk_sec = float(args.encode_chunk_sec)
     encode_overlap_sec = float(args.encode_chunk_overlap_sec)
     chunk_sec = encode_chunk_sec if encode_chunk_sec > 0.0 else None
+    latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
+    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
 
-    print("Encoding audio with VAE...")
+    print("Encoding audio with VAE + extracting latent-aligned timbre descriptors...")
     for fid, p in enumerate(tqdm(paths)):
         wav = load_wav(p)
         z_full = encode_full(ae, wav, chunk_sec=chunk_sec, overlap_sec=encode_overlap_sec).astype(np.float32)
         latent_sequences_raw.append(np.ascontiguousarray(z_full))
+        descriptor_seq = compute_latent_aligned_descriptors(
+            wav_stereo=wav,
+            target_frames=z_full.shape[0],
+            mfcc_transform=mfcc_transform,
+            hop_length=latent_hop,
+        )
+        manual_descriptor_sequences.append(np.ascontiguousarray(descriptor_seq))
 
     if not latent_sequences_raw:
         raise RuntimeError("No latent sequences were extracted.")
+    if len(manual_descriptor_sequences) != len(latent_sequences_raw):
+        raise RuntimeError("Manual descriptor extraction count mismatch.")
 
     paths_arr = np.array(paths)
 
@@ -219,10 +646,41 @@ def main():
         file_offsets.append(file_offsets[-1] + T_lat)
 
     Z_concat = np.concatenate(normalized_sequences, axis=0).astype(np.float32)
+    descriptor_concat = np.concatenate(manual_descriptor_sequences, axis=0).astype(np.float32)
     file_offsets = np.asarray(file_offsets, dtype=np.int64)
     meta = np.asarray(meta_list, dtype=np.int32)
     frame_file_ids = meta[:, 0].astype(np.int32)
     frame_t = meta[:, 1].astype(np.int32)
+
+    if descriptor_concat.shape[0] != Z_concat.shape[0]:
+        raise RuntimeError(
+            f"Manual descriptor frame count mismatch: {descriptor_concat.shape[0]} vs latent frames {Z_concat.shape[0]}"
+        )
+
+    print(
+        "Computing manual navigation embedding features "
+        f"(reducer={args.manual_reducer}, dim={int(args.manual_embed_dim)})..."
+    )
+    manual_arrays = compute_manual_navigation_features(
+        descriptor_concat,
+        reducer=str(args.manual_reducer),
+        embed_dim=int(args.manual_embed_dim),
+        umap_n_neighbors=int(args.manual_umap_n_neighbors),
+        umap_min_dist=float(args.manual_umap_min_dist),
+        umap_metric=str(args.manual_umap_metric),
+        umap_random_state=int(args.manual_umap_random_state),
+    )
+    p01 = manual_arrays["manual_fader_p01"]
+    p99 = manual_arrays["manual_fader_p99"]
+    desc_dim = int(manual_arrays["manual_desc_dim"])
+    reducer_name = str(np.asarray(manual_arrays["manual_embed_reducer"]).reshape(-1)[0])
+    print(
+        "  Manual embedding points:",
+        manual_arrays["manual_embed_points"].shape,
+        f"reducer={reducer_name}",
+        f"desc_dim={desc_dim}",
+        f"(fader p01 mean={p01.mean():.3f}, p99 mean={p99.mean():.3f})",
+    )
 
     print(f"Computing latent geometry (k={args.latent_nav_k})...")
     geometry = compute_latent_geometry(
@@ -283,6 +741,7 @@ def main():
         context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
         window_targets_log2=window_targets_log2,
         **geometry_arrays,
+        **manual_arrays,
         **extra_arrays,
     )
 

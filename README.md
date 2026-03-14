@@ -5,10 +5,12 @@ A real-time 64-dimensional latent space navigation instrument for exploring audi
 ## Features
 
 - **64D Latent Navigation** - Explore audio corpora in continuous latent space
+- **Manual Navigation Mode** - 4-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
 - **Learned Navigation Policy** - GRU network with 6 expressive control dimensions
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
 - **Real-Time VAE Decoding** - Overlap-add synthesis with adaptive window sizing
 - **WebSocket Visualization** - p5.js interface showing trajectory, controls, and corpus structure
+- **Explicit Transport** - Choose mode, then Start/Stop decoding from the web UI
 - **OSC Control** - Full parameter control for integration with external controllers
 
 ## Installation
@@ -24,7 +26,7 @@ pip install -r requirements.txt
 | Category | Packages |
 |----------|----------|
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
-| Navigation | `scikit-learn`, `scipy`, `faiss-cpu` |
+| Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
 | Runtime | `sounddevice`, `python-osc`, `websockets` |
 | VAE | `diffusers`, `transformers`, `accelerate`, `safetensors` |
 
@@ -32,7 +34,7 @@ pip install -r requirements.txt
 
 ### 1. Preprocess
 
-Encode audio files into a geometry-enabled latent corpus.
+Encode audio files into a geometry-enabled latent corpus and manual-navigation feature space.
 
 ```bash
 python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
@@ -45,12 +47,29 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 | `--seg_sec` | 0.2 | Segment duration in seconds |
 | `--hop_sec` | 0.05 | Hop duration in seconds |
 | `--latent_nav_k` | 32 | k-NN neighbors for geometry |
+| `--encode_chunk_sec` | 60.0 | VAE encode chunk size in seconds (0 disables chunking) |
+| `--encode_chunk_overlap_sec` | 1.0 | VAE encode chunk overlap in seconds |
+| `--manual_reducer` | `pca` | Manual embedding reducer (`pca` or `umap`) |
+| `--manual_embed_dim` | 4 | Manual embedding dimensionality (`3` or `4`; dim4 maps to W/color axis) |
+| `--manual_umap_n_neighbors` | 30 | UMAP `n_neighbors` (when reducer is `umap`) |
+| `--manual_umap_min_dist` | 0.05 | UMAP `min_dist` (when reducer is `umap`) |
+| `--manual_umap_metric` | `euclidean` | UMAP metric |
+| `--manual_umap_random_state` | 42 | UMAP random seed |
 
 Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
 
+`corpus.npz` now includes manual-navigation fields:
+- `manual_embed_points` `[N, 3 or 4]`
+- `manual_embed_reducer` `["pca"|"umap"]`
+- `manual_pca_components` `[embed_dim, D_desc]` (PCA mode only)
+- `manual_pca_mean` `[D_desc]` (PCA mode only)
+- `manual_desc_weighted` `[N, D_desc]`
+- `manual_fader_p01` `[embed_dim]`
+- `manual_fader_p99` `[embed_dim]`
+
 ### 2. Train Policy
 
-Train a GRU navigation policy on the corpus.
+Train a GRU navigation policy, manual KD-tree artifact, or both.
 
 ```bash
 python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -59,6 +78,9 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
+| `--navigation_mode` | `policy` | `policy`, `manual`, or `both` |
+| `--manual_out_path` | `<corpus_dir>/manual_navigation.npz` | Output path for manual artifact |
+| `--manual_kdtree_leafsize` | 32 | Leaf size used when fitting manual `cKDTree` |
 | `--epochs` | 2000 | Training epochs |
 | `--batch_size` | 64 | Batch size |
 | `--lr` | 1e-3 | Learning rate |
@@ -66,11 +88,14 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--layers` | 2 | GRU layers |
 | `--seq_len` | 32 | Training sequence length |
 
-Output: `corpus/.../latent_policy_*.pt`
+Outputs:
+- Policy mode: `corpus/.../latent_policy_*.pt`
+- Manual mode: `corpus/.../manual_navigation.npz`
+- Both mode: both artifacts
 
 ### 3. Perform
 
-Real-time navigation with OSC control and WebSocket visualization.
+Real-time decoding with selectable policy/manual navigation, OSC control, and WebSocket visualization.
 
 ```bash
 python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -79,15 +104,29 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
-| `--policy_path` | auto-detect | Path to policy checkpoint |
+| `--manual_artifact` | `<corpus_dir>/manual_navigation.npz` | Manual navigation artifact path (required at startup) |
+| `--initial_navigation_mode` | `policy` | Initial selected mode (`policy` or `manual`) |
+| `--manual_wander_k` | 1 | Manual timbre-neighbor wander neighborhood size (`1` disables) |
+| `--manual_wander_speed` | 0.0001 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
+| `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
+| `--manual_refine_k` | 16 | Refined descriptor-nearest subset size for manual retrieval/wander |
+| `--manual_desc_interp_k` | 8 | Descriptor interpolation neighbors (mainly for UMAP query rerank) |
+| `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,64]` per chunk) |
+| `--manual_buffer_ratio` | 0.15 | Manual target buffer ratio vs current chunk duration (higher = safer, higher latency) |
+| `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
+| `--autostart` | `false` | Start transport immediately on launch |
+| `--policy_path` | optional | Path to policy checkpoint |
 | `--osc_port` | 9000 | OSC server port |
+| `--osc_debug` | `false` | Log incoming OSC messages, including unmapped paths |
 | `--ws_port` | 8765 | WebSocket server port |
 | `--output_gain` | 1.0 | Initial output gain |
 | `--smoothing` | 0.1 | Crossfade smoothing |
-| `--window_size` | 1 | Decode window size (frames) |
-| `--adaptive_window` | false | Use policy-predicted window sizes |
+| `--window_size` | 2 | Initial policy decode window size (frames) |
+| `--fixed_window` | false | Disable adaptive policy window sizing |
+| `--boundary_window_updates` | false | Apply adaptive window changes only on boundaries |
 
-Open `web/index.html` in a browser to view the visualization.
+Open `web/index.html` in a browser, choose a navigation tab, and press **Start Decode**.
+`perform.py` exits early if `manual_navigation.npz` is missing or invalid.
 
 ## Architecture
 
@@ -172,11 +211,29 @@ Audio Files
 /cursor x [y [z ...]]   Set cursor position (up to 64D)
 ```
 
+**Manual Controls** (0.0 - 1.0):
+```
+/manual/x              Set manual X axis
+/manual/y              Set manual Y axis
+/manual/z              Set manual Z axis
+/manual/w              Set manual W axis
+/manual/wander_k k     Set manual wander neighborhood size (1..64)
+/manual/xyz x y z      Set all three manual axes at once
+/manual/xyzw x y z w   Set all four manual axes at once
+```
+
+`/cursor` routing note:
+- In `policy` mode, `/cursor ...` controls latent cursor as before.
+- In `manual` mode, `/cursor ...` is routed to manual controls (`X/Y/Z[/W]`, up to control dim).
+
 ### Web UI
 
 The web interface (`web/index.html`) provides:
-- Real-time 2D projection of corpus and trajectory
-- Sliders for all 6 navigation controls
+- Real-time policy 2D projection and manual 3D corpus view
+- Policy/manual mode tabs with transport Start/Stop buttons
+- Sliders for all 6 policy navigation controls
+- 4 manual XYZW controls for timbre-space navigation, plus manual wander-k
+- Manual 3D camera nudges (left/right/over/under/forward/backward)
 - Decoder gain and smoothing controls
 - Visualization options (point size, trail length, heatmap)
 - Connection status and position readout
@@ -187,18 +244,26 @@ The `corpus.npz` file contains:
 
 | Array | Shape | Description |
 |-------|-------|-------------|
-| `GG` | `[N, 64]` | L2-normalized segment latents |
+| `Z_concat` | `[N, 64]` | Normalized frame-level latents |
+| `file_offsets` | `[num_files + 1]` | Frame offsets per source file |
 | `meta` | `[N, 3]` | (file_id, t_lat, win_lat) per segment |
 | `paths` | `[M]` | Source audio file paths |
 | `Z_mean`, `Z_std` | `[64]` | Denormalization statistics |
-| `window_targets` | `[N]` | Adaptive window class (0-4) |
+| `window_targets_log2` | `[N]` | Adaptive policy window targets in log2(frame) space |
 | `geom_knn_indices` | `[N, K]` | Neighbor indices |
 | `geom_knn_distances` | `[N, K]` | Neighbor distances |
 | `geom_local_sigma` | `[N]` | Local density scale |
 | `geom_pca_components` | `[D, 64]` | Full-rank PCA matrix |
 | `geom_pca_mean` | `[64]` | PCA centering mean |
+| `manual_embed_points` | `[N, 3 or 4]` | Manual navigation control coordinates (descriptor embedding) |
+| `manual_embed_reducer` | `["pca"|"umap"]` | Embedding method used for manual space |
+| `manual_pca_components` | `[embed_dim, D_desc]` | PCA basis over weighted descriptor space (PCA reducer only) |
+| `manual_pca_mean` | `[D_desc]` | PCA centering mean in weighted descriptor space (PCA reducer only) |
+| `manual_desc_weighted` | `[N, D_desc]` | Full weighted timbre descriptor vectors for two-stage reranking |
+| `manual_fader_p01` | `[embed_dim]` | Per-dimension 1st percentile range floor |
+| `manual_fader_p99` | `[embed_dim]` | Per-dimension 99th percentile range ceiling |
 
-Geometry fields (`geom_*`) are required. Legacy corpora without geometry are not supported.
+Geometry fields (`geom_*`) and manual fields (`manual_*`) are required for full dual-mode performance.
 
 ## Configuration
 
@@ -254,6 +319,7 @@ stable-audio-wanderer/
 │   │   └── decoder.py     # VAE decoding
 │   └── runtime/
 │       ├── player.py          # Navigation engine
+│       ├── manual_player.py   # 3-axis manual timbre embedding engine
 │       ├── manifold.py        # Manifold constraint
 │       ├── decoder_player.py  # Audio streaming
 │       ├── osc_server.py      # OSC control
