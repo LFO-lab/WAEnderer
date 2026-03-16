@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Real-time decoding with selectable policy/manual navigation modes.
+Real-time decoding with selectable manual/random/reorganized navigation modes.
 """
 
 import os
@@ -54,15 +54,29 @@ def smooth_window_log2(
 
 def load_navigation_engine(
     data: dict,
-    policy_path: str = None,
-    policy_temperature: float = 1.0,
-    policy_sample: bool = True,
-    control_width: float = 0.5,
-    control_energy: float = 0.5,
-    control_gravity: float = 0.5,
-    control_memory: float = 0.0,
-    control_coherence: float = 0.0,
-    control_exploration: float = 0.0,
+    random_model_path: str = None,
+    random_temperature: float = 1.0,
+    random_sample: bool = True,
+    desc_weighted: np.ndarray = None,
+    random_timbre_swap: bool = True,
+    random_recompose: bool = True,
+    random_phrase_scale: float = 0.40,
+    random_jump_rate: float = 0.55,
+    random_timbre_lock: float = 0.55,
+    random_drift: float = 0.5,
+    random_repeat_avoid: float = 0.75,
+    random_crossfile: float = 0.70,
+    reorganized_enabled: bool = False,
+    reorganized_artifact: dict = None,
+    reorganized_model_path: str = None,
+    reorganized_temperature: float = 1.0,
+    reorganized_morph_len: float = 0.50,
+    reorganized_jump_rate: float = 0.60,
+    reorganized_timbre_lock: float = 0.45,
+    reorganized_evolution: float = 0.60,
+    reorganized_novelty: float = 0.50,
+    reorganized_crossfile: float = 0.70,
+    policy_variant: str = "random",
 ):
     """Factory function to create the LatentNavigationEngine."""
     geometry = load_geometry_from_dict(data)
@@ -81,15 +95,29 @@ def load_navigation_engine(
         meta=meta,
         geometry=geometry,
         file_offsets=file_offsets,
-        policy_path=policy_path,
-        policy_temperature=policy_temperature,
-        policy_sample=policy_sample,
-        control_width=control_width,
-        control_energy=control_energy,
-        control_gravity=control_gravity,
-        control_memory=control_memory,
-        control_coherence=control_coherence,
-        control_exploration=control_exploration,
+        desc_weighted=desc_weighted,
+        policy_path=random_model_path,
+        policy_temperature=random_temperature,
+        policy_sample=random_sample,
+        policy_timbre_swap_enabled=random_timbre_swap,
+        policy_recompose_enabled=random_recompose,
+        control_phrase_scale=random_phrase_scale,
+        control_jump_rate=random_jump_rate,
+        control_timbre_lock=random_timbre_lock,
+        control_drift=random_drift,
+        control_repeat_avoid=random_repeat_avoid,
+        control_crossfile=random_crossfile,
+        control_morph_len=reorganized_morph_len,
+        control_reorg_jump_rate=reorganized_jump_rate,
+        control_reorg_timbre_lock=reorganized_timbre_lock,
+        control_evolution=reorganized_evolution,
+        control_novelty=reorganized_novelty,
+        control_reorg_crossfile=reorganized_crossfile,
+        policy_v2_enabled=reorganized_enabled,
+        v2_artifact=reorganized_artifact,
+        policy_v2_model_path=reorganized_model_path,
+        policy_v2_temperature=reorganized_temperature,
+        policy_variant=policy_variant,
     )
 
 
@@ -234,6 +262,141 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     }
 
 
+def load_policy_v2_artifact(path: str, expected_frames: int) -> dict:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Policy V2 artifact not found: {path}")
+
+    artifact = np.load(path, allow_pickle=True)
+    required = [
+        "unit_start_idx",
+        "unit_end_idx",
+        "unit_file_id",
+        "unit_len",
+        "unit_entry_desc",
+        "unit_exit_desc",
+        "unit_delta_desc",
+        "frame_to_unit",
+        "unit_graph_neighbors",
+        "unit_graph_scores",
+    ]
+    missing = [k for k in required if k not in artifact]
+    if missing:
+        raise RuntimeError(f"Policy V2 artifact missing keys: {missing}")
+
+    unit_start = np.asarray(artifact["unit_start_idx"], dtype=np.int32).reshape(-1)
+    unit_end = np.asarray(artifact["unit_end_idx"], dtype=np.int32).reshape(-1)
+    unit_file = np.asarray(artifact["unit_file_id"], dtype=np.int32).reshape(-1)
+    unit_len = np.asarray(artifact["unit_len"], dtype=np.int32).reshape(-1)
+    unit_entry = np.asarray(artifact["unit_entry_desc"], dtype=np.float32)
+    unit_exit = np.asarray(artifact["unit_exit_desc"], dtype=np.float32)
+    unit_delta = np.asarray(artifact["unit_delta_desc"], dtype=np.float32)
+    frame_to_unit = np.asarray(artifact["frame_to_unit"], dtype=np.int32).reshape(-1)
+    graph_neighbors = np.asarray(artifact["unit_graph_neighbors"], dtype=np.int32)
+    graph_scores = np.asarray(artifact["unit_graph_scores"], dtype=np.float32)
+
+    n_units = int(unit_start.shape[0])
+    if n_units <= 0:
+        raise RuntimeError("Policy V2 artifact has zero units.")
+    if (
+        unit_end.shape[0] != n_units
+        or unit_file.shape[0] != n_units
+        or unit_len.shape[0] != n_units
+        or unit_entry.shape[0] != n_units
+        or unit_exit.shape[0] != n_units
+        or unit_delta.shape[0] != n_units
+    ):
+        raise RuntimeError("Policy V2 unit arrays are not aligned.")
+    if frame_to_unit.shape[0] != int(expected_frames):
+        raise RuntimeError(
+            "Policy V2 frame_to_unit length mismatch: "
+            f"{frame_to_unit.shape[0]} vs expected {expected_frames}"
+        )
+    if graph_neighbors.shape[0] != n_units or graph_scores.shape != graph_neighbors.shape:
+        raise RuntimeError("Policy V2 graph arrays are invalid.")
+    if np.any(unit_start < 0) or np.any(unit_end <= unit_start):
+        raise RuntimeError("Policy V2 unit boundaries contain invalid ranges.")
+    if np.any(unit_end > int(expected_frames)):
+        raise RuntimeError("Policy V2 unit_end_idx exceeds corpus frame count.")
+    if np.any(frame_to_unit < 0) or np.any(frame_to_unit >= n_units):
+        raise RuntimeError("Policy V2 frame_to_unit contains invalid unit ids.")
+    if unit_entry.ndim != 2 or unit_exit.ndim != 2 or unit_delta.ndim != 2:
+        raise RuntimeError("Policy V2 unit descriptor arrays must be rank-2.")
+    if not (
+        unit_entry.shape[1] == unit_exit.shape[1] == unit_delta.shape[1]
+        and unit_entry.shape[1] > 0
+    ):
+        raise RuntimeError("Policy V2 descriptor dimensionality is invalid.")
+
+    out = {
+        "unit_start_idx": unit_start.astype(np.int32),
+        "unit_end_idx": unit_end.astype(np.int32),
+        "unit_file_id": unit_file.astype(np.int32),
+        "unit_len": unit_len.astype(np.int32),
+        "unit_entry_desc": unit_entry.astype(np.float32),
+        "unit_exit_desc": unit_exit.astype(np.float32),
+        "unit_delta_desc": unit_delta.astype(np.float32),
+        "frame_to_unit": frame_to_unit.astype(np.int32),
+        "unit_graph_neighbors": graph_neighbors.astype(np.int32),
+        "unit_graph_scores": graph_scores.astype(np.float32),
+    }
+    for key in ("unit_min_frames", "unit_max_frames", "unit_target_frames"):
+        if key in artifact:
+            out[key] = np.asarray(artifact[key], dtype=np.int32).reshape(-1)
+    return out
+
+
+def _resolve_manual_artifact_path(corpus_dir: str, arg_path: Optional[str]) -> str:
+    if arg_path is not None:
+        resolved = os.path.abspath(arg_path)
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"Manual navigation artifact not found: {resolved}")
+        return resolved
+
+    default_path = os.path.join(corpus_dir, "manual_navigation.npz")
+    if os.path.exists(default_path):
+        return default_path
+
+    try:
+        return find_latest(corpus_dir, "manual_navigation*.npz")
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "Manual navigation artifact not found. Expected "
+            f"'{default_path}' or a matching manual_navigation*.npz in {corpus_dir}."
+        )
+
+
+def _resolve_optional_model_path(
+    corpus_dir: str, arg_path: Optional[str], pattern: str
+) -> Optional[str]:
+    if arg_path is not None:
+        resolved = os.path.abspath(arg_path)
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"Model checkpoint not found: {resolved}")
+        return resolved
+    try:
+        return find_latest(corpus_dir, pattern)
+    except FileNotFoundError:
+        return None
+
+
+def _resolve_reorganized_units_path(
+    corpus_dir: str, arg_path: Optional[str]
+) -> Optional[str]:
+    if arg_path is not None:
+        resolved = os.path.abspath(arg_path)
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"Reorganized units artifact not found: {resolved}")
+        return resolved
+
+    default_path = os.path.join(corpus_dir, "policy_v2_units.npz")
+    if os.path.exists(default_path):
+        return default_path
+    try:
+        return find_latest(corpus_dir, "policy_v2_units*.npz")
+    except FileNotFoundError:
+        return None
+
+
 class TransportController:
     """Owns runtime transport state for start/stop and mode selection."""
 
@@ -315,8 +478,10 @@ class TransportController:
 
     def set_mode(self, mode: str) -> Tuple[bool, str]:
         mode = str(mode)
-        if mode not in ("policy", "manual"):
+        if mode not in ("random", "reorganized", "manual"):
             return False, f"invalid mode '{mode}'"
+        if mode == "reorganized" and not self.nav.has_variant("reorganized"):
+            return False, "reorganized mode unavailable (missing units artifact)"
         with self._lock:
             if self._running.is_set():
                 return False, "cannot change mode while transport is running"
@@ -453,15 +618,20 @@ class TransportController:
             self._active_mode = mode
 
         self.decoder.reset_buffers()
-        if mode == "policy":
-            self._start_policy()
-        else:
+        if mode == "manual":
             self._start_manual()
+        else:
+            if not self.nav.has_variant(mode):
+                return False, f"{mode} mode unavailable (missing artifact/model inputs)"
+            self._start_navigation_variant(mode)
 
         return True, f"transport started ({mode})"
 
-    def _start_policy(self):
-        print("[info] Starting transport (policy mode)")
+    def _start_navigation_variant(self, variant: str):
+        variant_name = str(variant)
+        if not self.nav.set_policy_variant(variant_name):
+            raise RuntimeError(f"Unknown navigation variant: {variant_name}")
+        print(f"[info] Starting transport ({variant_name} mode)")
         self._latent_queue = queue.Queue(maxsize=self.POLICY_QUEUE_SIZE)
         self._runtime_stats["decode_ms_last"] = 0.0
         self._runtime_stats["decode_ms_sum"] = 0.0
@@ -480,7 +650,7 @@ class TransportController:
             )
         else:
             print(
-                f"[info] Adaptive window sizing (initial={window_size}, policy-predicted)"
+                f"[info] Adaptive window sizing (initial={window_size}, model-predicted)"
             )
 
         # Pre-buffer: fill audio buffer with ~1 second of audio before starting stream.
@@ -490,7 +660,7 @@ class TransportController:
 
         frame_buffer = [self.nav.step() for _ in range(window_size)]
         z_batch_norm = self.manifold.generate_batch(
-            frame_buffer, exploration=self.nav.ctrl_exploration
+            frame_buffer, exploration=self.nav.get_active_jump_rate(variant=variant_name)
         )
         z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
         audio = decode_latents(self.vae, z_batch_raw)
@@ -501,7 +671,7 @@ class TransportController:
             new_frames = [self.nav.step() for _ in range(hop_size)]
             full_window = prev_half + new_frames
             z_batch_norm = self.manifold.generate_batch(
-                full_window, exploration=self.nav.ctrl_exploration
+                full_window, exploration=self.nav.get_active_jump_rate(variant=variant_name)
             )
             z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
             audio = decode_latents(self.vae, z_batch_raw)
@@ -516,7 +686,7 @@ class TransportController:
             new_frames = [self.nav.step() for _ in range(hop_size)]
             full_window = prev_half + new_frames
             z_batch_norm = self.manifold.generate_batch(
-                full_window, exploration=self.nav.ctrl_exploration
+                full_window, exploration=self.nav.get_active_jump_rate(variant=variant_name)
             )
             z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
             self._latent_queue.put(z_batch_raw)
@@ -528,6 +698,7 @@ class TransportController:
             "current_window_log2": math.log2(max(2, window_size)),
             "window_size": int(window_size),
             "hop_size": int(hop_size),
+            "variant": variant_name,
         }
 
         self._start_threads(nav_loop=self._policy_nav_loop)
@@ -682,7 +853,8 @@ class TransportController:
         nav_mode = "fixed" if self.args.fixed_window else "adaptive"
         if (not self.args.fixed_window) and self.args.boundary_window_updates:
             nav_mode = "adaptive-boundary"
-        print(f"[info] Navigation loop started ({nav_mode} mode)")
+        variant = str(self._policy_state.get("variant", self._active_mode))
+        print(f"[info] Navigation loop started ({variant}, {nav_mode})")
 
         frame_buffer = []
         prev_half = list(self._policy_state["prev_half"])
@@ -731,7 +903,7 @@ class TransportController:
                     full_window = prev_half + frame_buffer[:current_hop]
                     z_batch_norm = self.manifold.generate_batch(
                         full_window,
-                        exploration=self.nav.ctrl_exploration,
+                        exploration=self.nav.get_active_jump_rate(variant=variant),
                     )
                     z_batch_raw = z_batch_norm * self.Z_std + self.Z_mean
 
@@ -943,6 +1115,18 @@ class TransportController:
                 print(f"[ws] Unknown transport action: {action}")
                 return False
 
+        if msg_type in ("random_control", "control"):
+            controls = data.get("controls", {})
+            if isinstance(controls, dict):
+                self.nav.set_random_controls(**controls)
+            return True
+
+        if msg_type == "reorganized_control":
+            controls = data.get("controls", {})
+            if isinstance(controls, dict):
+                self.nav.set_reorganized_controls(**controls)
+            return True
+
         if msg_type == "manual_controls":
             faders = data.get("faders", [])
             ok, msg = self.set_manual_faders(faders)
@@ -977,7 +1161,7 @@ class TransportController:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Real-time decoding with selectable policy/manual navigation."
+        description="Real-time decoding with selectable manual/random/reorganized navigation."
     )
     ap.add_argument(
         "--corpus_dir", required=True, help="Directory containing corpus.npz"
@@ -1004,8 +1188,8 @@ def main():
     )
     ap.add_argument(
         "--initial_navigation_mode",
-        choices=["policy", "manual"],
-        default="policy",
+        choices=["manual", "random", "reorganized"],
+        default="random",
         help="Navigation mode selected at startup.",
     )
     ap.add_argument(
@@ -1092,62 +1276,132 @@ def main():
     ap.add_argument("--manifold_n_global", type=int, default=32)
     ap.add_argument("--manifold_sparse_quantile", type=float, default=0.75)
 
-    # Policy controls.
+    # Random model/runtime arguments.
     ap.add_argument(
-        "--policy_path", default=None, help="Checkpoint .pt for navigation policy."
+        "--random_model_path",
+        default=None,
+        help="Random mode checkpoint (.pt). Defaults to latest latent_policy_*.pt in --corpus_dir.",
     )
     ap.add_argument(
-        "--policy_temperature",
+        "--random_temperature",
         type=float,
         default=1.0,
-        help="Base temperature for policy sampling.",
+        help="Base temperature for random mode policy sampling.",
     )
     ap.add_argument(
-        "--policy_sample",
+        "--random_sample",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Stochastically sample from policy (default: yes).",
+        help="Stochastically sample in random mode (default: yes).",
+    )
+    ap.add_argument(
+        "--random_timbre_swap",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable corpus-locked timbre-aware swapping in random mode.",
+    )
+    ap.add_argument(
+        "--random_recompose",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable short-unit recomposition in random mode.",
     )
 
-    # Control parameters (policy mode).
+    # Reorganized model/runtime arguments.
     ap.add_argument(
-        "--ctrl_width",
-        type=float,
-        default=0.5,
-        help="Initial width control (0-1): temperature scaling.",
+        "--reorganized_units_path",
+        default=None,
+        help="Path to policy_v2_units.npz (default: <corpus_dir>/policy_v2_units.npz).",
     )
     ap.add_argument(
-        "--ctrl_energy",
-        type=float,
-        default=0.5,
-        help="Initial energy control (0-1): displacement magnitude.",
+        "--reorganized_model_path",
+        default=None,
+        help="Optional trained reorganized transition model (.pt). Defaults to latest policy_v2_*.pt in --corpus_dir.",
     )
     ap.add_argument(
-        "--ctrl_gravity",
+        "--reorganized_temperature",
         type=float,
-        default=0.5,
-        help="Initial gravity control (0-1): forward/backward bias.",
-    )
-    ap.add_argument(
-        "--ctrl_memory",
-        type=float,
-        default=0.0,
-        help="Initial memory control (0-1): pull toward recent positions.",
-    )
-    ap.add_argument(
-        "--ctrl_coherence",
-        type=float,
-        default=0.0,
-        help="Initial coherence control (0-1): stay within same file.",
-    )
-    ap.add_argument(
-        "--ctrl_exploration",
-        type=float,
-        default=0.0,
-        help="Initial exploration control (0-1): entropy injection.",
+        default=1.0,
+        help="Sampling temperature for reorganized unit selection.",
     )
 
-    # Window size for policy batched decoding.
+    # Random control parameters.
+    ap.add_argument(
+        "--ctrl_phrase_scale",
+        type=float,
+        default=0.40,
+        help="Expected morphology phrase scale (0=short, 1=long, variable duration).",
+    )
+    ap.add_argument(
+        "--ctrl_jump_rate",
+        type=float,
+        default=0.55,
+        help="Recomposition jump rate (0-1).",
+    )
+    ap.add_argument(
+        "--ctrl_timbre_lock",
+        type=float,
+        default=0.55,
+        help="Timbre lock strength (0-1).",
+    )
+    ap.add_argument(
+        "--ctrl_drift",
+        type=float,
+        default=0.50,
+        help="Timbre target drift (0-1).",
+    )
+    ap.add_argument(
+        "--ctrl_repeat_avoid",
+        type=float,
+        default=0.75,
+        help="Anti-repeat/anti-serial pressure (0-1).",
+    )
+    ap.add_argument(
+        "--ctrl_crossfile",
+        type=float,
+        default=0.70,
+        help="Cross-file allowance (0-1).",
+    )
+
+    # Reorganized control parameters.
+    ap.add_argument(
+        "--ctrl_morph_len",
+        type=float,
+        default=0.50,
+        help="Relative morphology unit length target in reorganized mode.",
+    )
+    ap.add_argument(
+        "--ctrl_reorg_jump_rate",
+        type=float,
+        default=0.60,
+        help="Reorganized mode candidate-pool breadth.",
+    )
+    ap.add_argument(
+        "--ctrl_reorg_timbre_lock",
+        type=float,
+        default=0.45,
+        help="Reorganized mode entry/exit timbre continuity strength.",
+    )
+    ap.add_argument(
+        "--ctrl_evolution",
+        type=float,
+        default=0.60,
+        help="Reorganized mode evolution pressure over unit timbre trajectory.",
+    )
+    ap.add_argument(
+        "--ctrl_novelty",
+        type=float,
+        default=0.50,
+        help="Reorganized mode anti-repeat + stochastic novelty pressure.",
+    )
+    ap.add_argument(
+        "--ctrl_reorg_crossfile",
+        type=float,
+        default=0.70,
+        help="Reorganized mode cross-file allowance.",
+    )
+
+    # Window size for random/reorganized batched decoding.
     ap.add_argument(
         "--window_size",
         type=int,
@@ -1181,25 +1435,82 @@ def main():
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
 
-    manual_artifact_path = args.manual_artifact
-    if manual_artifact_path is None:
-        manual_artifact_path = os.path.join(args.corpus_dir, "manual_navigation.npz")
+    manual_artifact_path = _resolve_manual_artifact_path(
+        args.corpus_dir, args.manual_artifact
+    )
     manual_data = load_manual_artifact(
         manual_artifact_path, expected_frames=Z_concat.shape[0]
     )
     print(f"[info] Using manual artifact: {manual_artifact_path}")
 
+    random_model_path = _resolve_optional_model_path(
+        args.corpus_dir, args.random_model_path, "latent_policy_*.pt"
+    )
+    if random_model_path is None:
+        print(
+            "[warn] No random model checkpoint found; random mode will use heuristic fallback."
+        )
+    else:
+        print(f"[info] Using random model checkpoint: {random_model_path}")
+
+    reorganized_units_path = _resolve_reorganized_units_path(
+        args.corpus_dir, args.reorganized_units_path
+    )
+    v2_data = None
+    if reorganized_units_path is not None:
+        v2_data = load_policy_v2_artifact(
+            reorganized_units_path,
+            expected_frames=Z_concat.shape[0],
+        )
+        print(f"[info] Using reorganized units artifact: {reorganized_units_path}")
+    elif args.initial_navigation_mode == "reorganized":
+        raise RuntimeError(
+            "Reorganized mode requires policy_v2_units.npz. Re-run preprocess.py or set --reorganized_units_path."
+        )
+    else:
+        print(
+            "[warn] No reorganized units artifact found; reorganized mode will be unavailable."
+        )
+
+    reorganized_model_path = _resolve_optional_model_path(
+        args.corpus_dir, args.reorganized_model_path, "policy_v2_*.pt"
+    )
+    if reorganized_model_path is None:
+        print(
+            "[warn] No reorganized model checkpoint found; reorganized mode will run heuristic scoring."
+        )
+    else:
+        print(f"[info] Using reorganized model checkpoint: {reorganized_model_path}")
+
     nav = load_navigation_engine(
         data=data,
-        policy_path=args.policy_path,
-        policy_temperature=args.policy_temperature,
-        policy_sample=bool(args.policy_sample),
-        control_width=args.ctrl_width,
-        control_energy=args.ctrl_energy,
-        control_gravity=args.ctrl_gravity,
-        control_memory=args.ctrl_memory,
-        control_coherence=args.ctrl_coherence,
-        control_exploration=args.ctrl_exploration,
+        random_model_path=random_model_path,
+        random_temperature=args.random_temperature,
+        random_sample=bool(args.random_sample),
+        desc_weighted=manual_data["manual_desc_weighted"],
+        random_timbre_swap=bool(args.random_timbre_swap),
+        random_recompose=bool(args.random_recompose),
+        random_phrase_scale=args.ctrl_phrase_scale,
+        random_jump_rate=args.ctrl_jump_rate,
+        random_timbre_lock=args.ctrl_timbre_lock,
+        random_drift=args.ctrl_drift,
+        random_repeat_avoid=args.ctrl_repeat_avoid,
+        random_crossfile=args.ctrl_crossfile,
+        reorganized_enabled=bool(v2_data is not None),
+        reorganized_artifact=v2_data,
+        reorganized_model_path=reorganized_model_path,
+        reorganized_temperature=args.reorganized_temperature,
+        reorganized_morph_len=args.ctrl_morph_len,
+        reorganized_jump_rate=args.ctrl_reorg_jump_rate,
+        reorganized_timbre_lock=args.ctrl_reorg_timbre_lock,
+        reorganized_evolution=args.ctrl_evolution,
+        reorganized_novelty=args.ctrl_novelty,
+        reorganized_crossfile=args.ctrl_reorg_crossfile,
+        policy_variant=(
+            args.initial_navigation_mode
+            if args.initial_navigation_mode in ("random", "reorganized")
+            else "random"
+        ),
     )
 
     manifold_cfg = ManifoldConfig(
@@ -1297,11 +1608,30 @@ def main():
     print(f"[info] Running with {nav.N} segments")
     print(f"[info] Selected mode: {args.initial_navigation_mode}")
     print(
-        f"[info] Controls: width={args.ctrl_width}, energy={args.ctrl_energy}, "
-        f"gravity={args.ctrl_gravity}, memory={args.ctrl_memory}"
+        "[info] Random controls: "
+        f"phrase_scale={args.ctrl_phrase_scale}, jump_rate={args.ctrl_jump_rate}, "
+        f"timbre_lock={args.ctrl_timbre_lock}, drift={args.ctrl_drift}, "
+        f"repeat_avoid={args.ctrl_repeat_avoid}, crossfile={args.ctrl_crossfile}"
     )
     print(
-        f"[info] Advanced: coherence={args.ctrl_coherence}, exploration={args.ctrl_exploration}"
+        "[info] Reorganized controls: "
+        f"morph_len={args.ctrl_morph_len}, jump_rate={args.ctrl_reorg_jump_rate}, "
+        f"timbre_lock={args.ctrl_reorg_timbre_lock}, evolution={args.ctrl_evolution}, "
+        f"novelty={args.ctrl_novelty}, crossfile={args.ctrl_reorg_crossfile}"
+    )
+    print(
+        f"[info] Random timbre swap: enabled={bool(args.random_timbre_swap)}, "
+        f"descriptors={'yes' if manual_data['manual_desc_weighted'] is not None else 'no'}"
+    )
+    print(
+        f"[info] Random recomposition: enabled={bool(args.random_recompose)}"
+    )
+    print(
+        "[info] Reorganized availability: "
+        f"enabled={bool(v2_data is not None)}, "
+        f"artifact={'yes' if v2_data is not None else 'no'}, "
+        f"model={'yes' if reorganized_model_path is not None else 'no'}, "
+        f"temperature={float(args.reorganized_temperature):.2f}"
     )
     print("[info] Transport is idle. Use the web UI Start button to begin decoding.")
 

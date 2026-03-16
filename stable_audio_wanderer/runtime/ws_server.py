@@ -238,7 +238,7 @@ class WSBroadcaster:
         state = {
             "type": "state",
             "timestamp": time.time(),
-            "navigation": {
+                "navigation": {
                 "index": current_idx,
                 "index_normalized": current_idx / max(1, self.nav.N - 1),
                 "position_2d": pos_2d,
@@ -246,10 +246,14 @@ class WSBroadcaster:
                 "velocity": nav_state["policy_velocity"],
                 "file_id": nav_state["current_file_id"],
                 "fractional": frac_state if frac_state else None,
-                "mode": "policy",
-            },
-            "controls": nav_state["controls"],
-        }
+                "timbre_swap": nav_state.get("timbre_swap", {}),
+                    "recompose": nav_state.get("recompose", {}),
+                    "policy_v2": nav_state.get("policy_v2", {}),
+                    "reorganized": nav_state.get("reorganized", {}),
+                    "mode": "random",
+                },
+                "controls": nav_state["controls"],
+            }
 
         # Add latent-specific state if available
         if self._is_latent_nav and "latent" in nav_state:
@@ -333,7 +337,7 @@ class WSBroadcaster:
                 if self._manual_file_ids is not None:
                     manual_file_ids = self._manual_file_ids.tolist()
 
-        nav_mode = "policy"
+        nav_mode = "random"
         if self._extra_state_provider is not None:
             try:
                 extra = self._extra_state_provider()
@@ -397,11 +401,17 @@ class WSBroadcaster:
                 except Exception as e:
                     print(f"[ws] Error in custom message handler: {e}")
             
-            if msg_type == "control":
-                # Update navigation controls
+            if msg_type in ("random_control", "control"):
+                # Random control update (with backward-compatible alias "control")
                 controls = data.get("controls", {})
-                self.nav.set_policy_controls(**controls)
-                
+                if isinstance(controls, dict):
+                    self.nav.set_random_controls(**controls)
+
+            elif msg_type == "reorganized_control":
+                controls = data.get("controls", {})
+                if isinstance(controls, dict):
+                    self.nav.set_reorganized_controls(**controls)
+
             elif msg_type == "cursor":
                 # Update cursor position
                 coords = data.get("coords", [])

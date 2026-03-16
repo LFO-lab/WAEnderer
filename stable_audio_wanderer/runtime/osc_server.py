@@ -21,14 +21,26 @@ def run_server(
         Navigation:
             /cursor x [y [z ...]]  - Set cursor position (coordinates in [0,1])
 
-        Policy controls:
-            /policy/width value       - Set width control (0-1)
-            /policy/energy value      - Set energy control (0-1)
-            /policy/gravity value     - Set gravity control (0-1)
-            /policy/memory value      - Set memory control (0-1)
-            /policy/coherence value   - Set coherence control (0-1)
-            /policy/exploration value - Set exploration control (0-1)
-            /policy/reset             - Reset policy state
+        Random controls:
+            /random/phrase_scale value
+            /random/jump_rate value
+            /random/timbre_lock value
+            /random/drift value
+            /random/repeat_avoid value
+            /random/crossfile value
+            /random/reset
+
+        Reorganized controls:
+            /reorganized/morph_len value
+            /reorganized/jump_rate value
+            /reorganized/timbre_lock value
+            /reorganized/evolution value
+            /reorganized/novelty value
+            /reorganized/crossfile value
+            /reorganized/reset
+
+        Backward-compat aliases:
+            /policy/* -> /random/*
 
         Decoder controls:
             /decoder/gain value        - Set output gain (0-2)
@@ -83,7 +95,7 @@ def run_server(
         arr = np.clip(arr, 0.0, 1.0)
         # In manual mode, route /cursor to manual XYZ controls for convenience.
         if manual_controller is not None:
-            selected_mode = str(getattr(manual_controller, "selected_mode", "policy"))
+            selected_mode = str(getattr(manual_controller, "selected_mode", "random"))
             active_mode = str(getattr(manual_controller, "_active_mode", selected_mode))
             if selected_mode == "manual" or active_mode == "manual":
                 set_all = getattr(manual_controller, "set_manual_faders", None)
@@ -98,44 +110,87 @@ def run_server(
         nav.set_cursor_nd(arr)
         _dbg(f"{addr} -> nav cursor {arr.tolist()}")
 
-    # --- Policy controls ---
-    def on_width(addr, *vals):
+    # --- Random controls ---
+    def on_random_phrase_scale(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(width=v)
+            nav.set_random_controls(phrase_scale=v)
             _dbg(f"{addr} {v}")
 
-    def on_energy(addr, *vals):
+    def on_random_jump_rate(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(energy=v)
+            nav.set_random_controls(jump_rate=v)
             _dbg(f"{addr} {v}")
 
-    def on_gravity(addr, *vals):
+    def on_random_timbre_lock(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(gravity=v)
+            nav.set_random_controls(timbre_lock=v)
             _dbg(f"{addr} {v}")
 
-    def on_memory(addr, *vals):
+    def on_random_drift(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(memory=v)
+            nav.set_random_controls(drift=v)
             _dbg(f"{addr} {v}")
 
-    def on_coherence(addr, *vals):
+    def on_random_repeat_avoid(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(coherence=v)
+            nav.set_random_controls(repeat_avoid=v)
             _dbg(f"{addr} {v}")
 
-    def on_exploration(addr, *vals):
+    def on_random_crossfile(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_policy_controls(exploration=v)
+            nav.set_random_controls(crossfile=v)
             _dbg(f"{addr} {v}")
 
-    def on_reset(addr, *vals):
+    def on_random_reset(addr, *vals):
+        nav.set_policy_variant("random")
+        nav.reset_policy()
+        _dbg(f"{addr}")
+
+    # --- Reorganized controls ---
+    def on_reorganized_morph_len(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(morph_len=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_jump_rate(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(jump_rate=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_timbre_lock(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(timbre_lock=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_evolution(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(evolution=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_novelty(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(novelty=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_crossfile(addr, *vals):
+        v = _as_scalar(vals)
+        if v is not None:
+            nav.set_reorganized_controls(crossfile=v)
+            _dbg(f"{addr} {v}")
+
+    def on_reorganized_reset(addr, *vals):
+        nav.set_policy_variant("reorganized")
         nav.reset_policy()
         _dbg(f"{addr}")
 
@@ -292,13 +347,30 @@ def run_server(
     # Register handlers
     dispatcher.map("/cursor", on_cursor)
 
-    dispatcher.map("/policy/width", on_width)
-    dispatcher.map("/policy/energy", on_energy)
-    dispatcher.map("/policy/gravity", on_gravity)
-    dispatcher.map("/policy/memory", on_memory)
-    dispatcher.map("/policy/coherence", on_coherence)
-    dispatcher.map("/policy/exploration", on_exploration)
-    dispatcher.map("/policy/reset", on_reset)
+    dispatcher.map("/random/phrase_scale", on_random_phrase_scale)
+    dispatcher.map("/random/jump_rate", on_random_jump_rate)
+    dispatcher.map("/random/timbre_lock", on_random_timbre_lock)
+    dispatcher.map("/random/drift", on_random_drift)
+    dispatcher.map("/random/repeat_avoid", on_random_repeat_avoid)
+    dispatcher.map("/random/crossfile", on_random_crossfile)
+    dispatcher.map("/random/reset", on_random_reset)
+
+    dispatcher.map("/reorganized/morph_len", on_reorganized_morph_len)
+    dispatcher.map("/reorganized/jump_rate", on_reorganized_jump_rate)
+    dispatcher.map("/reorganized/timbre_lock", on_reorganized_timbre_lock)
+    dispatcher.map("/reorganized/evolution", on_reorganized_evolution)
+    dispatcher.map("/reorganized/novelty", on_reorganized_novelty)
+    dispatcher.map("/reorganized/crossfile", on_reorganized_crossfile)
+    dispatcher.map("/reorganized/reset", on_reorganized_reset)
+
+    # Backward-compat aliases for older /policy/* senders.
+    dispatcher.map("/policy/phrase_scale", on_random_phrase_scale)
+    dispatcher.map("/policy/jump_rate", on_random_jump_rate)
+    dispatcher.map("/policy/timbre_lock", on_random_timbre_lock)
+    dispatcher.map("/policy/drift", on_random_drift)
+    dispatcher.map("/policy/repeat_avoid", on_random_repeat_avoid)
+    dispatcher.map("/policy/crossfile", on_random_crossfile)
+    dispatcher.map("/policy/reset", on_random_reset)
 
     dispatcher.map("/decoder/gain", on_decoder_gain)
     dispatcher.map("/decoder/smoothing", on_decoder_smoothing)
@@ -315,7 +387,14 @@ def run_server(
 
     print(f"OSC listening on {ip}:{port}")
     print("  /cursor d0 [d1 [d2 ...]] — set navigation cursor (values in [0..1])")
-    print("  Policy: /policy/width, /energy, /gravity, /memory, /coherence, /exploration (0..1), /policy/reset")
+    print(
+        "  Random: /random/phrase_scale, /jump_rate, /timbre_lock, "
+        "/drift, /repeat_avoid, /crossfile (0..1), /random/reset"
+    )
+    print(
+        "  Reorganized: /reorganized/morph_len, /jump_rate, /timbre_lock, "
+        "/evolution, /novelty, /crossfile (0..1), /reorganized/reset"
+    )
     print("  Decoder: /decoder/gain (0..2), /decoder/smoothing (0..1)")
     print("  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/xyz x y z, /manual/xyzw x y z w")
     if bool(osc_debug):

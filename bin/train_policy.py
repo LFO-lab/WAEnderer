@@ -6,19 +6,25 @@ import os
 import argparse
 import datetime
 import json
+from dataclasses import asdict
+from typing import Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.spatial import cKDTree
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from stable_audio_wanderer.config import DEVICE
 from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
 from stable_audio_wanderer.policy import (
     LatentPolicy,
     LatentPolicyConfig,
+    V2TransitionModelConfig,
+    V2UnitTransitionScorer,
+    build_v2_pair_features,
     load_geometry_from_dict,
     compute_causal_ema_summaries,
+    infer_v2_input_dim,
 )
 
 
@@ -404,6 +410,27 @@ def _resolve_corpus_path(corpus_dir: str) -> str:
         return corpus_npz
 
 
+def _normalize_navigation_mode(raw_mode: str) -> str:
+    mode = str(raw_mode or "all").strip().lower()
+    if mode == "":
+        mode = "all"
+    aliases = {
+        "policy": "random",
+        "both": "all",
+        "v1": "random",
+        "v1.1": "random",
+        "v2": "reorganized",
+    }
+    mode = aliases.get(mode, mode)
+    valid = {"manual", "random", "reorganized", "all"}
+    if mode not in valid:
+        raise ValueError(
+            "Invalid --navigation_mode. Expected one of: manual, random, reorganized, all "
+            "(legacy aliases: policy->random, both->all, v2->reorganized)."
+        )
+    return mode
+
+
 def _save_manual_navigation_artifact(
     data: dict,
     corpus_npz: str,
@@ -525,7 +552,310 @@ def _save_manual_navigation_artifact(
     print(f"[done] Saved manual navigation artifact: {out_path}")
 
 
-def _train_policy(
+def _load_reorganized_artifact_from_npz(path: str) -> Dict[str, np.ndarray]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    data = np.load(path, allow_pickle=True)
+    return {k: data[k] for k in data.files}
+
+
+def _extract_reorganized_artifact_from_corpus(data: dict) -> Dict[str, np.ndarray]:
+    required = [
+        "unit_start_idx",
+        "unit_end_idx",
+        "unit_file_id",
+        "unit_start_t",
+        "unit_len",
+        "unit_entry_desc",
+        "unit_exit_desc",
+        "unit_delta_desc",
+        "unit_graph_neighbors",
+        "unit_graph_scores",
+    ]
+    missing = [k for k in required if k not in data]
+    if missing:
+        return {}
+
+    out = {k: np.asarray(data[k]) for k in required}
+    if "frame_to_unit" in data:
+        out["frame_to_unit"] = np.asarray(data["frame_to_unit"])
+    return out
+
+
+def _resolve_reorganized_artifact(args, data: dict) -> Tuple[Dict[str, np.ndarray], str]:
+    if args.reorganized_units_path is not None:
+        path = os.path.abspath(args.reorganized_units_path)
+        return _load_reorganized_artifact_from_npz(path), path
+
+    embedded = _extract_reorganized_artifact_from_corpus(data)
+    if embedded:
+        return embedded, "<embedded in corpus>"
+
+    fallback_path = os.path.join(args.corpus_dir, "policy_v2_units.npz")
+    if os.path.exists(fallback_path):
+        return _load_reorganized_artifact_from_npz(fallback_path), os.path.abspath(
+            fallback_path
+        )
+
+    raise RuntimeError(
+        "Missing reorganized unit artifact. Re-run preprocess.py or provide "
+        "--reorganized_units_path."
+    )
+
+
+def _build_reorganized_sequences_by_file(
+    unit_file_id: np.ndarray, unit_start_t: np.ndarray
+) -> List[np.ndarray]:
+    per_file: Dict[int, List[Tuple[int, int]]] = {}
+    for uid in range(unit_file_id.shape[0]):
+        fid = int(unit_file_id[uid])
+        per_file.setdefault(fid, []).append((int(unit_start_t[uid]), int(uid)))
+
+    seqs: List[np.ndarray] = []
+    for _, pairs in sorted(per_file.items(), key=lambda kv: kv[0]):
+        pairs.sort(key=lambda x: x[0])
+        seq = np.asarray([uid for _, uid in pairs], dtype=np.int32)
+        if seq.size > 1:
+            seqs.append(seq)
+    return seqs
+
+
+def _build_reorganized_transition_samples(
+    unit_file_id: np.ndarray,
+    unit_start_t: np.ndarray,
+    unit_graph_neighbors: np.ndarray,
+) -> List[Tuple[int, np.ndarray, int]]:
+    neighbors = np.asarray(unit_graph_neighbors, dtype=np.int32)
+    seqs = _build_reorganized_sequences_by_file(unit_file_id, unit_start_t)
+    samples: List[Tuple[int, np.ndarray, int]] = []
+
+    for seq in seqs:
+        for i in range(seq.size - 1):
+            cur = int(seq[i])
+            nxt = int(seq[i + 1])
+            cand = neighbors[cur].copy()
+            if not np.any(cand == nxt):
+                cand[-1] = nxt
+            target_pos = int(np.where(cand == nxt)[0][0])
+            samples.append((cur, cand.astype(np.int32), target_pos))
+
+    if not samples:
+        raise RuntimeError("No reorganized transition samples found in artifact.")
+    return samples
+
+
+class ReorganizedTransitionDataset(Dataset):
+    """Dataset for reorganized unit-transition classifier."""
+
+    def __init__(
+        self,
+        samples: List[Tuple[int, np.ndarray, int]],
+        unit_entry_desc: np.ndarray,
+        unit_exit_desc: np.ndarray,
+        unit_delta_desc: np.ndarray,
+        unit_len: np.ndarray,
+        unit_file_id: np.ndarray,
+    ):
+        self.samples = list(samples)
+        self.unit_entry_desc = np.asarray(unit_entry_desc, dtype=np.float32)
+        self.unit_exit_desc = np.asarray(unit_exit_desc, dtype=np.float32)
+        self.unit_delta_desc = np.asarray(unit_delta_desc, dtype=np.float32)
+        self.unit_len = np.asarray(unit_len, dtype=np.float32).reshape(-1)
+        self.unit_file_id = np.asarray(unit_file_id, dtype=np.int32).reshape(-1)
+        self.input_dim = infer_v2_input_dim(int(self.unit_entry_desc.shape[1]))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        cur, cand, target = self.samples[idx]
+        feat = build_v2_pair_features(
+            unit_entry_desc=self.unit_entry_desc,
+            unit_exit_desc=self.unit_exit_desc,
+            unit_delta_desc=self.unit_delta_desc,
+            unit_len=self.unit_len,
+            unit_file_id=self.unit_file_id,
+            current_unit=int(cur),
+            candidate_units=np.asarray(cand, dtype=np.int32),
+        )
+        return (
+            torch.from_numpy(feat.astype(np.float32)),
+            torch.tensor(int(target), dtype=torch.long),
+        )
+
+
+def _run_reorganized_epoch(
+    model: V2UnitTransitionScorer,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    train: bool,
+) -> dict:
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    loss_sum = 0.0
+    correct = 0
+    total = 0
+
+    for feat, target in loader:
+        feat = feat.to(device=device, dtype=torch.float32)
+        target = target.to(device=device, dtype=torch.long)
+        logits = model(feat)
+        loss = F.cross_entropy(logits, target)
+
+        if train:
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+        with torch.no_grad():
+            pred = torch.argmax(logits, dim=1)
+            correct += int((pred == target).sum().item())
+            n = int(target.numel())
+            total += n
+            loss_sum += float(loss.item()) * n
+
+    return {
+        "loss": float(loss_sum / max(1, total)),
+        "acc": float(correct / max(1, total)),
+        "count": int(total),
+    }
+
+
+def _train_reorganized_policy(args, data: dict):
+    artifact, artifact_source = _resolve_reorganized_artifact(args, data)
+    print(f"[info] Reorganized artifact: {artifact_source}")
+
+    required = [
+        "unit_entry_desc",
+        "unit_exit_desc",
+        "unit_delta_desc",
+        "unit_len",
+        "unit_file_id",
+        "unit_start_t",
+        "unit_graph_neighbors",
+    ]
+    missing = [k for k in required if k not in artifact]
+    if missing:
+        raise RuntimeError(f"Reorganized artifact missing keys: {missing}")
+
+    unit_entry_desc = np.asarray(artifact["unit_entry_desc"], dtype=np.float32)
+    unit_exit_desc = np.asarray(artifact["unit_exit_desc"], dtype=np.float32)
+    unit_delta_desc = np.asarray(artifact["unit_delta_desc"], dtype=np.float32)
+    unit_len = np.asarray(artifact["unit_len"], dtype=np.float32).reshape(-1)
+    unit_file_id = np.asarray(artifact["unit_file_id"], dtype=np.int32).reshape(-1)
+    unit_start_t = np.asarray(artifact["unit_start_t"], dtype=np.int32).reshape(-1)
+    unit_graph_neighbors = np.asarray(artifact["unit_graph_neighbors"], dtype=np.int32)
+
+    samples = _build_reorganized_transition_samples(
+        unit_file_id=unit_file_id,
+        unit_start_t=unit_start_t,
+        unit_graph_neighbors=unit_graph_neighbors,
+    )
+    print(f"[info] Reorganized samples: {len(samples)}")
+
+    rng = np.random.default_rng(int(args.reorganized_seed))
+    perm = rng.permutation(len(samples))
+    samples = [samples[int(i)] for i in perm.tolist()]
+    val_count = int(
+        np.clip(
+            round(len(samples) * float(args.reorganized_val_ratio)),
+            1,
+            max(1, len(samples) - 1),
+        )
+    )
+    val_samples = samples[:val_count]
+    train_samples = samples[val_count:] or val_samples
+    print(f"[info] Reorganized train/val split: {len(train_samples)}/{len(val_samples)}")
+
+    train_ds = ReorganizedTransitionDataset(
+        samples=train_samples,
+        unit_entry_desc=unit_entry_desc,
+        unit_exit_desc=unit_exit_desc,
+        unit_delta_desc=unit_delta_desc,
+        unit_len=unit_len,
+        unit_file_id=unit_file_id,
+    )
+    val_ds = ReorganizedTransitionDataset(
+        samples=val_samples,
+        unit_entry_desc=unit_entry_desc,
+        unit_exit_desc=unit_exit_desc,
+        unit_delta_desc=unit_delta_desc,
+        unit_len=unit_len,
+        unit_file_id=unit_file_id,
+    )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=int(args.reorganized_batch_size),
+        shuffle=True,
+        drop_last=False,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=int(args.reorganized_batch_size),
+        shuffle=False,
+        drop_last=False,
+    )
+
+    cfg = V2TransitionModelConfig(
+        hidden_dim=int(args.reorganized_hidden_dim),
+        layers=int(args.reorganized_layers),
+        dropout=float(args.reorganized_dropout),
+    )
+    device = torch.device(DEVICE)
+    model = V2UnitTransitionScorer(input_dim=int(train_ds.input_dim), cfg=cfg).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(args.reorganized_lr),
+        weight_decay=float(args.weight_decay),
+    )
+
+    best_val = float("inf")
+    best_state = None
+    for ep in range(1, int(args.reorganized_epochs) + 1):
+        tr = _run_reorganized_epoch(model, train_loader, optimizer, device, train=True)
+        va = _run_reorganized_epoch(model, val_loader, optimizer, device, train=False)
+        if args.verbose:
+            print(
+                f"[reorg ep {ep:04d}] train_loss={tr['loss']:.4f} train_acc={tr['acc']:.3f} "
+                f"val_loss={va['loss']:.4f} val_acc={va['acc']:.3f}"
+            )
+        elif ep == 1 or ep % max(1, int(args.log_every)) == 0 or ep == int(
+            args.reorganized_epochs
+        ):
+            print(
+                f"[reorg ep {ep:04d}/{int(args.reorganized_epochs)}] "
+                f"train_loss={tr['loss']:.4f} val_loss={va['loss']:.4f} val_acc={va['acc']:.3f}"
+            )
+        if va["loss"] < best_val:
+            best_val = float(va["loss"])
+            best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+
+    if best_state is None:
+        best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+
+    out_path = args.reorganized_out_path
+    if out_path is None:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(args.corpus_dir, f"policy_v2_{ts}.pt")
+
+    ckpt = {
+        "state_dict": best_state,
+        "config": asdict(cfg),
+        "input_dim": int(train_ds.input_dim),
+        "artifact_source": np.array([str(artifact_source)], dtype=np.str_),
+        "best_val_loss": float(best_val),
+        "train_count": int(len(train_samples)),
+        "val_count": int(len(val_samples)),
+    }
+    torch.save(ckpt, out_path)
+    print(f"[done] Saved reorganized checkpoint: {out_path}")
+
+
+def _train_random_policy(
     args,
     data: dict,
 ):
@@ -633,7 +963,7 @@ def _train_policy(
         if val_stats["loss"] < best_val_loss:
             best_val_loss = val_stats["loss"]
 
-    out_path = args.out_path
+    out_path = args.random_out_path or args.out_path
     if out_path is None:
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out_path = os.path.join(args.corpus_dir, f"latent_policy_{ts}.pt")
@@ -649,14 +979,18 @@ def _train_policy(
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Train latent policy and/or build manual navigation KD-tree artifact."
+        description=(
+            "Train navigation artifacts/models for manual, random, and reorganized modes."
+        )
     )
     ap.add_argument("--corpus_dir", required=True, help="Folder containing corpus.npz")
     ap.add_argument(
         "--navigation_mode",
-        choices=["policy", "manual", "both"],
-        default="policy",
-        help="Training mode: policy network, manual KD artifact, or both.",
+        default="all",
+        help=(
+            "Training mode target: manual, random, reorganized, or all "
+            "(legacy aliases supported: policy->random, both->all, v2->reorganized)."
+        ),
     )
     ap.add_argument(
         "--manual_out_path",
@@ -689,7 +1023,74 @@ def main():
     ap.add_argument("--lambda_window", type=float, default=0.5,
                     help="Weight for window size Huber loss.")
 
-    ap.add_argument("--out_path", default=None, help="Override policy checkpoint path.")
+    ap.add_argument(
+        "--random_out_path",
+        default=None,
+        help="Random mode checkpoint output (.pt). Defaults to <corpus_dir>/latent_policy_<timestamp>.pt",
+    )
+    ap.add_argument(
+        "--out_path",
+        default=None,
+        help="Deprecated alias for --random_out_path.",
+    )
+    ap.add_argument(
+        "--reorganized_units_path",
+        default=None,
+        help="Path to policy_v2_units.npz. Defaults to embedded corpus units, then <corpus_dir>/policy_v2_units.npz.",
+    )
+    ap.add_argument(
+        "--reorganized_out_path",
+        default=None,
+        help="Reorganized mode checkpoint output (.pt). Defaults to <corpus_dir>/policy_v2_<timestamp>.pt",
+    )
+    ap.add_argument(
+        "--reorganized_epochs",
+        type=int,
+        default=120,
+        help="Reorganized transition-model epochs.",
+    )
+    ap.add_argument(
+        "--reorganized_batch_size",
+        type=int,
+        default=128,
+        help="Reorganized transition-model batch size.",
+    )
+    ap.add_argument(
+        "--reorganized_lr",
+        type=float,
+        default=1e-3,
+        help="Reorganized transition-model learning rate.",
+    )
+    ap.add_argument(
+        "--reorganized_hidden_dim",
+        type=int,
+        default=192,
+        help="Reorganized transition-model hidden dimension.",
+    )
+    ap.add_argument(
+        "--reorganized_layers",
+        type=int,
+        default=3,
+        help="Reorganized transition-model MLP depth.",
+    )
+    ap.add_argument(
+        "--reorganized_dropout",
+        type=float,
+        default=0.10,
+        help="Reorganized transition-model dropout.",
+    )
+    ap.add_argument(
+        "--reorganized_val_ratio",
+        type=float,
+        default=0.10,
+        help="Reorganized transition-model validation split ratio.",
+    )
+    ap.add_argument(
+        "--reorganized_seed",
+        type=int,
+        default=13,
+        help="Random seed for reorganized transition-model training.",
+    )
     ap.add_argument("--log_every", type=int, default=50,
                     help="Print progress every N epochs when --verbose is not set.")
     ap.add_argument("--verbose", action="store_true", help="Print detailed metrics each epoch.")
@@ -700,8 +1101,23 @@ def main():
     print(f"[info] Using corpus: {corpus_npz}")
     data = load_corpus(corpus_npz)
 
-    mode = str(args.navigation_mode)
-    if mode in ("manual", "both"):
+    mode = _normalize_navigation_mode(args.navigation_mode)
+    if mode != str(args.navigation_mode).strip().lower():
+        print(
+            f"[info] Normalized navigation mode: '{args.navigation_mode}' -> '{mode}'"
+        )
+    print(f"[info] Training mode: {mode}")
+    if mode == "all":
+        print("[info] Scheduled stages: manual -> random -> reorganized")
+    elif mode == "manual":
+        print("[info] Scheduled stages: manual")
+    elif mode == "random":
+        print("[info] Scheduled stages: random")
+    else:
+        print("[info] Scheduled stages: reorganized")
+
+    if mode in ("manual", "all"):
+        print("[info] Stage start: manual artifact")
         manual_out = args.manual_out_path
         if manual_out is None:
             manual_out = os.path.join(args.corpus_dir, "manual_navigation.npz")
@@ -712,8 +1128,13 @@ def main():
             leafsize=int(args.manual_kdtree_leafsize),
         )
 
-    if mode in ("policy", "both"):
-        _train_policy(args=args, data=data)
+    if mode in ("random", "all"):
+        print("[info] Stage start: random model")
+        _train_random_policy(args=args, data=data)
+
+    if mode in ("reorganized", "all"):
+        print("[info] Stage start: reorganized model")
+        _train_reorganized_policy(args=args, data=data)
 
 
 if __name__ == "__main__":

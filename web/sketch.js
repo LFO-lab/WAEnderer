@@ -27,7 +27,7 @@ let manualTrajectory3D = [];
 let currentIndex = 0;
 let currentVelocity = 0;
 let currentFileId = 0;
-let selectedNavigationMode = 'policy';
+let selectedNavigationMode = 'random';
 let transportRunning = false;
 let manualNearestIndex = 0;
 let manualNearestDistance = 0;
@@ -848,7 +848,7 @@ function handleMessage(data) {
         );
 
         console.log(
-            `Received corpus: policy2d=${corpusPoints.length}, manual3d=${manualCorpusPoints3D.length}, manualColor=${manualCorpusColorValues.length}`
+            `Received corpus: nav2d=${corpusPoints.length}, manual3d=${manualCorpusPoints3D.length}, manualColor=${manualCorpusColorValues.length}`
         );
 
     } else if (data.type === 'state') {
@@ -949,7 +949,16 @@ function handleMessage(data) {
         updateInfoDisplay(data);
         
         if (data.controls) {
-            updateControlDisplays('ctrl', data.controls);
+            if (data.controls.random) {
+                updateControlDisplays('random', data.controls.random, 'random');
+            }
+            if (data.controls.reorganized) {
+                updateControlDisplays(
+                    'reorganized',
+                    data.controls.reorganized,
+                    'reorganized'
+                );
+            }
         }
 
         if (data.decoder) {
@@ -986,7 +995,7 @@ function updateInfoDisplay(data) {
     document.getElementById('info-file').textContent = nav.file_id || 0;
 }
 
-function updateControlDisplays(prefix, values) {
+function updateControlDisplays(prefix, values, displayPrefix = null) {
     for (const [key, value] of Object.entries(values)) {
         // Skip updating controls that are currently being adjusted by the user
         const inputId = `${prefix}-${key}`;
@@ -995,8 +1004,8 @@ function updateControlDisplays(prefix, values) {
         }
 
         const input = document.getElementById(inputId);
-
-        const display = document.getElementById(`val-${key}`);
+        const displayId = displayPrefix ? `val-${displayPrefix}-${key}` : `val-${key}`;
+        const display = document.getElementById(displayId);
 
         // Handle boolean values (toggle switches)
         if (typeof value === 'boolean') {
@@ -1027,14 +1036,22 @@ function updateControlDisplays(prefix, values) {
 
 // UI Control handlers
 function setupControls() {
-    const modePolicyBtn = document.getElementById('mode-policy');
+    const modeRandomBtn = document.getElementById('mode-random');
+    const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');
 
-    modePolicyBtn.addEventListener('click', () => {
+    modeRandomBtn.addEventListener('click', () => {
         if (transportRunning) return;
-        selectedNavigationMode = 'policy';
+        selectedNavigationMode = 'random';
         applyNavigationModeUI();
-        sendTransportSetMode('policy');
+        sendTransportSetMode('random');
+    });
+
+    modeReorganizedBtn.addEventListener('click', () => {
+        if (transportRunning) return;
+        selectedNavigationMode = 'reorganized';
+        applyNavigationModeUI();
+        sendTransportSetMode('reorganized');
     });
 
     modeManualBtn.addEventListener('click', () => {
@@ -1052,13 +1069,20 @@ function setupControls() {
         sendTransportAction('stop');
     });
 
-    // Policy controls
-    const policyControls = ['width', 'energy', 'gravity', 'memory', 'coherence', 'exploration'];
-    
-    policyControls.forEach(ctrl => {
-        const input = document.getElementById(`ctrl-${ctrl}`);
-        const display = document.getElementById(`val-${ctrl}`);
-        const inputId = `ctrl-${ctrl}`;
+    // Random controls
+    const randomControls = [
+        'phrase_scale',
+        'jump_rate',
+        'timbre_lock',
+        'drift',
+        'repeat_avoid',
+        'crossfile',
+    ];
+
+    randomControls.forEach(ctrl => {
+        const input = document.getElementById(`random-${ctrl}`);
+        const display = document.getElementById(`val-random-${ctrl}`);
+        const inputId = `random-${ctrl}`;
 
         if (input) {
             // Track when user starts adjusting
@@ -1073,7 +1097,36 @@ function setupControls() {
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) display.textContent = value.toFixed(2);
-                sendControl(ctrl, value);
+                sendRandomControl(ctrl, value);
+            });
+        }
+    });
+
+    // Reorganized controls
+    const reorganizedControls = [
+        'morph_len',
+        'jump_rate',
+        'timbre_lock',
+        'evolution',
+        'novelty',
+        'crossfile',
+    ];
+    reorganizedControls.forEach(ctrl => {
+        const input = document.getElementById(`reorganized-${ctrl}`);
+        const display = document.getElementById(`val-reorganized-${ctrl}`);
+        const inputId = `reorganized-${ctrl}`;
+
+        if (input) {
+            input.addEventListener('mousedown', () => activeControls.add(inputId));
+            input.addEventListener('touchstart', () => activeControls.add(inputId));
+            input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+            input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+            input.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                if (display) display.textContent = value.toFixed(2);
+                sendReorganizedControl(ctrl, value);
             });
         }
     });
@@ -1278,8 +1331,16 @@ function setupControls() {
         });
     });
     
-    // Reset button
-    document.getElementById('btn-reset').addEventListener('click', () => {
+    // Reset buttons
+    document.getElementById('btn-random-reset').addEventListener('click', () => {
+        sendReset();
+        for (let i = 0; i < heatmapResolution; i++) {
+            for (let j = 0; j < heatmapResolution; j++) {
+                heatmapData[i][j] = 0;
+            }
+        }
+    });
+    document.getElementById('btn-reorganized-reset').addEventListener('click', () => {
         sendReset();
         for (let i = 0; i < heatmapResolution; i++) {
             for (let j = 0; j < heatmapResolution; j++) {
@@ -1306,31 +1367,48 @@ function setupControls() {
 }
 
 function applyNavigationModeUI() {
-    const modePolicyBtn = document.getElementById('mode-policy');
+    const modeRandomBtn = document.getElementById('mode-random');
+    const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');
-    const policyPanel = document.getElementById('policy-panel');
+    const randomPanel = document.getElementById('random-panel');
+    const reorganizedPanel = document.getElementById('reorganized-panel');
     const manualPanel = document.getElementById('manual-panel');
 
-    const isPolicy = selectedNavigationMode === 'policy';
-    modePolicyBtn.classList.toggle('active', isPolicy);
-    modeManualBtn.classList.toggle('active', !isPolicy);
+    const isRandom = selectedNavigationMode === 'random';
+    const isReorganized = selectedNavigationMode === 'reorganized';
+    const isManual = selectedNavigationMode === 'manual';
 
-    policyPanel.classList.toggle('panel-hidden', !isPolicy);
-    manualPanel.classList.toggle('panel-hidden', isPolicy);
+    modeRandomBtn.classList.toggle('active', isRandom);
+    modeReorganizedBtn.classList.toggle('active', isReorganized);
+    modeManualBtn.classList.toggle('active', isManual);
 
-    if (isPolicy) {
+    randomPanel.classList.toggle('panel-hidden', !isRandom);
+    reorganizedPanel.classList.toggle('panel-hidden', !isReorganized);
+    manualPanel.classList.toggle('panel-hidden', !isManual);
+
+    if (!isManual) {
         manualPickDragging = false;
         resetManualCameraToggles();
     }
 
-    modePolicyBtn.disabled = transportRunning;
+    modeRandomBtn.disabled = transportRunning;
+    modeReorganizedBtn.disabled = transportRunning;
     modeManualBtn.disabled = transportRunning;
 }
 
-function sendControl(name, value) {
+function sendRandomControl(name, value) {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
-            type: 'control',
+            type: 'random_control',
+            controls: { [name]: value }
+        }));
+    }
+}
+
+function sendReorganizedControl(name, value) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'reorganized_control',
             controls: { [name]: value }
         }));
     }

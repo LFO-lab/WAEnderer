@@ -33,7 +33,12 @@ from stable_audio_wanderer.config import (
 )
 from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
 from stable_audio_wanderer.io.corpus_io import save_corpus
-from stable_audio_wanderer.policy import compute_latent_geometry, save_geometry_to_dict
+from stable_audio_wanderer.policy import (
+    UnitGraphConfig,
+    build_v2_unit_artifact,
+    compute_latent_geometry,
+    save_geometry_to_dict,
+)
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
 
 MANUAL_EMBED_DIM = 4
@@ -580,6 +585,60 @@ def main():
         default=42,
         help="UMAP random state for deterministic embeddings.",
     )
+    ap.add_argument(
+        "--reorg_min_sec",
+        type=float,
+        default=2.0,
+        help="Reorganized mode: minimum morphology unit duration (seconds).",
+    )
+    ap.add_argument(
+        "--reorg_max_sec",
+        type=float,
+        default=10.0,
+        help="Reorganized mode: maximum morphology unit duration (seconds).",
+    )
+    ap.add_argument(
+        "--reorg_target_sec",
+        type=float,
+        default=5.0,
+        help="Reorganized mode: target morphology unit duration (seconds).",
+    )
+    ap.add_argument(
+        "--reorg_candidate_k",
+        type=int,
+        default=64,
+        help="Reorganized mode: candidate transition pool size per unit.",
+    )
+    ap.add_argument(
+        "--reorg_graph_k",
+        type=int,
+        default=24,
+        help="Reorganized mode: outgoing transitions saved per unit.",
+    )
+    ap.add_argument(
+        "--reorg_weight_entry",
+        type=float,
+        default=0.70,
+        help="Reorganized mode: exit->entry timbre continuity weight.",
+    )
+    ap.add_argument(
+        "--reorg_weight_delta",
+        type=float,
+        default=0.30,
+        help="Reorganized mode: descriptor-delta compatibility weight.",
+    )
+    ap.add_argument(
+        "--reorg_crossfile_penalty",
+        type=float,
+        default=0.10,
+        help="Reorganized mode: additive penalty for cross-file transitions.",
+    )
+    ap.add_argument(
+        "--reorg_boundary_smoothness_weight",
+        type=float,
+        default=0.35,
+        help="Reorganized mode: boundary preference for low descriptor-velocity cuts.",
+    )
 
     args = ap.parse_args()
 
@@ -716,8 +775,42 @@ def main():
         except Exception as e:
             print(f"  [warn] Failed to compute decoder quality targets: {e}")
 
-    # Save corpus
     corpus_path = os.path.join(out_dir, "corpus.npz")
+    print("Building reorganized unit artifact...")
+    reorg_cfg = UnitGraphConfig(
+        min_sec=float(args.reorg_min_sec),
+        max_sec=float(args.reorg_max_sec),
+        target_sec=float(args.reorg_target_sec),
+        latent_hz=float(LATENT_HZ),
+        candidate_k=int(args.reorg_candidate_k),
+        graph_k=int(args.reorg_graph_k),
+        weight_entry=float(args.reorg_weight_entry),
+        weight_delta=float(args.reorg_weight_delta),
+        crossfile_penalty=float(args.reorg_crossfile_penalty),
+        boundary_smoothness_weight=float(args.reorg_boundary_smoothness_weight),
+    )
+    reorg_artifact = build_v2_unit_artifact(
+        file_offsets=file_offsets,
+        frame_file_ids=frame_file_ids,
+        frame_t=frame_t,
+        desc_weighted=manual_arrays["manual_desc_weighted"],
+        cfg=reorg_cfg,
+        source_corpus_path=os.path.abspath(corpus_path),
+    )
+    reorg_sidecar_path = os.path.join(out_dir, "policy_v2_units.npz")
+    np.savez_compressed(reorg_sidecar_path, **reorg_artifact)
+    reorg_embed_arrays = {
+        key: value
+        for key, value in reorg_artifact.items()
+        if key.startswith("unit_") or key == "frame_to_unit"
+    }
+    print(
+        "  Reorganized units:",
+        int(np.asarray(reorg_artifact["unit_start_idx"], dtype=np.int32).shape[0]),
+        f"(graph_k={int(np.asarray(reorg_artifact['unit_graph_neighbors']).shape[1])})",
+    )
+
+    # Save corpus
     save_corpus(
         corpus_path,
         Z_concat=Z_concat,
@@ -742,11 +835,13 @@ def main():
         window_targets_log2=window_targets_log2,
         **geometry_arrays,
         **manual_arrays,
+        **reorg_embed_arrays,
         **extra_arrays,
     )
 
     print("\nSaved:")
     print("  Corpus         :", corpus_path)
+    print("  Reorg units    :", reorg_sidecar_path)
 
 
 if __name__ == "__main__":

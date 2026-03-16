@@ -6,7 +6,8 @@ A real-time 64-dimensional latent space navigation instrument for exploring audi
 
 - **64D Latent Navigation** - Explore audio corpora in continuous latent space
 - **Manual Navigation Mode** - 4-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
-- **Learned Navigation Policy** - GRU network with 6 expressive control dimensions
+- **Random Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
+- **Reorganized Morphologies Mode** - Unit-graph sequencing with optional learned transition scorer
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
 - **Real-Time VAE Decoding** - Overlap-add synthesis with adaptive window sizing
 - **WebSocket Visualization** - p5.js interface showing trajectory, controls, and corpus structure
@@ -55,8 +56,15 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 | `--manual_umap_min_dist` | 0.05 | UMAP `min_dist` (when reducer is `umap`) |
 | `--manual_umap_metric` | `euclidean` | UMAP metric |
 | `--manual_umap_random_state` | 42 | UMAP random seed |
+| `--reorg_min_sec` | 2.0 | Reorganized unit minimum duration |
+| `--reorg_max_sec` | 10.0 | Reorganized unit maximum duration |
+| `--reorg_target_sec` | 5.0 | Reorganized unit target duration |
+| `--reorg_candidate_k` | 64 | Reorganized candidate transition pool size |
+| `--reorg_graph_k` | 24 | Reorganized outgoing transitions per unit |
 
-Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
+Outputs:
+- `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
+- `corpus/[prefix]_YYYYMMDD_HHMMSS/policy_v2_units.npz` (always generated)
 
 `corpus.npz` now includes manual-navigation fields:
 - `manual_embed_points` `[N, 3 or 4]`
@@ -69,7 +77,7 @@ Output: `corpus/[prefix]_YYYYMMDD_HHMMSS/corpus.npz`
 
 ### 2. Train Policy
 
-Train a GRU navigation policy, manual KD-tree artifact, or both.
+Train navigation artifacts/models for manual, random, reorganized, or all modes.
 
 ```bash
 python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -78,8 +86,11 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
-| `--navigation_mode` | `policy` | `policy`, `manual`, or `both` |
+| `--navigation_mode` | `all` | `manual`, `random`, `reorganized`, or `all` |
 | `--manual_out_path` | `<corpus_dir>/manual_navigation.npz` | Output path for manual artifact |
+| `--random_out_path` | `<corpus_dir>/latent_policy_<timestamp>.pt` | Output path for random model checkpoint |
+| `--reorganized_out_path` | `<corpus_dir>/policy_v2_<timestamp>.pt` | Output path for reorganized model checkpoint |
+| `--reorganized_units_path` | embedded / `<corpus_dir>/policy_v2_units.npz` | Reorganized unit artifact source |
 | `--manual_kdtree_leafsize` | 32 | Leaf size used when fitting manual `cKDTree` |
 | `--epochs` | 2000 | Training epochs |
 | `--batch_size` | 64 | Batch size |
@@ -89,13 +100,56 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--seq_len` | 32 | Training sequence length |
 
 Outputs:
-- Policy mode: `corpus/.../latent_policy_*.pt`
+- Random mode: `corpus/.../latent_policy_*.pt`
+- Reorganized mode: `corpus/.../policy_v2_*.pt`
 - Manual mode: `corpus/.../manual_navigation.npz`
-- Both mode: both artifacts
+- All mode: all artifacts
+
+### 2.5 Rebuild Reorganized Unit Artifact (Optional)
+
+`preprocess.py` now always writes `policy_v2_units.npz`.
+Use this script only when you want to regenerate units with different segmentation/graph hyperparameters without re-running full preprocess.
+
+```bash
+python bin/build_policy_v2_units.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--corpus_dir` | required | Path to corpus directory |
+| `--out` | `<corpus_dir>/policy_v2_units.npz` | Output path for V2 unit artifact |
+| `--min_sec` | 2.0 | Minimum unit duration |
+| `--max_sec` | 10.0 | Maximum unit duration |
+| `--target_sec` | 5.0 | Target unit duration |
+| `--candidate_k` | 64 | Candidate transition pool size per unit |
+| `--graph_k` | 24 | Saved outgoing transitions per unit |
+| `--weight_entry` | 0.70 | Exit→entry timbre continuity weight |
+| `--weight_delta` | 0.30 | Descriptor-trajectory compatibility weight |
+| `--crossfile_penalty` | 0.10 | Cost for cross-file transitions |
+
+Output:
+- `corpus/.../policy_v2_units.npz`
+
+Listen to extracted units:
+
+```bash
+python bin/listen_v2_units.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS --num_units 12
+```
+
+If internet is unavailable, provide a local decoder checkpoint via `--pretrained /path/to/stable-audio-open-1.0`.
+
+Train an optional reorganized transition model:
+
+```bash
+python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS --navigation_mode reorganized
+```
+
+This creates a checkpoint like `corpus/.../policy_v2_YYYYMMDD_HHMMSS.pt` that can be used at runtime.
+`bin/train_policy_v2.py` remains as a compatibility wrapper and forwards to this command.
 
 ### 3. Perform
 
-Real-time decoding with selectable policy/manual navigation, OSC control, and WebSocket visualization.
+Real-time decoding with selectable manual/random/reorganized navigation, OSC control, and WebSocket visualization.
 
 ```bash
 python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -104,8 +158,12 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
-| `--manual_artifact` | `<corpus_dir>/manual_navigation.npz` | Manual navigation artifact path (required at startup) |
-| `--initial_navigation_mode` | `policy` | Initial selected mode (`policy` or `manual`) |
+| `--manual_artifact` | auto from `<corpus_dir>` | Manual navigation artifact path |
+| `--initial_navigation_mode` | `random` | Initial selected mode (`manual`, `random`, or `reorganized`) |
+| `--random_model_path` | latest `latent_policy_*.pt` | Random mode model checkpoint |
+| `--reorganized_units_path` | `<corpus_dir>/policy_v2_units.npz` | Reorganized units artifact (required for reorganized mode) |
+| `--reorganized_model_path` | latest `policy_v2_*.pt` | Optional reorganized transition model |
+| `--reorganized_temperature` | 1.0 | Reorganized unit-selection sampling temperature |
 | `--manual_wander_k` | 1 | Manual timbre-neighbor wander neighborhood size (`1` disables) |
 | `--manual_wander_speed` | 0.0001 | Manual wander transition speed (`0.0` instant, `1.0` slowest) |
 | `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
@@ -115,18 +173,23 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--manual_buffer_ratio` | 0.15 | Manual target buffer ratio vs current chunk duration (higher = safer, higher latency) |
 | `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
-| `--policy_path` | optional | Path to policy checkpoint |
+| `--random_timbre_swap` | `true` | Enable corpus-locked timbre-aware seed swapping in random mode |
+| `--random_recompose` | `true` | Enable non-serial short-unit recomposition in random mode |
 | `--osc_port` | 9000 | OSC server port |
 | `--osc_debug` | `false` | Log incoming OSC messages, including unmapped paths |
 | `--ws_port` | 8765 | WebSocket server port |
 | `--output_gain` | 1.0 | Initial output gain |
 | `--smoothing` | 0.1 | Crossfade smoothing |
-| `--window_size` | 2 | Initial policy decode window size (frames) |
-| `--fixed_window` | false | Disable adaptive policy window sizing |
+| `--window_size` | 2 | Initial random/reorganized decode window size (frames) |
+| `--fixed_window` | false | Disable adaptive random/reorganized window sizing |
 | `--boundary_window_updates` | false | Apply adaptive window changes only on boundaries |
+| `--ctrl_phrase_scale` .. `--ctrl_crossfile` | random defaults | Random mode controls |
+| `--ctrl_morph_len` .. `--ctrl_reorg_crossfile` | reorganized defaults | Reorganized mode controls |
 
 Open `web/index.html` in a browser, choose a navigation tab, and press **Start Decode**.
 `perform.py` exits early if `manual_navigation.npz` is missing or invalid.
+If manual descriptor fields are unavailable, random timbre swap/recompose automatically falls back to baseline contiguous retrieval.
+If reorganized units are missing/invalid, reorganized mode is unavailable while manual/random continue to work.
 
 ## Architecture
 
@@ -189,15 +252,31 @@ Audio Files
 
 ### OSC Messages (default port 9000)
 
-**Navigation Controls** (0.0 - 1.0):
+**Random Controls** (0.0 - 1.0):
 ```
-/policy/width       Temperature for sampling breadth
-/policy/energy      Displacement magnitude
-/policy/gravity     Forward (>0.5) / backward (<0.5) bias
-/policy/memory      Attraction to recent positions
-/policy/coherence   Bias toward same source file
-/policy/exploration Entropy injection for diversity
-/policy/reset       Reset navigation state (no value)
+/random/phrase_scale
+/random/jump_rate
+/random/timbre_lock
+/random/drift
+/random/repeat_avoid
+/random/crossfile
+/random/reset
+```
+
+**Reorganized Controls** (0.0 - 1.0):
+```
+/reorganized/morph_len
+/reorganized/jump_rate
+/reorganized/timbre_lock
+/reorganized/evolution
+/reorganized/novelty
+/reorganized/crossfile
+/reorganized/reset
+```
+
+Backward compatibility:
+```
+/policy/* aliases to /random/*
 ```
 
 **Decoder Controls** (0.0 - 1.0):
@@ -223,15 +302,15 @@ Audio Files
 ```
 
 `/cursor` routing note:
-- In `policy` mode, `/cursor ...` controls latent cursor as before.
+- In `random`/`reorganized` mode, `/cursor ...` controls latent cursor as before.
 - In `manual` mode, `/cursor ...` is routed to manual controls (`X/Y/Z[/W]`, up to control dim).
 
 ### Web UI
 
 The web interface (`web/index.html`) provides:
-- Real-time policy 2D projection and manual 3D corpus view
-- Policy/manual mode tabs with transport Start/Stop buttons
-- Sliders for all 6 policy navigation controls
+- Real-time random/reorganized 2D projection and manual 3D corpus view
+- Random/Reorganized/Manual mode tabs with transport Start/Stop buttons
+- Separate 6-control banks for random and reorganized modes
 - 4 manual XYZW controls for timbre-space navigation, plus manual wander-k
 - Manual 3D camera nudges (left/right/over/under/forward/backward)
 - Decoder gain and smoothing controls
