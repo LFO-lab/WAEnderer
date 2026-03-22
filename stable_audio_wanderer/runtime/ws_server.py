@@ -26,7 +26,7 @@ class WSBroadcaster:
     Broadcasts:
         - Current index (normalized 0-1)
         - Recent trajectory (last 128 indices)
-        - 2D projection of current position
+        - 3D manual-space cursor/trajectory
         - All control values
         - Decoder state (gain, smoothing, underruns)
     """
@@ -79,40 +79,12 @@ class WSBroadcaster:
         self._manual_color_values_norm = None
         self._manual_file_ids = None
 
-        # Precompute 2D projection if corpus is higher dimensional
-        self._projection_matrix = None
-        self._setup_projection()
         self._setup_manual_space(
             manual_points_3d,
             manual_file_ids,
             manual_fader_p01,
             manual_fader_p99,
         )
-    
-    def _setup_projection(self):
-        """Setup 2D projection for visualization."""
-        # Check if this is a LatentNavigationEngine (has GG and geometry)
-        self._is_latent_nav = hasattr(self.nav, 'GG') and hasattr(self.nav, 'geometry')
-
-        if self._is_latent_nav:
-            # For latent nav, use the stored PCA projection
-            self._ZZ_2d = self.nav.geometry.project_to_2d(self.nav.GG)
-            self._projection_matrix = self.nav.geometry.pca_components_2d
-        elif self.nav.ZZ.shape[1] > 2:
-            # Use PCA for projection to 2D
-            from sklearn.decomposition import PCA
-            pca = PCA(n_components=2)
-            self._ZZ_2d = pca.fit_transform(self.nav.ZZ)
-            self._projection_matrix = pca.components_
-        else:
-            self._ZZ_2d = self.nav.ZZ[:, :2].copy()
-            self._projection_matrix = None
-
-        # Normalize to [0, 1]
-        self._ZZ_2d_min = self._ZZ_2d.min(axis=0)
-        self._ZZ_2d_range = self._ZZ_2d.max(axis=0) - self._ZZ_2d_min
-        self._ZZ_2d_range = np.maximum(self._ZZ_2d_range, 1e-6)
-        self._ZZ_2d_norm = (self._ZZ_2d - self._ZZ_2d_min) / self._ZZ_2d_range
 
     def _setup_manual_space(
         self,
@@ -181,84 +153,85 @@ class WSBroadcaster:
             fids = np.asarray(self.nav._file_ids, dtype=np.int32).reshape(-1)
             if fids.shape[0] == points_xyz.shape[0]:
                 self._manual_file_ids = fids
+
+    def _manual_point_norm_for_index(self, idx: int) -> Optional[np.ndarray]:
+        if self._manual_points_3d_norm is None or self._manual_points_3d_norm.shape[0] == 0:
+            return None
+        idx_i = int(np.clip(int(idx), 0, self._manual_points_3d_norm.shape[0] - 1))
+        return self._manual_points_3d_norm[idx_i]
+
+    def _manual_point_norm_for_fractional(
+        self,
+        idx_lower: int,
+        idx_upper: int,
+        frac: float,
+    ) -> Optional[np.ndarray]:
+        lower = self._manual_point_norm_for_index(idx_lower)
+        upper = self._manual_point_norm_for_index(idx_upper)
+        if lower is None or upper is None:
+            return None
+        frac_f = float(np.clip(float(frac), 0.0, 1.0))
+        return ((1.0 - frac_f) * lower + frac_f * upper).astype(np.float32)
+
+    def _manual_trajectory_norm_for_indices(self, indices) -> list:
+        if self._manual_points_3d_norm is None or self._manual_points_3d_norm.shape[0] == 0:
+            return []
+        points = []
+        n_points = self._manual_points_3d_norm.shape[0]
+        for idx in indices[-64:]:
+            idx_i = int(np.clip(int(idx), 0, n_points - 1))
+            pt = self._manual_points_3d_norm[idx_i]
+            points.append([float(pt[0]), float(pt[1]), float(pt[2])])
+        return points
     
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
         nav_state = self.nav.get_state()
 
-        # Get fractional state for smooth interpolation
         frac_state = nav_state.get("fractional", {})
+        n_points = self._manual_points_3d_norm.shape[0] if self._manual_points_3d_norm is not None else int(self.nav.N)
+        current_idx = int(round(nav_state["policy_index"]))
+        current_idx = max(0, min(current_idx, max(n_points - 1, 0)))
 
-        # For latent navigation mode, use the actual continuous latent position
-        # This provides smooth cursor movement instead of snapping to corpus points
-        if self._is_latent_nav and "latent" in nav_state and "position_2d" in nav_state.get("latent", {}):
-            raw_pos_2d = np.array(nav_state["latent"]["position_2d"])
-            # Normalize to [0,1] using the same stats as corpus normalization
-            pos_2d_normalized = (raw_pos_2d - self._ZZ_2d_min) / self._ZZ_2d_range
-            pos_2d = [float(np.clip(p, 0.0, 1.0)) for p in pos_2d_normalized]
-            current_idx = int(round(nav_state["policy_index"]))
-            current_idx = max(0, min(current_idx, len(self._ZZ_2d_norm) - 1))
-        # If fractional state is available, interpolate for smooth cursor movement
-        elif frac_state and frac_state.get("frac", 0.0) > 0.0:
-            idx_lower = frac_state["idx_lower"]
-            idx_upper = frac_state["idx_upper"]
-            frac = frac_state["frac"]
-            # Clamp indices to valid range
-            idx_lower = max(0, min(idx_lower, len(self._ZZ_2d_norm) - 1))
-            idx_upper = max(0, min(idx_upper, len(self._ZZ_2d_norm) - 1))
-            # Interpolate 2D position for smooth cursor movement
-            pos_lower = self._ZZ_2d_norm[idx_lower]
-            pos_upper = self._ZZ_2d_norm[idx_upper]
-            pos_2d = ((1.0 - frac) * pos_lower + frac * pos_upper).tolist()
-            current_idx = idx_lower  # For compatibility
-        else:
-            current_idx = int(round(nav_state["policy_index"]))
-            current_idx = max(0, min(current_idx, len(self._ZZ_2d_norm) - 1))
-            pos_2d = self._ZZ_2d_norm[current_idx].tolist()
-
-        # Get 2D positions for recent trajectory
-        # For latent mode, use the actual continuous 2D trajectory if available
-        if self._is_latent_nav and "latent" in nav_state and "trajectory_2d" in nav_state.get("latent", {}):
-            raw_trajectory = nav_state["latent"]["trajectory_2d"]
-            # Normalize trajectory points using same stats as corpus
-            trajectory_2d = []
-            for pt in raw_trajectory[-64:]:  # Last 64 points
-                pt_arr = np.array(pt)
-                pt_norm = (pt_arr - self._ZZ_2d_min) / self._ZZ_2d_range
-                trajectory_2d.append([float(np.clip(p, 0.0, 1.0)) for p in pt_norm])
-        else:
-            # Use corpus positions for trajectory
-            recent_indices = nav_state["recent_indices"]
-            trajectory_2d = [
-                self._ZZ_2d_norm[max(0, min(int(i), len(self._ZZ_2d_norm) - 1))].tolist()
-                for i in recent_indices[-64:]  # Last 64 points for visualization
-            ]
-        
         # Build state message
         state = {
             "type": "state",
             "timestamp": time.time(),
-                "navigation": {
+            "navigation": {
                 "index": current_idx,
                 "index_normalized": current_idx / max(1, self.nav.N - 1),
-                "position_2d": pos_2d,
-                "trajectory_2d": trajectory_2d,
                 "velocity": nav_state["policy_velocity"],
                 "file_id": nav_state["current_file_id"],
                 "fractional": frac_state if frac_state else None,
                 "timbre_swap": nav_state.get("timbre_swap", {}),
-                    "recompose": nav_state.get("recompose", {}),
-                    "policy_v2": nav_state.get("policy_v2", {}),
-                    "reorganized": nav_state.get("reorganized", {}),
-                    "mode": "random",
-                },
-                "controls": nav_state["controls"],
-            }
+                "recompose": nav_state.get("recompose", {}),
+                "policy_v2": nav_state.get("policy_v2", {}),
+                "reorganized": nav_state.get("reorganized", {}),
+                "mode": "random",
+            },
+            "controls": nav_state["controls"],
+        }
 
-        # Add latent-specific state if available
-        if self._is_latent_nav and "latent" in nav_state:
-            state["navigation"]["latent"] = nav_state["latent"]
-        
+        if self._manual_points_3d_norm is not None:
+            pos_3d = None
+            if frac_state and frac_state.get("frac", 0.0) > 0.0:
+                pos_3d = self._manual_point_norm_for_fractional(
+                    frac_state.get("idx_lower", current_idx),
+                    frac_state.get("idx_upper", current_idx),
+                    frac_state.get("frac", 0.0),
+                )
+            if pos_3d is None:
+                pos_3d = self._manual_point_norm_for_index(current_idx)
+            if pos_3d is not None:
+                state["navigation"]["position_3d"] = [
+                    float(pos_3d[0]),
+                    float(pos_3d[1]),
+                    float(pos_3d[2]),
+                ]
+            state["navigation"]["trajectory_3d"] = self._manual_trajectory_norm_for_indices(
+                nav_state.get("recent_indices", [])
+            )
+
         # Add decoder state if available
         if self.decoder is not None:
             state["decoder"] = self.decoder.get_state()
@@ -308,34 +281,28 @@ class WSBroadcaster:
     
     def _get_corpus_json(self) -> str:
         """Get corpus data for initial visualization setup."""
-        # Sample corpus points for visualization (max 2000 for performance)
-        n_points = len(self._ZZ_2d_norm)
+        n_points = (
+            int(self._manual_points_3d_norm.shape[0])
+            if self._manual_points_3d_norm is not None
+            else int(self.nav.N)
+        )
         if n_points > 2000:
             indices = np.linspace(0, n_points - 1, 2000, dtype=int)
-            positions = self._ZZ_2d_norm[indices].tolist()
-            file_ids = self.nav._file_ids[indices].tolist()
         else:
-            positions = self._ZZ_2d_norm.tolist()
-            file_ids = self.nav._file_ids.tolist()
+            indices = np.arange(n_points, dtype=int)
+        file_ids = self.nav._file_ids[indices].tolist()
 
         manual_positions = []
         manual_color_values = []
         manual_file_ids = file_ids
         if self._manual_points_3d_norm is not None and self._manual_points_3d_norm.shape[0] == n_points:
-            if n_points > 2000:
-                manual_positions = self._manual_points_3d_norm[indices].tolist()
-                if self._manual_color_values_norm is not None:
-                    manual_color_values = (
-                        self._manual_color_values_norm[indices].astype(np.float32).tolist()
-                    )
-                if self._manual_file_ids is not None:
-                    manual_file_ids = self._manual_file_ids[indices].tolist()
-            else:
-                manual_positions = self._manual_points_3d_norm.tolist()
-                if self._manual_color_values_norm is not None:
-                    manual_color_values = self._manual_color_values_norm.astype(np.float32).tolist()
-                if self._manual_file_ids is not None:
-                    manual_file_ids = self._manual_file_ids.tolist()
+            manual_positions = self._manual_points_3d_norm[indices].tolist()
+            if self._manual_color_values_norm is not None:
+                manual_color_values = (
+                    self._manual_color_values_norm[indices].astype(np.float32).tolist()
+                )
+            if self._manual_file_ids is not None:
+                manual_file_ids = self._manual_file_ids[indices].tolist()
 
         nav_mode = "random"
         if self._extra_state_provider is not None:
@@ -349,7 +316,7 @@ class WSBroadcaster:
         return json.dumps({
             "type": "corpus",
             "total_points": n_points,
-            "positions_2d": positions,
+            "point_indices": indices.tolist(),
             "file_ids": file_ids,
             "manual_positions_3d": manual_positions,
             "manual_color_values": manual_color_values,
@@ -412,17 +379,10 @@ class WSBroadcaster:
                 if isinstance(controls, dict):
                     self.nav.set_reorganized_controls(**controls)
 
-            elif msg_type == "cursor":
-                # Update cursor position
-                coords = data.get("coords", [])
-                if coords:
-                    # For latent mode, de-normalize [0,1] coords back to raw PCA space
-                    # so the inverse projection works correctly
-                    if self._is_latent_nav and len(coords) >= 2:
-                        coords_arr = np.array(coords[:2], dtype=np.float32)
-                        coords_raw = coords_arr * self._ZZ_2d_range + self._ZZ_2d_min
-                        coords = coords_raw.tolist()
-                    self.nav.set_cursor_nd(coords)
+            elif msg_type == "cursor_index":
+                idx = data.get("index")
+                if idx is not None:
+                    self.nav.set_cursor_index(idx)
                     
             elif msg_type == "reset":
                 # Reset policy state
@@ -555,7 +515,7 @@ def start_ws_server(
         on_exit_request: Optional callback invoked when web UI requests exit.
         message_handler: Optional callback for custom inbound WebSocket messages.
         extra_state_provider: Optional callback adding fields to broadcast state payloads.
-        manual_points_3d: Optional manual embedding corpus points [N,D>=3] for manual-mode rendering.
+        manual_points_3d: Optional manual embedding corpus points [N,D>=3] for shared 3D rendering.
             Dim 0..2 are XYZ; dim 3 (if present) is used as a color scalar.
         manual_file_ids: Optional file ids aligned with manual_points_3d.
         manual_fader_p01: Optional manual control-space lower bounds used for normalization.

@@ -503,6 +503,28 @@ class LatentNavigationEngine:
                 self._v2_recent_units.append(int(self._v2_current_unit))
                 self._v2_bootstrapped = False
 
+    def set_cursor_index(self, idx):
+        """Snap navigation directly to a corpus frame index."""
+        with self._lock:
+            idx_i = int(np.clip(int(idx), 0, self.N - 1))
+            self._set_current_index(idx_i)
+            self.v = np.zeros(self.latent_dim, dtype=np.float32)
+
+            self._ema_fast = self.z.copy()
+            self._ema_slow = self.z.copy()
+            if self.geometry.use_ema_mid:
+                self._ema_mid = self.z.copy()
+
+            self._retrieval_buffer.clear()
+            self._phrase_frames_remaining = 0
+            self._phrase_anchor_idx = None
+            self._phrase_direction = 0
+            if self._v2_ready and self._v2_frame_to_unit is not None:
+                self._v2_current_unit = int(self._v2_frame_to_unit[int(self._current_index)])
+                self._v2_recent_units.clear()
+                self._v2_recent_units.append(int(self._v2_current_unit))
+                self._v2_bootstrapped = False
+
     _CONTROL_CHANGE_THRESHOLD = 0.05
 
     def set_policy_variant(self, variant: str) -> bool:

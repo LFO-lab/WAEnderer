@@ -419,6 +419,7 @@ class TransportController:
         decoder: DecoderPlayer,
         vae,
         Z_concat: np.ndarray,
+        frame_file_ids: np.ndarray,
         Z_mean: np.ndarray,
         Z_std: np.ndarray,
         initial_mode: str,
@@ -430,6 +431,7 @@ class TransportController:
         self.decoder = decoder
         self.vae = vae
         self.Z_concat = np.asarray(Z_concat, dtype=np.float32)
+        self.frame_file_ids = np.asarray(frame_file_ids, dtype=np.int32).reshape(-1)
         self.Z_mean = np.asarray(Z_mean, dtype=np.float32)
         self.Z_std = np.asarray(Z_std, dtype=np.float32)
 
@@ -1065,6 +1067,11 @@ class TransportController:
             manual_info = {
                 "nearest_index": int(self._manual_last_index),
                 "distance": float(self._manual_last_distance),
+                "current_file_id": int(
+                    self.frame_file_ids[
+                        int(np.clip(self._manual_last_index, 0, self.frame_file_ids.shape[0] - 1))
+                    ]
+                ),
                 "faders": faders_float,
                 "control_dim": int(manual_engine_state.get("control_dim", 3)),
                 "position": position,
@@ -1565,6 +1572,7 @@ def main():
         decoder=decoder,
         vae=vae,
         Z_concat=Z_concat,
+        frame_file_ids=manual_data["frame_file_ids"],
         Z_mean=Z_mean,
         Z_std=Z_std,
         initial_mode=args.initial_navigation_mode,

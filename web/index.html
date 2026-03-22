@@ -176,35 +176,6 @@
             color: #fff;
         }
         
-        .viz-options {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-            margin-bottom: 15px;
-        }
-        
-        .viz-option {
-            padding: 5px 10px;
-            font-size: 11px;
-            background: #1a1a24;
-            border: 1px solid #2a2a3a;
-            border-radius: 4px;
-            color: #888;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .viz-option:hover {
-            background: #222230;
-            color: #ccc;
-        }
-        
-        .viz-option.active {
-            background: #4a9eff;
-            border-color: #4a9eff;
-            color: #fff;
-        }
-        
         button {
             width: 100%;
             padding: 8px;
@@ -382,11 +353,40 @@
                 </div>
             </div>
             
-            <h2>Visualization</h2>
-            <div class="viz-options">
-                <div class="viz-option active" data-mode="scatter">Scatter</div>
-                <div class="viz-option" data-mode="trail">Trail Only</div>
-                <div class="viz-option" data-mode="heatmap">Heatmap</div>
+            <div id="shared-3d-panel" class="panel-hidden">
+                <h2>3D View</h2>
+                <h3>Camera</h3>
+                <div class="camera-grid">
+                    <button id="cam-left" class="camera-btn" type="button">Left</button>
+                    <button id="cam-right" class="camera-btn" type="button">Right</button>
+                    <button id="cam-over" class="camera-btn" type="button">Over</button>
+                    <button id="cam-under" class="camera-btn" type="button">Under</button>
+                    <button id="cam-forward" class="camera-btn" type="button">Forward</button>
+                    <button id="cam-backward" class="camera-btn" type="button">Backward</button>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Camera Speed</span>
+                            <span class="control-value" id="val-cam-speed">1.00</span>
+                        </div>
+                        <input type="range" id="cam-speed" min="0" max="3" step="0.01" value="1.00">
+                    </div>
+                </div>
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Color A</span>
+                        </div>
+                        <input type="color" id="manual-color-a" value="#4a9eff">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Color B</span>
+                        </div>
+                        <input type="color" id="manual-color-b" value="#ff8d4a">
+                    </div>
+                </div>
             </div>
             
             <h2>Navigation Mode</h2>
@@ -525,38 +525,6 @@
 
             <div id="manual-panel" class="panel-hidden">
                 <h2>Manual XYZW</h2>
-                <h3>Camera</h3>
-                <div class="camera-grid">
-                    <button id="cam-left" class="camera-btn" type="button">Left</button>
-                    <button id="cam-right" class="camera-btn" type="button">Right</button>
-                    <button id="cam-over" class="camera-btn" type="button">Over</button>
-                    <button id="cam-under" class="camera-btn" type="button">Under</button>
-                    <button id="cam-forward" class="camera-btn" type="button">Forward</button>
-                    <button id="cam-backward" class="camera-btn" type="button">Backward</button>
-                </div>
-                <div class="control-row">
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Camera Speed</span>
-                            <span class="control-value" id="val-cam-speed">1.00</span>
-                        </div>
-                        <input type="range" id="cam-speed" min="0" max="3" step="0.01" value="1.00">
-                    </div>
-                </div>
-                <div class="control-row">
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Color A</span>
-                        </div>
-                        <input type="color" id="manual-color-a" value="#4a9eff">
-                    </div>
-                    <div class="control-group">
-                        <div class="control-label">
-                            <span>Color B</span>
-                        </div>
-                        <input type="color" id="manual-color-b" value="#ff8d4a">
-                    </div>
-                </div>
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">

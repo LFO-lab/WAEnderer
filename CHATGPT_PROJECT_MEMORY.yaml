@@ -1,0 +1,535 @@
+memory_schema_version: 1
+
+snapshot:
+  generated_on: 2026-03-22
+  repository_root: /Users/dthibault/Documents/GitHub/Stable-Audio-Wanderer
+  repository_name: Stable-Audio-Wanderer
+  git_branch: Timbre-Morphologies
+  working_tree_clean: true
+  generation_method: direct codebase inspection plus targeted test execution
+  source_priority:
+    - stable_audio_wanderer/
+    - bin/
+    - web/
+    - README.md
+    - docs/
+  non_source_paths_to_treat_as_generated_or_secondary:
+    - build/
+    - stable_audio_wanderer.egg-info/
+    - __pycache__/
+    - corpus/
+    - eval_out/
+    - .venv/
+  important_workspace_notes:
+    - stable_audio_wanderer/cli currently contains only __pycache__ files and no active source modules.
+    - build/lib contains a partial packaged copy of older source and should not be treated as authoritative.
+    - The checked-in workspace currently has no uncommitted edits.
+
+project_identity:
+  name: Stable Audio Wanderer
+  package_name: stable_audio_wanderer
+  version_from_setup_py: 0.1.0
+  language: Python
+  minimum_python_from_readme: "3.9+"
+  short_description: >-
+    Real-time audio performance tool that encodes WAV corpora into 64D Stable Audio Open VAE
+    latents, builds geometry and descriptor spaces over those latents, and performs live audio
+    by navigating corpus-aware latent structure in manual, random, or reorganized modes.
+  current_product_state: >-
+    Active prototype / research-performance instrument. It is beyond pure proof-of-concept because
+    the end-to-end pipeline, live decoding, web UI, OSC control, artifact generation, and targeted
+    tests are all present, but several behaviors remain heuristic and some surfaces are not fully
+    aligned with documentation.
+  core_runtime_model: >-
+    The system is now decoder-based rather than grain-based: runtime output comes from live VAE
+    decoding through sounddevice, with navigation determining latent frame batches.
+  high_level_goal: >-
+    Explore artist-scale corpora in a way that feels morphologically and timbrally alive while
+    staying near valid Stable Audio latent regions.
+
+implemented_modes:
+  manual:
+    status: implemented and required at runtime
+    purpose: direct navigation through a low-dimensional timbre embedding derived from descriptors
+    engine: stable_audio_wanderer/runtime/manual_player.py
+    current_behavior:
+      - Manual controls address 3D or 4D embedding axes; W is available when the embedding is 4D.
+      - If descriptor metadata is available, manual search uses a two-stage retrieval path.
+      - Wandering is implemented: the engine can drift among nearby timbrally similar neighbors.
+      - Manual decode batching is independent of the learned random/reorganized window predictor.
+    critical_runtime_requirement: >-
+      bin/perform.py always loads a manual artifact before starting, so manual_navigation.npz is
+      effectively mandatory even if the performer only intends to use random or reorganized mode.
+  random:
+    status: implemented
+    purpose: learned-or-heuristic navigation with corpus-locked timbre swap and short-unit recomposition
+    engine: stable_audio_wanderer/runtime/player.py
+    current_behavior:
+      - Uses LatentNavigationEngine with the random control bank.
+      - Can run from a learned GRU checkpoint or a heuristic fallback when no checkpoint exists.
+      - Supports timbre-aware seed swapping if descriptor data is present.
+      - Supports non-serial short-unit recomposition if descriptor data is present.
+      - Emits predicted window sizes used by the live decode batching logic.
+  reorganized:
+    status: implemented
+    purpose: unit-graph traversal over morphology units with optional learned transition rescoring
+    engine: stable_audio_wanderer/runtime/player.py
+    current_behavior:
+      - Requires a V2 units artifact to be available.
+      - Can run with heuristic candidate scoring only, or with an optional learned transition model.
+      - Uses a dedicated reorganized control bank distinct from random controls.
+      - Traverses units, then emits frame batches from those selected units for live decoding.
+
+architecture:
+  core_pipeline:
+    - preprocess audio into normalized 64D latent frame corpus plus geometry plus manual descriptor space plus V2 unit graph
+    - optionally export manual artifact and train random/reorganized models
+    - perform with live VAE decoding, OSC control, and WebSocket/web visualization
+  major_components:
+    config:
+      path: stable_audio_wanderer/config.py
+      responsibilities:
+        - global constants such as SR=44100 and LATENT_HZ=21.5
+        - device selection with STABLE_AUDIO_FORCE_CPU override
+        - context/geometry hyperparameters
+    vae_encoding:
+      path: stable_audio_wanderer/vae/sae.py
+      responsibilities:
+        - load Stable Audio Open AutoencoderOobleck
+        - encode full files
+        - auto-chunk long inputs on MPS
+        - zero-pad very short inputs to avoid encoder failures
+    vae_decoding:
+      path: stable_audio_wanderer/vae/decoder.py
+      responsibilities:
+        - decode single latent or latent batch to stereo audio
+    corpus_io:
+      path: stable_audio_wanderer/io/corpus_io.py
+      responsibilities:
+        - save/load NPZ corpus artifacts
+        - find latest matching artifacts
+    geometry:
+      path: stable_audio_wanderer/policy/latent_geometry.py
+      responsibilities:
+        - compute causal EMA summaries
+        - build context embeddings
+        - compute kNN geometry
+        - store full-rank latent PCA
+        - provide query embedding helpers
+      implementation_notes:
+        - Uses FAISS when available unless STABLE_AUDIO_DISABLE_FAISS is set.
+        - Falls back to scipy cKDTree when FAISS is unavailable.
+        - Stores both latent-space PCA and context-space PCA.
+    random_policy_model:
+      path: stable_audio_wanderer/policy/latent_policy.py
+      responsibilities:
+        - GRU over latent trajectories
+        - mixture output for delta prediction
+        - velocity update head
+        - continuous log2 window size head
+    reorganized_artifact_builder:
+      path: stable_audio_wanderer/policy/v2_units.py
+      responsibilities:
+        - segment frame timelines into variable-length morphology units
+        - compute unit descriptors
+        - build unit transition graph
+    reorganized_transition_model:
+      path: stable_audio_wanderer/policy/v2_transition_model.py
+      responsibilities:
+        - score candidate unit transitions with an MLP
+    manual_engine:
+      path: stable_audio_wanderer/runtime/manual_player.py
+      responsibilities:
+        - map UI/OSC faders into descriptor embedding queries
+        - run KD-tree based nearest neighbor search
+        - optionally wander among local neighbors
+    navigation_engine:
+      path: stable_audio_wanderer/runtime/player.py
+      responsibilities:
+        - maintain navigation state
+        - run random or reorganized navigation logic
+        - choose retrieval frames or unit trajectories
+        - emit NavFrame metadata for manifold stage and UI
+    manifold_generator:
+      path: stable_audio_wanderer/runtime/manifold.py
+      responsibilities:
+        - anchor emitted frames to local corpus neighborhoods
+        - project perturbations locally or globally
+        - clamp magnitude based on local sigma and exploration
+    audio_output:
+      path: stable_audio_wanderer/runtime/decoder_player.py
+      responsibilities:
+        - crossfade decoded windows
+        - stream audio via sounddevice
+        - fall back to blocking writer mode if callback stream creation fails
+    osc_control:
+      path: stable_audio_wanderer/runtime/osc_server.py
+      responsibilities:
+        - receive control messages for random, reorganized, manual, and decoder parameters
+    websocket_ui:
+      paths:
+        - stable_audio_wanderer/runtime/ws_server.py
+        - web/index.html
+        - web/sketch.js
+      responsibilities:
+        - broadcast state and corpus geometry to browser clients
+        - accept transport and control updates from the custom p5.js UI
+
+architectural_nuances:
+  retrieval_led_runtime: >-
+    The random and reorganized navigation engines still snap emitted runtime frames to observed
+    corpus frames before the manifold stage. The policy influences which corpus frames are chosen,
+    but NavFrame.z_nav is the emitted observed frame, not the unconstrained latent proposal. This
+    means current novelty comes from manifold anchoring/projection around retrieved corpus frames,
+    not from decoding raw free-running policy latents.
+  manual_mode_is_exact_frame_retrieval_before_decode: >-
+    Manual mode selects corpus-aligned latent frames via nearest-neighbor search and then decodes
+    them in batches. It is not directly synthesizing arbitrary manual latent positions.
+  variable_windowing_is_partially_realized: >-
+    The codebase implements window target generation, a window prediction head in the random policy,
+    and adaptive batching in perform.py. The design doc in docs/variable-inference-windows.md still
+    labels the idea as a proposal, but substantial pieces are already live.
+
+artifact_chain:
+  preprocess_script:
+    path: bin/preprocess.py
+    outputs:
+      - corpus/<prefix>_<timestamp>/corpus.npz
+      - corpus/<prefix>_<timestamp>/policy_v2_units.npz
+    responsibilities:
+      - load WAVs
+      - encode latents
+      - normalize latents
+      - compute manual descriptor stack
+      - build manual embedding with PCA or UMAP
+      - compute geometry and window targets
+      - embed V2 unit data directly into corpus.npz
+      - also save policy_v2_units.npz sidecar
+    important_saved_fields:
+      - Z_concat
+      - file_offsets
+      - frame_file_ids
+      - frame_t
+      - meta
+      - Z_mean
+      - Z_std
+      - window_targets_log2
+      - geom_*
+      - manual_*
+      - unit_* and frame_to_unit
+    current_defaults:
+      manual_reducer: pca
+      manual_embed_dim: 4
+      latent_nav_k: 32
+      encode_chunk_sec: 60.0
+      encode_chunk_overlap_sec: 1.0
+      reorg_min_sec: 2.0
+      reorg_max_sec: 10.0
+      reorg_target_sec: 5.0
+      reorg_candidate_k: 64
+      reorg_graph_k: 24
+  manual_artifact_export:
+    path: bin/train_policy.py
+    mode: manual
+    output: manual_navigation.npz
+    responsibilities:
+      - validate manual fields in corpus
+      - build cKDTree-backed manual artifact
+      - save artifact version 3
+  random_training:
+    path: bin/train_policy.py
+    mode: random
+    responsibilities:
+      - build per-file latent sequences
+      - derive synthetic controls from trajectory properties
+      - train LatentPolicy with reconstruction, smoothness, manifold, diversity, and window losses
+    output_pattern: latent_policy_<timestamp>.pt
+  reorganized_training:
+    path: bin/train_policy.py
+    mode: reorganized
+    responsibilities:
+      - read V2 unit graph artifact
+      - build next-unit classification samples from sequential unit order per file
+      - train V2UnitTransitionScorer
+    output_pattern: policy_v2_<timestamp>.pt
+  perform_script:
+    path: bin/perform.py
+    responsibilities:
+      - resolve corpus and artifacts
+      - load manual engine, navigation engine, manifold generator, decoder, VAE
+      - serve OSC
+      - optionally serve WebSocket UI
+      - manage start/stop transport
+
+training_details:
+  manual_mode:
+    learning_component: none
+    note: training the manual mode is artifact export plus KD-tree validation, not ML fitting
+  random_mode:
+    model: LatentPolicy
+    inputs:
+      - latent position z
+      - velocity v
+      - derived controls
+      - local geometry features
+      - causal EMA summaries
+    outputs:
+      - mixture means
+      - mixture log stds
+      - mixture weights
+      - velocity delta
+      - continuous log2 window size
+    loss_terms:
+      - recon
+      - smooth
+      - manifold
+      - diversity
+      - window
+    important_nuances:
+      - Control labels are derived from corpus trajectory statistics, not recorded performer control data.
+      - Runtime controls are heuristically mapped back into the six-control interface expected by the checkpoint.
+      - delta_log_std is produced by the model but is not used in compute_latent_losses, so the variance head is effectively unsupervised.
+      - The checkpoint saved at the end of random training is the final epoch model, not the best-validation model.
+  reorganized_mode:
+    model: V2UnitTransitionScorer
+    training_target: choose the observed next unit within a candidate graph row
+    saved_checkpoint_behavior: saves best validation state
+    important_nuances:
+      - Training labels come from sequential in-file unit order, not from hand-authored transitions.
+      - The runtime can blend heuristic scores with model scores when a trained checkpoint is available.
+
+runtime_behavior:
+  transport_controller:
+    path: bin/perform.py
+    notes:
+      - Selected mode can only be changed while transport is stopped.
+      - Manual mode and policy modes use different queue sizing and buffering heuristics.
+      - Manual fader motion above threshold flushes queued latent batches to reduce stale audio.
+  decoder:
+    notes:
+      - Uses sounddevice OutputStream with callback mode by default.
+      - Falls back to blocking stream writes if callback stream allocation fails.
+      - Crossfade length is proportional to incoming window size.
+      - Gain is applied to queued output chunks.
+      - The smoothing parameter is stored, exposed over OSC/WebSocket/UI, and reported in state, but it is currently not used by write_frame() to alter crossfade behavior.
+  random_and_reorganized_windowing:
+    notes:
+      - Adaptive batching is used unless --fixed_window is set.
+      - --boundary_window_updates delays adaptive window changes to boundary points.
+      - Predicted windows are smoothed in log2 space.
+  manual_windowing:
+    notes:
+      - Manual mode uses a fixed target batch size with runtime slew rather than policy-predicted windowing.
+      - Buffer target scales with manual chunk duration and manual_buffer_ratio.
+  fallback_paths:
+    - No random checkpoint: random mode still works via heuristic latent motion.
+    - No reorganized checkpoint: reorganized mode still works via heuristic unit scoring.
+    - No reorganized units artifact: reorganized mode is unavailable.
+    - No FAISS: geometry/runtime retrieval falls back to scipy cKDTree.
+    - Callback stream allocation failure: decoder falls back to blocking sounddevice writes.
+  environment_variables:
+    STABLE_AUDIO_FORCE_CPU:
+      effect: force DEVICE to cpu even if MPS/CUDA is available
+    STABLE_AUDIO_DISABLE_FAISS:
+      effect: disable FAISS and use cKDTree
+    STABLE_AUDIO_BLOCKING_STREAM:
+      effect: force DecoderPlayer to use blocking stream mode
+    KMP_DUPLICATE_LIB_OK:
+      effect: auto-set in relevant files to reduce OpenMP duplicate library issues on macOS
+
+interfaces:
+  cli_entry_points:
+    main_scripts:
+      - bin/preprocess.py
+      - bin/train_policy.py
+      - bin/perform.py
+    auxiliary_scripts:
+      - bin/build_policy_v2_units.py
+      - bin/listen_v2_units.py
+      - bin/sanity_check_temporal_index.py
+      - bin/train_policy_v2.py
+  osc_surface:
+    summary:
+      - /random/*
+      - /reorganized/*
+      - /manual/*
+      - /decoder/*
+      - /cursor
+    implementation_path: stable_audio_wanderer/runtime/osc_server.py
+  websocket_surface:
+    implementation_path: stable_audio_wanderer/runtime/ws_server.py
+    frontend_paths:
+      - web/index.html
+      - web/sketch.js
+    notes:
+      - UI is custom p5.js and not bundled through a frontend toolchain.
+      - index.html loads p5.js from a CDN, so browser-side offline use depends on that script already being cached or otherwise reachable.
+
+dependencies:
+  canonical_dependency_file: requirements.txt
+  important_packages:
+    - torch
+    - torchaudio
+    - numpy
+    - soundfile
+    - sounddevice
+    - scikit-learn
+    - scipy
+    - faiss-cpu
+    - python-osc
+    - websockets
+    - tqdm
+    - umap-learn
+    - diffusers
+    - transformers
+    - accelerate
+    - safetensors
+  packaging_caveat: >-
+    setup.py declares install_requires=[] even though the project needs the packages listed in
+    requirements.txt. requirements.txt is the real dependency source at the moment.
+
+documentation_alignment:
+  generally_aligned:
+    - README.md accurately reflects the three runtime modes, major scripts, and artifact names.
+    - docs/manifold-refactor-changes.md matches the move away from grain playback toward live decode.
+  partially_or_aspirationally_aligned:
+    - docs/variable-inference-windows.md is labeled as a proposal, but several pieces are already implemented in code.
+    - docs/generative-direction.md describes a more explicitly unconstrained-navigation-to-manifold pipeline than the current retrieval-led runtime actually exposes.
+  concrete_mismatches:
+    - README/UI/OSC expose decoder smoothing as a functional control, but decoder_player.py currently keeps smoothing only for API/state compatibility.
+
+workspace_assets:
+  checked_in_corpus_snapshots:
+    - directory: corpus/TC_20260315_215333
+      summary:
+        frames: 5605
+        source_audio_files: 1
+        source_paths:
+          - user_audio/ARCHIVE/ToutCroche_(harpsichord).wav
+        manual_reducer: umap
+        manual_embedding_dim: 4
+        manual_artifact_version: 3
+        has_geometry: true
+        has_window_targets_log2: true
+        has_embedded_v2_unit_fields: true
+        embedded_unit_count: 51
+        sidecar_v2_graph_k: 24
+      checkpoints_present:
+        random:
+          - latent_policy_20260315_215736.pt
+        reorganized:
+          - policy_v2_20260315_215510.pt
+          - policy_v2_20260315_215737.pt
+      checkpoint_metadata:
+        latent_policy_20260315_215736.pt:
+          history_epochs: 2000
+          final_recorded_val_loss: 2.4949629306793213
+          config:
+            latent_dim: 64
+            hidden_size: 256
+            num_layers: 2
+            num_mixture_components: 4
+            control_dim: 6
+            local_feature_dim: 16
+            context_summary_dim: 128
+        policy_v2_20260315_215510.pt:
+          best_val_loss: 1.6434736251831055
+          input_dim: 145
+          config:
+            hidden_dim: 192
+            layers: 3
+            dropout: 0.1
+        policy_v2_20260315_215737.pt:
+          best_val_loss: 1.9311233758926392
+          input_dim: 145
+          config:
+            hidden_dim: 192
+            layers: 3
+            dropout: 0.1
+      corpus_stats:
+        latent_shape: [5605, 64]
+        meta_shape: [5605, 3]
+        manual_descriptor_shape: [5605, 35]
+        manual_embedding_shape: [5605, 4]
+        geometry_knn_shape: [5605, 32]
+        geometry_embedding_shape: [5605, 64]
+        geometry_pca_shape: [64, 64]
+        window_targets_log2:
+          min: 1.0
+          max: 6.0
+          mean: 3.5498769283294678
+  user_audio_snapshot:
+    notable_files:
+      - user_audio/ARCHIVE/ToutCroche_(harpsichord).wav
+      - user_audio/Good/01-Rehab.wav
+    note: The checked-in corpus snapshot was built from the archived harpsichord file, not from the Good folder file.
+  eval_outputs:
+    files:
+      - eval_out/metrics.txt
+      - eval_out/scatter_brightness.png
+      - eval_out/scatter_centroid.png
+      - eval_out/scatter_rms.png
+    metrics_txt_contents:
+      trustworthiness_k15: 0.575560
+      continuity_k15: 0.731102
+      distance_spearman_rho_m800: 0.119677
+    note: These outputs exist in the workspace, but there is no obvious checked-in script in the repository that regenerates them directly.
+
+validation:
+  targeted_tests_run_during_memory_generation:
+    passed:
+      - .venv/bin/python test_policy_timbre_swap.py
+      - .venv/bin/python test_policy_recompose.py
+      - .venv/bin/python test_policy_v2_runtime.py
+      - .venv/bin/python test_policy_v2_units.py
+      - .venv/bin/python test_timbral_wandering.py
+    failed:
+      - .venv/bin/python simple_test.py
+  interpretation:
+    passing_surface:
+      - timbre-aware seed swapping
+      - random-mode recomposition logic
+      - V2 runtime fallback behavior
+      - V2 unit artifact construction
+      - manual wandering behavior
+    failing_surface:
+      - simple_test.py appears stale rather than signaling a proven runtime regression
+  simple_test_failure_reason: >-
+    simple_test.py uses brittle string checks against perform.py and expects literal substrings such
+    as wander_k=1 and wander_speed=0.0 that no longer match the current file text. It also includes
+    hard-coded absolute repo paths, which makes it maintenance-heavy.
+
+known_issues_and_gotchas:
+  - perform.py requires the manual artifact up front, so random-only and reorganized-only runs still depend on manual_navigation.npz existing.
+  - The decoder smoothing control is exposed everywhere but currently does not change actual crossfade behavior.
+  - Random policy training saves the final checkpoint rather than the best-validation checkpoint.
+  - The LatentPolicy variance head is effectively unsupervised because delta_log_std is not used in the training loss.
+  - setup.py does not declare the real runtime dependencies.
+  - stable_audio_wanderer/cli is not an active source package despite the directory existing.
+  - build/lib contains stale packaged copies and should not be edited as source.
+  - The live runtime remains retrieval-led; it does not yet decode unconstrained policy latents directly.
+  - The checked-in UI depends on CDN-hosted p5.js.
+  - simple_test.py is stale and currently failing.
+
+future_enhancements_tracked_in_repo:
+  source_file: FUTURE_ENHANCEMENTS.md
+  items:
+    - named preset recall/save for policy controls
+    - improved morphology-aware unit segmentation
+
+recommended_next_actions_for_future_assistants:
+  high_value_cleanup:
+    - implement real use of decoder smoothing or remove/deprecate the control surface
+    - change random training to save best-validation weights, not just final weights
+    - either supervise/remove the LatentPolicy log-std head
+    - update or remove simple_test.py
+    - align setup.py with requirements.txt or explicitly document that setup.py is non-canonical
+  architectural_decisions_to_revisit:
+    - decide whether manifold decoding should consume the unconstrained policy trajectory rather than observed corpus frames
+    - decide whether manual artifact loading should remain mandatory for all runtime modes
+    - decide whether docs/variable-inference-windows.md should be updated from proposal to implemented/partial
+  safe_edit_zones_for_most_future_work:
+    - stable_audio_wanderer/runtime/
+    - stable_audio_wanderer/policy/
+    - bin/
+    - web/
