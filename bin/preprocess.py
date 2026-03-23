@@ -39,6 +39,7 @@ from stable_audio_wanderer.policy import (
     save_geometry_to_dict,
 )
 from stable_audio_wanderer.policy.sequence import compute_velocity_magnitudes
+from stable_audio_wanderer.preprocess import SilenceTrimConfig, trim_silent_frames
 
 MANUAL_EMBED_DIM = 4
 MANUAL_PERCENTILE_LOW = 1.0
@@ -49,6 +50,9 @@ MANUAL_N_FFT = 2048
 MANUAL_ROLLOFF = 0.85
 MANUAL_REDUCER_PCA = "pca"
 MANUAL_REDUCER_UMAP = "umap"
+SILENCE_THRESHOLD_DB_DEFAULT = -45.0
+SILENCE_MIN_DURATION_SEC_DEFAULT = 0.25
+SILENCE_KEEP_SEC_DEFAULT = 0.10
 
 MANUAL_DESCRIPTOR_NAMES = [
     "mfcc_01",
@@ -539,6 +543,37 @@ def main():
                     help="Chunk size (seconds) for VAE encoding. Set 0 to disable chunking.")
     ap.add_argument("--encode_chunk_overlap_sec", type=float, default=1.0,
                     help="Chunk overlap (seconds) for VAE encoding.")
+    ap.add_argument(
+        "--trim_silence",
+        dest="trim_silence",
+        action="store_true",
+        default=True,
+        help="Trim long silent runs from the stored corpus sequences (default: enabled).",
+    )
+    ap.add_argument(
+        "--no_trim_silence",
+        dest="trim_silence",
+        action="store_false",
+        help="Disable silence trimming during preprocessing.",
+    )
+    ap.add_argument(
+        "--silence_threshold_db",
+        type=float,
+        default=SILENCE_THRESHOLD_DB_DEFAULT,
+        help="RMS threshold in dBFS below which frames are considered silent.",
+    )
+    ap.add_argument(
+        "--silence_min_duration_sec",
+        type=float,
+        default=SILENCE_MIN_DURATION_SEC_DEFAULT,
+        help="Only silent runs at least this long are removed from the corpus.",
+    )
+    ap.add_argument(
+        "--silence_keep_sec",
+        type=float,
+        default=SILENCE_KEEP_SEC_DEFAULT,
+        help="Silence padding kept around active regions after trimming.",
+    )
     ap.add_argument("--compute_decoder_targets", action="store_true",
                     help="Compute decoder quality targets (expensive: 11 VAE decodes per segment).")
     ap.add_argument(
@@ -652,18 +687,35 @@ def main():
     chunk_sec = encode_chunk_sec if encode_chunk_sec > 0.0 else None
     latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
     mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
+    silence_cfg = SilenceTrimConfig(
+        enabled=bool(args.trim_silence),
+        threshold_db=float(args.silence_threshold_db),
+        min_silence_sec=float(max(0.0, args.silence_min_duration_sec)),
+        keep_silence_sec=float(max(0.0, args.silence_keep_sec)),
+    )
+    silence_original_frames = 0
+    silence_removed_frames = 0
 
     print("Encoding audio with VAE + extracting latent-aligned timbre descriptors...")
     for fid, p in enumerate(tqdm(paths)):
         wav = load_wav(p)
         z_full = encode_full(ae, wav, chunk_sec=chunk_sec, overlap_sec=encode_overlap_sec).astype(np.float32)
-        latent_sequences_raw.append(np.ascontiguousarray(z_full))
         descriptor_seq = compute_latent_aligned_descriptors(
             wav_stereo=wav,
             target_frames=z_full.shape[0],
             mfcc_transform=mfcc_transform,
             hop_length=latent_hop,
         )
+        z_full, descriptor_seq, trim_result = trim_silent_frames(
+            wav_stereo=wav,
+            latents=z_full,
+            descriptors=descriptor_seq,
+            cfg=silence_cfg,
+            latent_hz=float(LATENT_HZ),
+        )
+        silence_original_frames += int(trim_result.original_frames)
+        silence_removed_frames += int(trim_result.removed_frames)
+        latent_sequences_raw.append(np.ascontiguousarray(z_full))
         manual_descriptor_sequences.append(np.ascontiguousarray(descriptor_seq))
 
     if not latent_sequences_raw:
@@ -672,6 +724,17 @@ def main():
         raise RuntimeError("Manual descriptor extraction count mismatch.")
 
     paths_arr = np.array(paths)
+    if silence_cfg.enabled:
+        silence_kept_frames = int(silence_original_frames - silence_removed_frames)
+        removed_pct = 100.0 * float(silence_removed_frames) / float(max(1, silence_original_frames))
+        print(
+            "Silence trim summary:",
+            f"kept={silence_kept_frames}/{silence_original_frames} frames",
+            f"removed={silence_removed_frames} ({removed_pct:.1f}%)",
+            f"threshold={silence_cfg.threshold_db:.1f} dB",
+            f"min_silence={silence_cfg.min_silence_sec:.2f}s",
+            f"keep={silence_cfg.keep_silence_sec:.2f}s",
+        )
 
     # Compute normalization stats from all VAE latents
     latent_stack = np.concatenate(latent_sequences_raw, axis=0).astype(np.float32)
@@ -820,6 +883,12 @@ def main():
         ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
         ema_alpha_slow=np.array(float(EMA_ALPHA_SLOW), dtype=np.float32),
         context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
+        trim_silence=np.array(int(silence_cfg.enabled), dtype=np.int32),
+        silence_threshold_db=np.array(float(silence_cfg.threshold_db), dtype=np.float32),
+        silence_min_duration_sec=np.array(float(silence_cfg.min_silence_sec), dtype=np.float32),
+        silence_keep_sec=np.array(float(silence_cfg.keep_silence_sec), dtype=np.float32),
+        silence_original_frames=np.array(int(silence_original_frames), dtype=np.int64),
+        silence_removed_frames=np.array(int(silence_removed_frames), dtype=np.int64),
         window_targets_log2=window_targets_log2,
         **geometry_arrays,
         **manual_arrays,
