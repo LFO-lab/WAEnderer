@@ -50,6 +50,10 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 | `--latent_nav_k` | 32 | k-NN neighbors for geometry |
 | `--encode_chunk_sec` | 60.0 | VAE encode chunk size in seconds (0 disables chunking) |
 | `--encode_chunk_overlap_sec` | 1.0 | VAE encode chunk overlap in seconds |
+| `--trim_silence` / `--no_trim_silence` | enabled | Remove long silent runs from stored corpus frames while keeping a small amount of surrounding silence |
+| `--silence_threshold_db` | -45.0 | RMS dBFS threshold used to classify frames as silent |
+| `--silence_min_duration_sec` | 0.25 | Only silent runs at least this long are removed |
+| `--silence_keep_sec` | 0.10 | Silence padding preserved around active regions |
 | `--manual_reducer` | `pca` | Manual embedding reducer (`pca` or `umap`) |
 | `--manual_embed_dim` | 4 | Manual embedding dimensionality (`3` or `4`; dim4 maps to W/color axis) |
 | `--manual_umap_n_neighbors` | 30 | UMAP `n_neighbors` (when reducer is `umap`) |
