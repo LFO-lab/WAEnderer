@@ -13,22 +13,20 @@ from typing import Optional, Tuple
 import numpy as np
 from scipy.spatial import cKDTree
 
+from ..io.corpus_io import read_scalar as _read_scalar
 from .sequence import group_meta_by_file
 
 
 def compute_causal_ema_summaries(
     z_seq: np.ndarray,
     alpha_fast: float,
-    alpha_mid: float,
     alpha_slow: float,
-    use_ema_mid: bool,
-) -> Tuple[np.ndarray, Optional[np.ndarray], np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute causal EMA summaries for one latent sequence [T, 64].
 
     Returns:
         m_fast: [T, 64]
-        m_mid: [T, 64] or None
         m_slow: [T, 64]
     """
     z_seq = np.asarray(z_seq, dtype=np.float32)
@@ -38,50 +36,38 @@ def compute_causal_ema_summaries(
     T, D = z_seq.shape
     m_fast = np.zeros((T, D), dtype=np.float32)
     m_slow = np.zeros((T, D), dtype=np.float32)
-    m_mid = np.zeros((T, D), dtype=np.float32) if use_ema_mid else None
 
     if T == 0:
-        return m_fast, m_mid, m_slow
+        return m_fast, m_slow
 
     fast_state = z_seq[0].copy()
     slow_state = z_seq[0].copy()
-    mid_state = z_seq[0].copy() if use_ema_mid else None
 
     for t in range(T):
         z_t = z_seq[t]
         if t == 0:
             fast_state = z_t.copy()
             slow_state = z_t.copy()
-            if use_ema_mid:
-                mid_state = z_t.copy()
         else:
             fast_state = alpha_fast * fast_state + (1.0 - alpha_fast) * z_t
             slow_state = alpha_slow * slow_state + (1.0 - alpha_slow) * z_t
-            if use_ema_mid:
-                mid_state = alpha_mid * mid_state + (1.0 - alpha_mid) * z_t
 
         m_fast[t] = fast_state
         m_slow[t] = slow_state
-        if use_ema_mid:
-            m_mid[t] = mid_state
 
-    return m_fast, m_mid, m_slow
+    return m_fast, m_slow
 
 
 def build_context_features(
     latents: np.ndarray,
     meta: np.ndarray,
     alpha_fast: float,
-    alpha_mid: float,
     alpha_slow: float,
-    use_ema_mid: bool,
 ) -> np.ndarray:
     """
     Build causal context features for all frames.
 
-    Context format:
-        - no mid EMA: concat(z_t, m_fast_t, m_slow_t)           -> 192 dims
-        - with mid EMA: concat(z_t, m_fast_t, m_mid_t, m_slow_t) -> 256 dims
+    Context format: concat(z_t, m_fast_t, m_slow_t) -> 192 dims
     """
     latents = np.asarray(latents, dtype=np.float32)
     if latents.ndim != 2:
@@ -92,26 +78,19 @@ def build_context_features(
 
     m_fast = np.zeros((N, D), dtype=np.float32)
     m_slow = np.zeros((N, D), dtype=np.float32)
-    m_mid = np.zeros((N, D), dtype=np.float32) if use_ema_mid else None
 
     for seq in sequences:
         if seq.size == 0:
             continue
         z_seq = latents[seq]
-        seq_fast, seq_mid, seq_slow = compute_causal_ema_summaries(
+        seq_fast, seq_slow = compute_causal_ema_summaries(
             z_seq,
             alpha_fast=alpha_fast,
-            alpha_mid=alpha_mid,
             alpha_slow=alpha_slow,
-            use_ema_mid=use_ema_mid,
         )
         m_fast[seq] = seq_fast
         m_slow[seq] = seq_slow
-        if use_ema_mid:
-            m_mid[seq] = seq_mid
 
-    if use_ema_mid:
-        return np.concatenate([latents, m_fast, m_mid, m_slow], axis=1).astype(np.float32)
     return np.concatenate([latents, m_fast, m_slow], axis=1).astype(np.float32)
 
 
@@ -128,24 +107,28 @@ class LatentGeometry:
     local_sigma: np.ndarray          # [N] median kNN distance
     local_density: np.ndarray        # [N] 1 / local_sigma
     time_gradients: np.ndarray       # [N, 64] local forward-time direction in latent space
-    file_ids: np.ndarray             # [N] alias of idx_to_file_id
-    t_lat: np.ndarray                # [N] alias of idx_to_t
+    file_ids: np.ndarray             # [N] per-frame file id
+    t_lat: np.ndarray                # [N] per-frame latent time index
     centroid: np.ndarray             # [64] latent centroid
     pca_components: np.ndarray       # [64, 64] latent PCA basis (manifold/visualization)
     pca_mean: np.ndarray             # [64] latent PCA mean
 
     embeddings: np.ndarray           # [N, P] projected context embeddings E
-    idx_to_file_id: np.ndarray       # [N]
-    idx_to_t: np.ndarray             # [N]
 
     ctx_pca_components: np.ndarray   # [P, C] projection basis from context -> E
     ctx_pca_mean: np.ndarray         # [C]
 
     k_short: int
     ema_alpha_fast: float
-    ema_alpha_mid: float
     ema_alpha_slow: float
-    use_ema_mid: bool
+
+    @property
+    def idx_to_file_id(self) -> np.ndarray:
+        return self.file_ids
+
+    @property
+    def idx_to_t(self) -> np.ndarray:
+        return self.t_lat
 
     @property
     def N(self) -> int:
@@ -173,10 +156,6 @@ class LatentGeometry:
             raise ValueError("PCA components must have at least 2 rows for 2D projection.")
         return self.pca_components[:2]
 
-    def get_knn_centroid(self, indices: np.ndarray, latents: np.ndarray) -> np.ndarray:
-        neighbor_idx = self.knn_indices[indices]
-        return latents[neighbor_idx].mean(axis=1)
-
     def project_to_2d(self, z: np.ndarray) -> np.ndarray:
         z_centered = z - self.pca_mean
         return z_centered @ self.pca_components_2d.T
@@ -186,16 +165,10 @@ class LatentGeometry:
         z_t: np.ndarray,
         m_fast_t: np.ndarray,
         m_slow_t: np.ndarray,
-        m_mid_t: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         z_t = np.asarray(z_t, dtype=np.float32)
         m_fast_t = np.asarray(m_fast_t, dtype=np.float32)
         m_slow_t = np.asarray(m_slow_t, dtype=np.float32)
-        if self.use_ema_mid:
-            if m_mid_t is None:
-                raise ValueError("m_mid_t is required when use_ema_mid is True")
-            m_mid_t = np.asarray(m_mid_t, dtype=np.float32)
-            return np.concatenate([z_t, m_fast_t, m_mid_t, m_slow_t], axis=-1).astype(np.float32)
         return np.concatenate([z_t, m_fast_t, m_slow_t], axis=-1).astype(np.float32)
 
     def project_context(self, ctx: np.ndarray) -> np.ndarray:
@@ -208,9 +181,8 @@ class LatentGeometry:
         z_t: np.ndarray,
         m_fast_t: np.ndarray,
         m_slow_t: np.ndarray,
-        m_mid_t: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        ctx = self.build_context_vector(z_t, m_fast_t, m_slow_t, m_mid_t=m_mid_t)
+        ctx = self.build_context_vector(z_t, m_fast_t, m_slow_t)
         emb = self.project_context(ctx)
         norm = np.linalg.norm(emb, axis=-1, keepdims=True)
         norm = np.maximum(norm, 1e-6)
@@ -223,9 +195,7 @@ def compute_latent_geometry(
     k: int = 32,
     k_short: int = 8,
     ema_alpha_fast: float = 0.60,
-    ema_alpha_mid: float = 0.80,
     ema_alpha_slow: float = 0.95,
-    use_ema_mid: bool = False,
     pca_dim: int = 64,
 ) -> LatentGeometry:
     """
@@ -257,9 +227,7 @@ def compute_latent_geometry(
         latents,
         meta,
         alpha_fast=float(ema_alpha_fast),
-        alpha_mid=float(ema_alpha_mid),
         alpha_slow=float(ema_alpha_slow),
-        use_ema_mid=bool(use_ema_mid),
     )
 
     pca_ctx_dim = int(max(2, min(int(pca_dim), context.shape[1], N)))
@@ -352,15 +320,11 @@ def compute_latent_geometry(
         pca_components=pca_components,
         pca_mean=pca_mean,
         embeddings=embeddings,
-        idx_to_file_id=file_ids.copy(),
-        idx_to_t=t_lat.copy(),
         ctx_pca_components=ctx_components,
         ctx_pca_mean=ctx_mean,
         k_short=int(k_short),
         ema_alpha_fast=float(ema_alpha_fast),
-        ema_alpha_mid=float(ema_alpha_mid),
         ema_alpha_slow=float(ema_alpha_slow),
-        use_ema_mid=bool(use_ema_mid),
     )
 
 
@@ -383,21 +347,8 @@ def save_geometry_to_dict(geometry: LatentGeometry) -> dict:
         "geom_ctx_pca_mean": geometry.ctx_pca_mean,
         "geom_k_short": np.array(int(geometry.k_short), dtype=np.int32),
         "geom_ema_alpha_fast": np.array(float(geometry.ema_alpha_fast), dtype=np.float32),
-        "geom_ema_alpha_mid": np.array(float(geometry.ema_alpha_mid), dtype=np.float32),
         "geom_ema_alpha_slow": np.array(float(geometry.ema_alpha_slow), dtype=np.float32),
-        "geom_use_ema_mid": np.array(int(geometry.use_ema_mid), dtype=np.int32),
     }
-
-
-def _read_scalar(data: dict, key: str, default):
-    if key not in data:
-        return default
-    value = data[key]
-    if isinstance(value, np.ndarray):
-        if value.size == 0:
-            return default
-        return value.reshape(-1)[0].item()
-    return value
 
 
 def load_geometry_from_dict(data: dict) -> Optional[LatentGeometry]:
@@ -419,13 +370,9 @@ def load_geometry_from_dict(data: dict) -> Optional[LatentGeometry]:
         pca_components=data["geom_pca_components"],
         pca_mean=data["geom_pca_mean"],
         embeddings=data["geom_embeddings"],
-        idx_to_file_id=data["geom_idx_to_file_id"],
-        idx_to_t=data["geom_idx_to_t"],
         ctx_pca_components=data["geom_ctx_pca_components"],
         ctx_pca_mean=data["geom_ctx_pca_mean"],
         k_short=int(_read_scalar(data, "geom_k_short", 8)),
         ema_alpha_fast=float(_read_scalar(data, "geom_ema_alpha_fast", 0.60)),
-        ema_alpha_mid=float(_read_scalar(data, "geom_ema_alpha_mid", 0.80)),
         ema_alpha_slow=float(_read_scalar(data, "geom_ema_alpha_slow", 0.95)),
-        use_ema_mid=bool(int(_read_scalar(data, "geom_use_ema_mid", 0))),
     )

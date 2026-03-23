@@ -7,8 +7,6 @@ import numpy as np
 import torch
 from diffusers import AutoencoderOobleck
 from ..config import DEVICE, DTYPE, SR, LATENT_HZ
-from ..io.audio_io import load_wav  # Re-export for backward compatibility
-
 # Long MPS convolutions fail for multi-minute inputs; encode in smaller windows instead.
 MPS_AUTO_CHUNK_THRESHOLD_SEC = 240.0
 MPS_AUTO_CHUNK_SEC = 60.0

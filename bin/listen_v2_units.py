@@ -10,19 +10,9 @@ import numpy as np
 
 from stable_audio_wanderer.config import SR
 from stable_audio_wanderer.io.audio_io import save_wav
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.io.corpus_io import load_corpus, resolve_corpus_path
 from stable_audio_wanderer.vae.decoder import decode_latents
 from stable_audio_wanderer.vae.sae import load_vae
-
-
-def _resolve_corpus_path(corpus_dir: str) -> str:
-    try:
-        return find_latest(corpus_dir, "*_corpus_*.npz")
-    except FileNotFoundError:
-        fallback = os.path.join(corpus_dir, "corpus.npz")
-        if not os.path.exists(fallback):
-            raise FileNotFoundError(f"No corpus file found in {corpus_dir}")
-        return fallback
 
 
 def _parse_indices(value: str) -> List[int]:
@@ -104,7 +94,7 @@ def main():
     )
     args = ap.parse_args()
 
-    corpus_npz = _resolve_corpus_path(args.corpus_dir)
+    corpus_npz = resolve_corpus_path(args.corpus_dir)
     artifact_path = args.v2_artifact or os.path.join(args.corpus_dir, "policy_v2_units.npz")
     artifact_path = os.path.abspath(artifact_path)
     if not os.path.exists(artifact_path):

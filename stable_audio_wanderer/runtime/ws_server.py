@@ -86,6 +86,19 @@ class WSBroadcaster:
             manual_fader_p99,
         )
 
+        if self._is_latent_nav:
+            # For latent nav, use the stored PCA projection
+            self._ZZ_2d = self.nav.geometry.project_to_2d(self.nav.GG)
+            self._projection_matrix = self.nav.geometry.pca_components_2d
+        else:
+            raise TypeError(f"Unsupported navigation engine type: {type(self.nav).__name__}")
+
+        # Normalize to [0, 1]
+        self._ZZ_2d_min = self._ZZ_2d.min(axis=0)
+        self._ZZ_2d_range = self._ZZ_2d.max(axis=0) - self._ZZ_2d_min
+        self._ZZ_2d_range = np.maximum(self._ZZ_2d_range, 1e-6)
+        self._ZZ_2d_norm = (self._ZZ_2d - self._ZZ_2d_min) / self._ZZ_2d_range
+
     def _setup_manual_space(
         self,
         manual_points_3d: Optional[np.ndarray],
@@ -183,7 +196,7 @@ class WSBroadcaster:
             pt = self._manual_points_3d_norm[idx_i]
             points.append([float(pt[0]), float(pt[1]), float(pt[2])])
         return points
-    
+
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
         nav_state = self.nav.get_state()

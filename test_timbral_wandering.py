@@ -125,8 +125,5 @@ def test_manual_navigation_wandering():
 
     print("\n✅ All tests completed successfully!")
 
-
-    print("\n✅ All tests completed successfully!")
-
 if __name__ == "__main__":
     test_manual_navigation_wandering()

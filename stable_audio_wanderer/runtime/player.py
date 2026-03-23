@@ -149,7 +149,6 @@ class LatentNavigationEngine:
 
         self._ema_fast = self.z.copy()
         self._ema_slow = self.z.copy()
-        self._ema_mid = self.z.copy() if self.geometry.use_ema_mid else None
 
         self._retrieval_buffer = deque()
         self._last_predicted_window = 4
@@ -486,8 +485,6 @@ class LatentNavigationEngine:
 
             self._ema_fast = self.z.copy()
             self._ema_slow = self.z.copy()
-            if self.geometry.use_ema_mid:
-                self._ema_mid = self.z.copy()
 
             # Snap cursor to nearest indexed frame in causal embedding space.
             indices, _ = self._query_knn(self.z, k=1)
@@ -628,25 +625,6 @@ class LatentNavigationEngine:
                 self._controls_dirty = True
                 self._prev_reorganized_control_vector = new_vec
 
-    # Backward-compatible alias for existing integrations.
-    def set_policy_controls(
-        self,
-        phrase_scale=None,
-        jump_rate=None,
-        timbre_lock=None,
-        drift=None,
-        repeat_avoid=None,
-        crossfile=None,
-    ):
-        self.set_random_controls(
-            phrase_scale=phrase_scale,
-            jump_rate=jump_rate,
-            timbre_lock=timbre_lock,
-            drift=drift,
-            repeat_avoid=repeat_avoid,
-            crossfile=crossfile,
-        )
-
     def reset_policy(self, idx=None):
         with self._lock:
             if idx is not None:
@@ -655,8 +633,6 @@ class LatentNavigationEngine:
             self.v = np.zeros(self.latent_dim, dtype=np.float32)
             self._ema_fast = self.z.copy()
             self._ema_slow = self.z.copy()
-            if self.geometry.use_ema_mid:
-                self._ema_mid = self.z.copy()
             self._reset_policy_state()
             self._recompose_stats = {
                 "paths_built": 0,
@@ -720,8 +696,6 @@ class LatentNavigationEngine:
         )
 
     def _context_summaries(self) -> np.ndarray:
-        if self.geometry.use_ema_mid:
-            return np.concatenate([self._ema_fast, self._ema_mid, self._ema_slow], axis=0).astype(np.float32)
         return np.concatenate([self._ema_fast, self._ema_slow], axis=0).astype(np.float32)
 
     def _query_embedding(self, z_query: np.ndarray) -> np.ndarray:
@@ -729,7 +703,6 @@ class LatentNavigationEngine:
             z_query,
             self._ema_fast,
             self._ema_slow,
-            m_mid_t=self._ema_mid if self.geometry.use_ema_mid else None,
         ).astype(np.float32)
 
     def _query_knn(
@@ -798,11 +771,6 @@ class LatentNavigationEngine:
             self.geometry.ema_alpha_slow * self._ema_slow +
             (1.0 - self.geometry.ema_alpha_slow) * z_t
         ).astype(np.float32)
-        if self.geometry.use_ema_mid:
-            self._ema_mid = (
-                self.geometry.ema_alpha_mid * self._ema_mid +
-                (1.0 - self.geometry.ema_alpha_mid) * z_t
-            ).astype(np.float32)
 
     def _sample_phrase_length_frames(self) -> int:
         min_frames = int(max(2, round(self.PHRASE_MIN_SECONDS / self.LATENT_FRAME_SECONDS)))

@@ -68,12 +68,10 @@ class DecoderPlayer:
         self,
         sr: int = SR,
         gain: float = 1.0,
-        smoothing: float = 0.1,
         blocksize: int = 0,
     ):
         self.sr = int(sr)
         self._gain = float(gain)
-        self._smoothing = float(np.clip(smoothing, 0.0, 1.0))  # Kept for API compat
         self.frame_samples = 0
         self.frame_duration = None
         self.underruns = 0
@@ -153,9 +151,6 @@ class DecoderPlayer:
 
     def set_gain(self, value: float):
         self._gain = float(max(0.0, value))
-
-    def set_smoothing(self, value: float):
-        self._smoothing = float(np.clip(value, 0.0, 1.0))
 
     def _callback(self, outdata, frames, time_info, status):
         """Audio callback - runs in sounddevice's audio thread."""
@@ -294,7 +289,6 @@ class DecoderPlayer:
     def get_state(self) -> dict:
         return {
             "gain": self._gain,
-            "smoothing": self._smoothing,
             "frame_samples": int(self.frame_samples),
             "underruns": int(self.underruns),
             "buffer_duration": self.buffer_duration(),

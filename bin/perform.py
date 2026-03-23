@@ -18,7 +18,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus, read_scalar as _read_scalar
 from stable_audio_wanderer.policy.latent_geometry import load_geometry_from_dict
 from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
 from stable_audio_wanderer.runtime.manifold import (
@@ -121,17 +121,6 @@ def load_navigation_engine(
     )
 
 
-def _read_scalar(data: dict, key: str, default):
-    if key not in data:
-        return default
-    value = data[key]
-    if isinstance(value, np.ndarray):
-        if value.size == 0:
-            return default
-        return value.reshape(-1)[0].item()
-    return value
-
-
 def load_manual_artifact(path: str, expected_frames: int) -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Manual navigation artifact not found: {path}")
@@ -147,12 +136,9 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     if missing:
         raise RuntimeError(f"Manual artifact missing keys: {missing}")
 
-    if "manual_embed_points" in artifact:
-        points = artifact["manual_embed_points"].astype(np.float32)
-    elif "manual_pca_points" in artifact:
-        points = artifact["manual_pca_points"].astype(np.float32)
-    else:
+    if "manual_embed_points" not in artifact:
         raise RuntimeError("Manual artifact missing manual_embed_points.")
+    points = artifact["manual_embed_points"].astype(np.float32)
 
     p01 = artifact["manual_fader_p01"].astype(np.float32).reshape(-1)
     p99 = artifact["manual_fader_p99"].astype(np.float32).reshape(-1)
@@ -163,36 +149,16 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     reducer_name = str(_read_scalar(artifact, "manual_embed_reducer", "pca")).lower()
     if reducer_name not in ("pca", "umap"):
         reducer_name = "pca"
+    if version != 3:
+        raise RuntimeError(f"Unsupported manual artifact version: {version}. Re-run preprocess.py.")
+    if "manual_desc_weighted" not in artifact:
+        raise RuntimeError("Manual artifact v3 missing manual_desc_weighted.")
+    desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
     pca_components = None
     pca_mean = None
-    desc_weighted = None
-    if version == 3:
-        if "manual_desc_weighted" not in artifact:
-            raise RuntimeError("Manual artifact v3 missing manual_desc_weighted.")
-        desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
-        if "manual_pca_components" in artifact and "manual_pca_mean" in artifact:
-            pca_components = artifact["manual_pca_components"].astype(np.float32)
-            pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
-    elif version == 2:
-        if "manual_desc_weighted" not in artifact:
-            raise RuntimeError("Manual artifact v2 missing manual_desc_weighted.")
-        desc_weighted = artifact["manual_desc_weighted"].astype(np.float32)
-        if "manual_pca_components" in artifact and "manual_pca_mean" in artifact:
-            pca_components = artifact["manual_pca_components"].astype(np.float32)
-            pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
-        reducer_name = "pca"
-        print(
-            "[warn] Manual artifact version 2 loaded. "
-            "Re-run preprocess.py/train_policy.py for v3 metadata."
-        )
-    elif version == 1:
-        print(
-            "[warn] Manual artifact version 1 loaded (legacy MFCC-only retrieval). "
-            "Re-run train_policy.py --navigation_mode manual to enable descriptor rerank."
-        )
-        reducer_name = "pca"
-    else:
-        raise RuntimeError(f"Unsupported manual artifact version: {version}")
+    if "manual_pca_components" in artifact and "manual_pca_mean" in artifact:
+        pca_components = artifact["manual_pca_components"].astype(np.float32)
+        pca_mean = artifact["manual_pca_mean"].astype(np.float32).reshape(-1)
     if points.ndim != 2 or points.shape[1] < 3:
         raise RuntimeError(f"manual_embed_points must be [N, D>=3], got {points.shape}")
     if points.shape[0] != expected_frames:
@@ -205,26 +171,10 @@ def load_manual_artifact(path: str, expected_frames: int) -> dict:
     ):
         raise RuntimeError("Manual artifact frame metadata length mismatch.")
     if p01.shape[0] != points.shape[1] or p99.shape[0] != points.shape[1]:
-        # Backward compatibility: older 4D artifacts stored p01/p99 for XYZ only.
-        if (
-            p01.shape[0] == p99.shape[0]
-            and 3 <= p01.shape[0] < points.shape[1]
-        ):
-            extra = points[:, p01.shape[0] : points.shape[1]]
-            extra_p01 = np.percentile(extra, 1.0, axis=0).astype(np.float32)
-            extra_p99 = np.percentile(extra, 99.0, axis=0).astype(np.float32)
-            extra_p99 = np.maximum(extra_p99, extra_p01 + 1e-6).astype(np.float32)
-            p01 = np.concatenate([p01, extra_p01], axis=0).astype(np.float32)
-            p99 = np.concatenate([p99, extra_p99], axis=0).astype(np.float32)
-            print(
-                "[warn] Manual artifact had legacy p01/p99 dimensionality; "
-                f"extended to {points.shape[1]} dims from embedding percentiles."
-            )
-        else:
-            raise RuntimeError(
-                f"manual_fader_p01/manual_fader_p99 must both be shape [{points.shape[1]}]."
-            )
-    if reducer_name == "pca" and version >= 2 and pca_components is None:
+        raise RuntimeError(
+            f"manual_fader_p01/manual_fader_p99 must both be shape [{points.shape[1]}]."
+        )
+    if reducer_name == "pca" and pca_components is None:
         raise RuntimeError(
             "PCA reducer requires manual_pca_components/manual_pca_mean in artifact."
         )
@@ -1259,12 +1209,6 @@ def main():
         "--output_gain", type=float, default=1.0, help="Initial output gain (0-2)."
     )
     ap.add_argument(
-        "--smoothing",
-        type=float,
-        default=0.1,
-        help="Crossfade smoothing between frames (0-1).",
-    )
-    ap.add_argument(
         "--audio_stats",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -1562,7 +1506,7 @@ def main():
 
     print("[info] Loading VAE decoder...")
     vae = load_vae(args.pretrained)
-    decoder = DecoderPlayer(gain=args.output_gain, smoothing=args.smoothing)
+    decoder = DecoderPlayer(gain=args.output_gain)
 
     controller = TransportController(
         args=args,
