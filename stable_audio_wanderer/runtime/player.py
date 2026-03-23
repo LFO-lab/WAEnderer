@@ -509,8 +509,6 @@ class LatentNavigationEngine:
 
             self._ema_fast = self.z.copy()
             self._ema_slow = self.z.copy()
-            if self.geometry.use_ema_mid:
-                self._ema_mid = self.z.copy()
 
             self._retrieval_buffer.clear()
             self._phrase_frames_remaining = 0

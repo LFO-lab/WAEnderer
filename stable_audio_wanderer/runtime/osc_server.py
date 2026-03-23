@@ -375,7 +375,7 @@ def run_server(
         "  Reorganized: /reorganized/morph_len, /jump_rate, /timbre_lock, "
         "/evolution, /novelty, /crossfile (0..1), /reorganized/reset"
     )
-    print("  Decoder: /decoder/gain (0..2), /decoder/smoothing (0..1)")
+    print("  Decoder: /decoder/gain (0..2)")
     print("  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/xyz x y z, /manual/xyzw x y z w")
     if bool(osc_debug):
         print("  OSC debug: enabled (logs matched and unmatched OSC messages)")

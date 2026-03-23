@@ -28,7 +28,7 @@ class WSBroadcaster:
         - Recent trajectory (last 128 indices)
         - 3D manual-space cursor/trajectory
         - All control values
-        - Decoder state (gain, smoothing, underruns)
+        - Decoder state (gain, underruns)
     """
 
     def __init__(
@@ -85,6 +85,8 @@ class WSBroadcaster:
             manual_fader_p01,
             manual_fader_p99,
         )
+
+        self._is_latent_nav = hasattr(self.nav, 'GG') and hasattr(self.nav, 'geometry')
 
         if self._is_latent_nav:
             # For latent nav, use the stored PCA projection
