@@ -15,7 +15,7 @@ from scipy.spatial import cKDTree
 from torch.utils.data import DataLoader, Dataset
 
 from stable_audio_wanderer.config import DEVICE
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.io.corpus_io import load_corpus, resolve_corpus_path
 from stable_audio_wanderer.policy import (
     LatentPolicy,
     LatentPolicyConfig,
@@ -94,11 +94,9 @@ class LatentTrajectoryDataset:
         self.control_dim = int(control_dim)
         self.N = self.Z.shape[0]
         self.D = self.Z.shape[1]
-        self.use_ema_mid = bool(getattr(self.geometry, "use_ema_mid", False))
         self.ema_alpha_fast = float(getattr(self.geometry, "ema_alpha_fast", 0.60))
-        self.ema_alpha_mid = float(getattr(self.geometry, "ema_alpha_mid", 0.80))
         self.ema_alpha_slow = float(getattr(self.geometry, "ema_alpha_slow", 0.95))
-        self.context_summary_dim = self.D * (3 if self.use_ema_mid else 2)
+        self.context_summary_dim = self.D * 2
         # Window targets for adaptive decoding (continuous log2)
         if window_targets is not None:
             self.window_targets = window_targets.astype(np.float32)
@@ -191,17 +189,12 @@ class LatentTrajectoryDataset:
         v = np.zeros_like(z)
         v[1:] = z[1:] - z[:-1]
 
-        m_fast, m_mid, m_slow = compute_causal_ema_summaries(
+        m_fast, m_slow = compute_causal_ema_summaries(
             z,
             alpha_fast=self.ema_alpha_fast,
-            alpha_mid=self.ema_alpha_mid,
             alpha_slow=self.ema_alpha_slow,
-            use_ema_mid=self.use_ema_mid,
         )
-        if self.use_ema_mid:
-            context_summaries = np.concatenate([m_fast, m_mid, m_slow], axis=1).astype(np.float32)
-        else:
-            context_summaries = np.concatenate([m_fast, m_slow], axis=1).astype(np.float32)
+        context_summaries = np.concatenate([m_fast, m_slow], axis=1).astype(np.float32)
 
         local_features = np.zeros((self.seq_len, 16), dtype=np.float32)
         for i, idx_i in enumerate(curr_idx):
@@ -400,33 +393,14 @@ def build_latent_loaders(sequences, Z, geometry, args, window_targets=None):
     return train_loader, val_loader
 
 
-def _resolve_corpus_path(corpus_dir: str) -> str:
-    try:
-        return find_latest(corpus_dir, "*_corpus_*.npz")
-    except FileNotFoundError:
-        corpus_npz = os.path.join(corpus_dir, "corpus.npz")
-        if not os.path.exists(corpus_npz):
-            raise FileNotFoundError(f"No corpus found in {corpus_dir}")
-        return corpus_npz
-
-
 def _normalize_navigation_mode(raw_mode: str) -> str:
     mode = str(raw_mode or "all").strip().lower()
     if mode == "":
         mode = "all"
-    aliases = {
-        "policy": "random",
-        "both": "all",
-        "v1": "random",
-        "v1.1": "random",
-        "v2": "reorganized",
-    }
-    mode = aliases.get(mode, mode)
     valid = {"manual", "random", "reorganized", "all"}
     if mode not in valid:
         raise ValueError(
-            "Invalid --navigation_mode. Expected one of: manual, random, reorganized, all "
-            "(legacy aliases: policy->random, both->all, v2->reorganized)."
+            "Invalid --navigation_mode. Expected one of: manual, random, reorganized, all."
         )
     return mode
 
@@ -526,8 +500,6 @@ def _save_manual_navigation_artifact(
         "kdtree_leafsize": np.array(int(leaf), dtype=np.int32),
         "source_corpus_path": source_corpus,
     }
-    # Backward-compat alias for older loaders.
-    artifact["manual_pca_points"] = points.astype(np.float32)
     if pca_components is not None and pca_mean is not None:
         artifact["manual_pca_components"] = pca_components.astype(np.float32)
         artifact["manual_pca_mean"] = pca_mean.astype(np.float32)
@@ -890,7 +862,7 @@ def _train_random_policy(
         sequences, Z, geometry, args, window_targets=window_targets,
     )
 
-    context_summary_dim = int(Z.shape[1]) * (3 if bool(geometry.use_ema_mid) else 2)
+    context_summary_dim = int(Z.shape[1]) * 2
 
     cfg = LatentPolicyConfig(
         latent_dim=int(Z.shape[1]),
@@ -963,7 +935,7 @@ def _train_random_policy(
         if val_stats["loss"] < best_val_loss:
             best_val_loss = val_stats["loss"]
 
-    out_path = args.random_out_path or args.out_path
+    out_path = args.random_out_path
     if out_path is None:
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out_path = os.path.join(args.corpus_dir, f"latent_policy_{ts}.pt")
@@ -1029,11 +1001,6 @@ def main():
         help="Random mode checkpoint output (.pt). Defaults to <corpus_dir>/latent_policy_<timestamp>.pt",
     )
     ap.add_argument(
-        "--out_path",
-        default=None,
-        help="Deprecated alias for --random_out_path.",
-    )
-    ap.add_argument(
         "--reorganized_units_path",
         default=None,
         help="Path to policy_v2_units.npz. Defaults to embedded corpus units, then <corpus_dir>/policy_v2_units.npz.",
@@ -1097,7 +1064,7 @@ def main():
     ap.add_argument("--json_progress", action="store_true", help="Emit JSON progress updates.")
 
     args = ap.parse_args()
-    corpus_npz = _resolve_corpus_path(args.corpus_dir)
+    corpus_npz = resolve_corpus_path(args.corpus_dir)
     print(f"[info] Using corpus: {corpus_npz}")
     data = load_corpus(corpus_npz)
 

@@ -7,18 +7,8 @@ import os
 
 import numpy as np
 
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.io.corpus_io import load_corpus, resolve_corpus_path
 from stable_audio_wanderer.policy import UnitGraphConfig, build_v2_unit_artifact
-
-
-def _resolve_corpus_path(corpus_dir: str) -> str:
-    try:
-        return find_latest(corpus_dir, "*_corpus_*.npz")
-    except FileNotFoundError:
-        fallback = os.path.join(corpus_dir, "corpus.npz")
-        if not os.path.exists(fallback):
-            raise FileNotFoundError(f"No corpus file found in {corpus_dir}")
-        return fallback
 
 
 def main():
@@ -52,7 +42,7 @@ def main():
     )
     args = ap.parse_args()
 
-    corpus_npz = _resolve_corpus_path(args.corpus_dir)
+    corpus_npz = resolve_corpus_path(args.corpus_dir)
     data = load_corpus(corpus_npz)
 
     required = ["file_offsets", "frame_file_ids", "frame_t", "manual_desc_weighted"]

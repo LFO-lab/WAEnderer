@@ -39,12 +39,8 @@ def run_server(
             /reorganized/crossfile value
             /reorganized/reset
 
-        Backward-compat aliases:
-            /policy/* -> /random/*
-
         Decoder controls:
             /decoder/gain value        - Set output gain (0-2)
-            /decoder/smoothing value   - Set crossfade smoothing (0-1)
 
         Manual controls:
             /manual/x value            - Set manual X control (0-1)
@@ -199,12 +195,6 @@ def run_server(
         v = _as_scalar(vals)
         if v is not None and decoder is not None:
             decoder.set_gain(v)
-            _dbg(f"{addr} {v}")
-
-    def on_decoder_smoothing(addr, *vals):
-        v = _as_scalar(vals)
-        if v is not None and decoder is not None:
-            decoder.set_smoothing(v)
             _dbg(f"{addr} {v}")
 
     # --- Manual controls ---
@@ -363,17 +353,7 @@ def run_server(
     dispatcher.map("/reorganized/crossfile", on_reorganized_crossfile)
     dispatcher.map("/reorganized/reset", on_reorganized_reset)
 
-    # Backward-compat aliases for older /policy/* senders.
-    dispatcher.map("/policy/phrase_scale", on_random_phrase_scale)
-    dispatcher.map("/policy/jump_rate", on_random_jump_rate)
-    dispatcher.map("/policy/timbre_lock", on_random_timbre_lock)
-    dispatcher.map("/policy/drift", on_random_drift)
-    dispatcher.map("/policy/repeat_avoid", on_random_repeat_avoid)
-    dispatcher.map("/policy/crossfile", on_random_crossfile)
-    dispatcher.map("/policy/reset", on_random_reset)
-
     dispatcher.map("/decoder/gain", on_decoder_gain)
-    dispatcher.map("/decoder/smoothing", on_decoder_smoothing)
     dispatcher.map("/manual/x", on_manual_x)
     dispatcher.map("/manual/y", on_manual_y)
     dispatcher.map("/manual/z", on_manual_z)

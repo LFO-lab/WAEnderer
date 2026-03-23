@@ -26,12 +26,11 @@ from stable_audio_wanderer.config import (
     LATENT_HZ,
     K_SHORT,
     EMA_ALPHA_FAST,
-    EMA_ALPHA_MID,
     EMA_ALPHA_SLOW,
-    USE_EMA_MID,
     CONTEXT_PCA_DIM,
 )
-from stable_audio_wanderer.vae.sae import load_vae, load_wav, encode_full
+from stable_audio_wanderer.vae.sae import load_vae, encode_full
+from stable_audio_wanderer.io.audio_io import load_wav
 from stable_audio_wanderer.io.corpus_io import save_corpus
 from stable_audio_wanderer.policy import (
     UnitGraphConfig,
@@ -414,9 +413,6 @@ def compute_manual_navigation_features(
         "manual_percentile_high": np.array(float(MANUAL_PERCENTILE_HIGH), dtype=np.float32),
     }
     out.update(embedding_arrays)
-    # Backward-compat alias used by older code paths.
-    out["manual_pca_points"] = points
-    out["manual_pca_dim"] = np.array(int(embed_dim), dtype=np.int32)
     return out
 
 
@@ -542,10 +538,6 @@ def main():
     ap.add_argument("--audio_dir", required=True)
     ap.add_argument("--out_prefix", required=True)
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
-    ap.add_argument("--seg_sec", type=float, default=0.2,
-                    help="Deprecated in frame-mode corpus; kept for CLI compatibility.")
-    ap.add_argument("--hop_sec", type=float, default=0.05,
-                    help="Deprecated in frame-mode corpus; kept for CLI compatibility.")
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
     ap.add_argument("--encode_chunk_sec", type=float, default=60.0,
                     help="Chunk size (seconds) for VAE encoding. Set 0 to disable chunking.")
@@ -811,9 +803,7 @@ def main():
         k=int(args.latent_nav_k),
         k_short=int(K_SHORT),
         ema_alpha_fast=float(EMA_ALPHA_FAST),
-        ema_alpha_mid=float(EMA_ALPHA_MID),
         ema_alpha_slow=float(EMA_ALPHA_SLOW),
-        use_ema_mid=bool(USE_EMA_MID),
         pca_dim=int(CONTEXT_PCA_DIM),
     )
     geometry_arrays = save_geometry_to_dict(geometry)
@@ -891,9 +881,7 @@ def main():
         latent_nav_k=np.array(int(args.latent_nav_k), dtype=np.int32),
         k_short=np.array(int(K_SHORT), dtype=np.int32),
         ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
-        ema_alpha_mid=np.array(float(EMA_ALPHA_MID), dtype=np.float32),
         ema_alpha_slow=np.array(float(EMA_ALPHA_SLOW), dtype=np.float32),
-        use_ema_mid=np.array(int(USE_EMA_MID), dtype=np.int32),
         context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
         trim_silence=np.array(int(silence_cfg.enabled), dtype=np.int32),
         silence_threshold_db=np.array(float(silence_cfg.threshold_db), dtype=np.float32),

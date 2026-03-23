@@ -9,9 +9,7 @@ DTYPE = torch.float32
 # Temporal-context representation for index/model features.
 K_SHORT = 8
 EMA_ALPHA_FAST = 0.60
-EMA_ALPHA_MID = 0.80
 EMA_ALPHA_SLOW = 0.95
-USE_EMA_MID = False
 
 # Context projection dimensionality for index/search embeddings.
 CONTEXT_PCA_DIM = 64

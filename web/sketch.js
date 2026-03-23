@@ -951,7 +951,6 @@ function setupControls() {
     // Decoder controls
     const decoderControls = [
         { param: 'gain', format: 2 },
-        { param: 'smoothing', format: 2 },
     ];
 
     decoderControls.forEach(({ param, format }) => {

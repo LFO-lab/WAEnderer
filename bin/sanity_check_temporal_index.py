@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
 """Quick sanity checks for temporal context corpus/index artifacts."""
-import os
 import argparse
 import numpy as np
 from scipy.spatial import cKDTree
 
-from stable_audio_wanderer.io.corpus_io import find_latest, load_corpus
+from stable_audio_wanderer.io.corpus_io import load_corpus, resolve_corpus_path
 from stable_audio_wanderer.policy import load_geometry_from_dict, compute_causal_ema_summaries
-
-
-def resolve_corpus(corpus_dir: str) -> str:
-    try:
-        return find_latest(corpus_dir, "*_corpus_*.npz")
-    except FileNotFoundError:
-        fallback = os.path.join(corpus_dir, "corpus.npz")
-        if not os.path.exists(fallback):
-            raise FileNotFoundError(f"No corpus file found in {corpus_dir}")
-        return fallback
 
 
 def main():
@@ -25,7 +14,7 @@ def main():
     ap.add_argument("--knn_k", type=int, default=8, help="k for a sample retrieval query")
     args = ap.parse_args()
 
-    corpus_npz = resolve_corpus(args.corpus_dir)
+    corpus_npz = resolve_corpus_path(args.corpus_dir)
     data = load_corpus(corpus_npz)
     geometry = load_geometry_from_dict(data)
     if geometry is None:
@@ -44,25 +33,19 @@ def main():
     file0_start = int(offsets[0])
     file0_end = int(offsets[1])
     z0 = z[file0_start:file0_end]
-    m_fast, m_mid, m_slow = compute_causal_ema_summaries(
+    m_fast, m_slow = compute_causal_ema_summaries(
         z0,
         alpha_fast=float(geometry.ema_alpha_fast),
-        alpha_mid=float(geometry.ema_alpha_mid),
         alpha_slow=float(geometry.ema_alpha_slow),
-        use_ema_mid=bool(geometry.use_ema_mid),
     )
-    if geometry.use_ema_mid:
-        ctx_summary_dim = m_fast.shape[1] + m_mid.shape[1] + m_slow.shape[1]
-    else:
-        ctx_summary_dim = m_fast.shape[1] + m_slow.shape[1]
-    assert ctx_summary_dim in (128, 192), f"Unexpected context summary dim: {ctx_summary_dim}"
+    ctx_summary_dim = m_fast.shape[1] + m_slow.shape[1]
+    assert ctx_summary_dim == 128, f"Unexpected context summary dim: {ctx_summary_dim}"
 
     # Query validity sanity through causal context projection + nearest-neighbor lookup.
     q = geometry.embed_query(
         z_t=z0[0],
         m_fast_t=m_fast[0],
         m_slow_t=m_slow[0],
-        m_mid_t=(m_mid[0] if (geometry.use_ema_mid and m_mid is not None) else None),
     )
     emb = geometry.embeddings.astype(np.float32)
     emb_norm = np.linalg.norm(emb, axis=1, keepdims=True)
@@ -83,7 +66,7 @@ def main():
 
     print(f"[ok] corpus={corpus_npz}")
     print(f"[ok] indexed_frames={z.shape[0]} embed_dim={geometry.embeddings.shape[1]}")
-    print(f"[ok] context_summary_dim={ctx_summary_dim} use_ema_mid={bool(geometry.use_ema_mid)}")
+    print(f"[ok] context_summary_dim={ctx_summary_dim}")
     print(f"[ok] top_query=(idx={top_idx}, file_id={top_file}, t={top_t}, cosine_dist={top_cosine_distance:.5f})")
 
 
