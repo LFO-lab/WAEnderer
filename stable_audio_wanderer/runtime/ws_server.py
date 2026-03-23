@@ -29,11 +29,14 @@ class WSBroadcaster:
         - 3D manual-space cursor/trajectory
         - All control values
         - Decoder state (gain, underruns)
+
+    Supports late-binding: nav and decoder can be None at construction time
+    and set later via bind_nav_decoder() when the perform phase starts.
     """
 
     def __init__(
         self,
-        nav,
+        nav=None,
         decoder=None,
         fps: float = 30.0,
         on_exit_request: Optional[Callable[[str], None]] = None,
@@ -43,17 +46,19 @@ class WSBroadcaster:
         manual_file_ids: Optional[np.ndarray] = None,
         manual_fader_p01: Optional[np.ndarray] = None,
         manual_fader_p99: Optional[np.ndarray] = None,
+        pipeline_message_handler: Optional[Callable[[dict], bool]] = None,
     ):
         """
         Initialize broadcaster.
 
         Args:
-            nav: Navigation engine instance
-            decoder: DecoderPlayer instance (optional)
+            nav: Navigation engine instance (can be None for late binding)
+            decoder: DecoderPlayer instance (optional, can be None for late binding)
             fps: Target broadcast rate in frames per second
             on_exit_request: Optional callback invoked when web UI sends {"type":"exit"}.
             message_handler: Optional callback for custom inbound messages.
             extra_state_provider: Optional callback that returns extra state fields.
+            pipeline_message_handler: Optional callback for pipeline_* messages.
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
@@ -72,12 +77,19 @@ class WSBroadcaster:
         self._on_exit_request = on_exit_request
         self._message_handler = message_handler
         self._extra_state_provider = extra_state_provider
+        self._pipeline_message_handler = pipeline_message_handler
         self._manual_points_3d = None
         self._manual_points_3d_norm = None
         self._manual_points_3d_min = None
         self._manual_points_3d_range = None
         self._manual_color_values_norm = None
         self._manual_file_ids = None
+        self._is_latent_nav = False
+        self._ZZ_2d = None
+        self._ZZ_2d_norm = None
+        self._ZZ_2d_min = None
+        self._ZZ_2d_range = None
+        self._projection_matrix = None
 
         self._setup_manual_space(
             manual_points_3d,
@@ -86,20 +98,67 @@ class WSBroadcaster:
             manual_fader_p99,
         )
 
+        if self.nav is not None:
+            self._bind_nav_projections()
+
+    def _bind_nav_projections(self):
+        """Set up 2D projections from the bound nav engine."""
         self._is_latent_nav = hasattr(self.nav, 'GG') and hasattr(self.nav, 'geometry')
 
         if self._is_latent_nav:
-            # For latent nav, use the stored PCA projection
             self._ZZ_2d = self.nav.geometry.project_to_2d(self.nav.GG)
             self._projection_matrix = self.nav.geometry.pca_components_2d
         else:
-            raise TypeError(f"Unsupported navigation engine type: {type(self.nav).__name__}")
+            return
 
-        # Normalize to [0, 1]
         self._ZZ_2d_min = self._ZZ_2d.min(axis=0)
         self._ZZ_2d_range = self._ZZ_2d.max(axis=0) - self._ZZ_2d_min
         self._ZZ_2d_range = np.maximum(self._ZZ_2d_range, 1e-6)
         self._ZZ_2d_norm = (self._ZZ_2d - self._ZZ_2d_min) / self._ZZ_2d_range
+
+    def bind_nav_decoder(
+        self,
+        nav,
+        decoder,
+        message_handler: Optional[Callable[[dict], bool]] = None,
+        extra_state_provider: Optional[Callable[[], dict]] = None,
+        manual_points_3d: Optional[np.ndarray] = None,
+        manual_file_ids: Optional[np.ndarray] = None,
+        manual_fader_p01: Optional[np.ndarray] = None,
+        manual_fader_p99: Optional[np.ndarray] = None,
+    ):
+        """Late-bind nav engine and decoder after perform phase starts."""
+        self.nav = nav
+        self.decoder = decoder
+        if message_handler is not None:
+            self._message_handler = message_handler
+        if extra_state_provider is not None:
+            self._extra_state_provider = extra_state_provider
+        self._setup_manual_space(
+            manual_points_3d,
+            manual_file_ids,
+            manual_fader_p01,
+            manual_fader_p99,
+        )
+        self._bind_nav_projections()
+
+    def broadcast_pipeline_message(self, data: dict):
+        """Push a pipeline message to all connected clients from any thread."""
+        if not self._clients or self._loop is None:
+            return
+        msg = json.dumps(data)
+        async def _send():
+            disconnected = set()
+            for client in self._clients.copy():
+                try:
+                    await client.send(msg)
+                except Exception:
+                    disconnected.add(client)
+            self._clients -= disconnected
+        try:
+            self._loop.call_soon_threadsafe(asyncio.ensure_future, _send())
+        except RuntimeError:
+            pass
 
     def _setup_manual_space(
         self,
@@ -201,6 +260,18 @@ class WSBroadcaster:
 
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
+        if self.nav is None:
+            # No nav engine bound yet (pre-perform phase)
+            state = {"type": "state", "timestamp": time.time(), "navigation": {"mode": "idle"}}
+            if self._extra_state_provider is not None:
+                try:
+                    extra = self._extra_state_provider()
+                    if isinstance(extra, dict):
+                        state.update(extra)
+                except Exception:
+                    pass
+            return json.dumps(state)
+
         nav_state = self.nav.get_state()
 
         frac_state = nav_state.get("fractional", {})
@@ -296,6 +367,9 @@ class WSBroadcaster:
     
     def _get_corpus_json(self) -> str:
         """Get corpus data for initial visualization setup."""
+        if self.nav is None:
+            return json.dumps({"type": "corpus", "total_points": 0, "point_indices": [], "file_ids": []})
+
         n_points = (
             int(self._manual_points_3d_norm.shape[0])
             if self._manual_points_3d_norm is not None
@@ -362,6 +436,15 @@ class WSBroadcaster:
         try:
             data = json.loads(message)
             msg_type = data.get("type", "")
+
+            # Route pipeline_* messages to the pipeline handler
+            if msg_type.startswith("pipeline_"):
+                if self._pipeline_message_handler is not None:
+                    try:
+                        self._pipeline_message_handler(data)
+                    except Exception as e:
+                        print(f"[ws] Error in pipeline message handler: {e}")
+                return
 
             if msg_type in ("transport", "manual_controls"):
                 if self._message_handler is not None:
@@ -505,7 +588,7 @@ class WSBroadcaster:
 
 
 def start_ws_server(
-    nav,
+    nav=None,
     decoder=None,
     host: str = "127.0.0.1",
     port: int = 8765,
@@ -517,13 +600,14 @@ def start_ws_server(
     manual_file_ids: Optional[np.ndarray] = None,
     manual_fader_p01: Optional[np.ndarray] = None,
     manual_fader_p99: Optional[np.ndarray] = None,
+    pipeline_message_handler: Optional[Callable[[dict], bool]] = None,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
 
     Args:
-        nav: Navigation engine instance
-        decoder: DecoderPlayer instance (optional)
+        nav: Navigation engine instance (can be None for late binding)
+        decoder: DecoderPlayer instance (optional, can be None for late binding)
         host: Server host address
         port: Server port
         fps: Broadcast rate in frames per second
@@ -535,6 +619,7 @@ def start_ws_server(
         manual_file_ids: Optional file ids aligned with manual_points_3d.
         manual_fader_p01: Optional manual control-space lower bounds used for normalization.
         manual_fader_p99: Optional manual control-space upper bounds used for normalization.
+        pipeline_message_handler: Optional callback for pipeline_* inbound messages.
 
     Returns:
         Tuple of (WSBroadcaster, Thread)
@@ -550,6 +635,7 @@ def start_ws_server(
         manual_file_ids=manual_file_ids,
         manual_fader_p01=manual_fader_p01,
         manual_fader_p99=manual_fader_p99,
+        pipeline_message_handler=pipeline_message_handler,
     )
     thread = broadcaster.start(host, port)
     return broadcaster, thread

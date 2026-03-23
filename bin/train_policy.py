@@ -697,7 +697,7 @@ def _run_reorganized_epoch(
     }
 
 
-def _train_reorganized_policy(args, data: dict):
+def _train_reorganized_policy(args, data: dict, progress_callback=None, cancel_event=None):
     artifact, artifact_source = _resolve_reorganized_artifact(args, data)
     print(f"[info] Reorganized artifact: {artifact_source}")
 
@@ -787,19 +787,32 @@ def _train_reorganized_policy(args, data: dict):
 
     best_val = float("inf")
     best_state = None
-    for ep in range(1, int(args.reorganized_epochs) + 1):
+    total_reorg_epochs = int(args.reorganized_epochs)
+    for ep in range(1, total_reorg_epochs + 1):
+        if cancel_event is not None and cancel_event.is_set():
+            print("[info] Reorganized training cancelled.")
+            break
+
         tr = _run_reorganized_epoch(model, train_loader, optimizer, device, train=True)
         va = _run_reorganized_epoch(model, val_loader, optimizer, device, train=False)
+
+        if progress_callback is not None:
+            progress_callback({
+                "mode": "reorganized",
+                "epoch": ep,
+                "total_epochs": total_reorg_epochs,
+                "train": {"loss": tr["loss"], "acc": tr["acc"]},
+                "val": {"loss": va["loss"], "acc": va["acc"]},
+            })
+
         if args.verbose:
             print(
                 f"[reorg ep {ep:04d}] train_loss={tr['loss']:.4f} train_acc={tr['acc']:.3f} "
                 f"val_loss={va['loss']:.4f} val_acc={va['acc']:.3f}"
             )
-        elif ep == 1 or ep % max(1, int(args.log_every)) == 0 or ep == int(
-            args.reorganized_epochs
-        ):
+        elif ep == 1 or ep % max(1, int(args.log_every)) == 0 or ep == total_reorg_epochs:
             print(
-                f"[reorg ep {ep:04d}/{int(args.reorganized_epochs)}] "
+                f"[reorg ep {ep:04d}/{total_reorg_epochs}] "
                 f"train_loss={tr['loss']:.4f} val_loss={va['loss']:.4f} val_acc={va['acc']:.3f}"
             )
         if va["loss"] < best_val:
@@ -825,11 +838,14 @@ def _train_reorganized_policy(args, data: dict):
     }
     torch.save(ckpt, out_path)
     print(f"[done] Saved reorganized checkpoint: {out_path}")
+    return {"reorganized_checkpoint": out_path, "best_val_loss": best_val}
 
 
 def _train_random_policy(
     args,
     data: dict,
+    progress_callback=None,
+    cancel_event=None,
 ):
     geometry = load_geometry_from_dict(data)
     if geometry is None:
@@ -896,7 +912,12 @@ def _train_random_policy(
     device = torch.device(DEVICE)
     best_val_loss = float("inf")
 
-    for epoch in range(args.epochs):
+    total_epochs = int(args.epochs)
+    for epoch in range(total_epochs):
+        if cancel_event is not None and cancel_event.is_set():
+            print("[info] Training cancelled.")
+            break
+
         train_stats = run_latent_epoch(model, train_loader, device, weights, train=True)
         val_stats = run_latent_epoch(model, val_loader, device, weights, train=False)
         train_hist = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in train_stats.items()}
@@ -904,14 +925,18 @@ def _train_random_policy(
         history["train"].append(train_hist)
         history["val"].append(val_hist)
 
-        if args.json_progress:
-            train_json = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in train_stats.items()}
-            val_json = {k: (v.tolist() if hasattr(v, 'tolist') else v) for k, v in val_stats.items()}
-            emit_json_progress({
-                "epoch": epoch + 1,
-                "train": train_json,
-                "val": val_json,
-            })
+        epoch_data = {
+            "mode": "random",
+            "epoch": epoch + 1,
+            "total_epochs": total_epochs,
+            "train": train_hist,
+            "val": val_hist,
+        }
+
+        if progress_callback is not None:
+            progress_callback(epoch_data)
+        elif args.json_progress:
+            emit_json_progress(epoch_data)
 
         if args.verbose:
             print(
@@ -924,9 +949,9 @@ def _train_random_policy(
         else:
             log_every = max(1, int(args.log_every))
             epoch_num = epoch + 1
-            if epoch_num == 1 or epoch_num % log_every == 0 or epoch_num == int(args.epochs):
+            if epoch_num == 1 or epoch_num % log_every == 0 or epoch_num == total_epochs:
                 print(
-                    f"[epoch {epoch_num:04d}/{args.epochs}] "
+                    f"[epoch {epoch_num:04d}/{total_epochs}] "
                     f"train_loss={train_stats['loss']:.4f} "
                     f"val_loss={val_stats['loss']:.4f} "
                     f"win_mae={val_stats['window_mae_frames']:.2f}f"
@@ -947,6 +972,149 @@ def _train_random_policy(
     }
     torch.save(ckpt, out_path)
     print(f"[done] Saved policy checkpoint: {out_path}")
+    return {"random_checkpoint": out_path, "best_val_loss": best_val_loss}
+
+
+def run_train(
+    corpus_dir: str,
+    navigation_mode: str = "all",
+    progress_callback=None,
+    cancel_event=None,
+    # All training params with defaults matching argparse
+    manual_out_path=None,
+    manual_kdtree_leafsize: int = 32,
+    seq_len: int = 32,
+    val_split: float = 0.1,
+    batch_size: int = 64,
+    epochs: int = 2000,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-4,
+    hidden: int = 256,
+    layers: int = 2,
+    control_dim: int = 6,
+    lambda_recon: float = 1.0,
+    lambda_smooth: float = 0.1,
+    lambda_manifold: float = 0.1,
+    lambda_diversity: float = 0.01,
+    lambda_window: float = 0.5,
+    random_out_path=None,
+    reorganized_units_path=None,
+    reorganized_out_path=None,
+    reorganized_epochs: int = 120,
+    reorganized_batch_size: int = 128,
+    reorganized_lr: float = 1e-3,
+    reorganized_hidden_dim: int = 192,
+    reorganized_layers: int = 3,
+    reorganized_dropout: float = 0.10,
+    reorganized_val_ratio: float = 0.10,
+    reorganized_seed: int = 13,
+    log_every: int = 50,
+    verbose: bool = False,
+    json_progress: bool = False,
+) -> dict:
+    """
+    Run the full training pipeline.
+
+    Args:
+        corpus_dir: Path to directory containing corpus.npz.
+        navigation_mode: Training mode (manual, random, reorganized, or all).
+        progress_callback: Optional callable(dict) for progress events.
+        cancel_event: Optional threading.Event for cancellation.
+        **remaining kwargs: Match CLI argparse defaults.
+
+    Returns:
+        dict with output paths for each trained artifact.
+    """
+    # Build a namespace object to mimic argparse for internal functions
+    args = argparse.Namespace(
+        corpus_dir=corpus_dir,
+        navigation_mode=navigation_mode,
+        manual_out_path=manual_out_path,
+        manual_kdtree_leafsize=manual_kdtree_leafsize,
+        seq_len=seq_len,
+        val_split=val_split,
+        batch_size=batch_size,
+        epochs=epochs,
+        lr=lr,
+        weight_decay=weight_decay,
+        hidden=hidden,
+        layers=layers,
+        control_dim=control_dim,
+        lambda_recon=lambda_recon,
+        lambda_smooth=lambda_smooth,
+        lambda_manifold=lambda_manifold,
+        lambda_diversity=lambda_diversity,
+        lambda_window=lambda_window,
+        random_out_path=random_out_path,
+        reorganized_units_path=reorganized_units_path,
+        reorganized_out_path=reorganized_out_path,
+        reorganized_epochs=reorganized_epochs,
+        reorganized_batch_size=reorganized_batch_size,
+        reorganized_lr=reorganized_lr,
+        reorganized_hidden_dim=reorganized_hidden_dim,
+        reorganized_layers=reorganized_layers,
+        reorganized_dropout=reorganized_dropout,
+        reorganized_val_ratio=reorganized_val_ratio,
+        reorganized_seed=reorganized_seed,
+        log_every=log_every,
+        verbose=verbose,
+        json_progress=json_progress,
+    )
+
+    corpus_npz = resolve_corpus_path(corpus_dir)
+    print(f"[info] Using corpus: {corpus_npz}")
+    data = load_corpus(corpus_npz)
+
+    mode = _normalize_navigation_mode(navigation_mode)
+    print(f"[info] Training mode: {mode}")
+
+    results = {}
+
+    def _cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    if mode in ("manual", "all"):
+        if _cancelled():
+            return results
+        print("[info] Stage start: manual artifact")
+        manual_out = args.manual_out_path
+        if manual_out is None:
+            manual_out = os.path.join(corpus_dir, "manual_navigation.npz")
+        _save_manual_navigation_artifact(
+            data=data,
+            corpus_npz=corpus_npz,
+            out_path=manual_out,
+            leafsize=int(args.manual_kdtree_leafsize),
+        )
+        results["manual_artifact"] = manual_out
+        if progress_callback is not None:
+            progress_callback({"mode": "manual", "event": "complete", "path": manual_out})
+
+    if mode in ("random", "all"):
+        if _cancelled():
+            return results
+        print("[info] Stage start: random model")
+        random_result = _train_random_policy(
+            args=args, data=data,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
+        if random_result:
+            results.update(random_result)
+
+    if mode in ("reorganized", "all"):
+        if _cancelled():
+            return results
+        print("[info] Stage start: reorganized model")
+        reorg_result = _train_reorganized_policy(
+            args=args, data=data,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+        )
+        if reorg_result:
+            results.update(reorg_result)
+
+    return results
 
 
 def main():
@@ -1064,44 +1232,40 @@ def main():
     ap.add_argument("--json_progress", action="store_true", help="Emit JSON progress updates.")
 
     args = ap.parse_args()
-    corpus_npz = resolve_corpus_path(args.corpus_dir)
-    print(f"[info] Using corpus: {corpus_npz}")
-    data = load_corpus(corpus_npz)
-
-    mode = _normalize_navigation_mode(args.navigation_mode)
-    if mode != str(args.navigation_mode).strip().lower():
-        print(
-            f"[info] Normalized navigation mode: '{args.navigation_mode}' -> '{mode}'"
-        )
-    print(f"[info] Training mode: {mode}")
-    if mode == "all":
-        print("[info] Scheduled stages: manual -> random -> reorganized")
-    elif mode == "manual":
-        print("[info] Scheduled stages: manual")
-    elif mode == "random":
-        print("[info] Scheduled stages: random")
-    else:
-        print("[info] Scheduled stages: reorganized")
-
-    if mode in ("manual", "all"):
-        print("[info] Stage start: manual artifact")
-        manual_out = args.manual_out_path
-        if manual_out is None:
-            manual_out = os.path.join(args.corpus_dir, "manual_navigation.npz")
-        _save_manual_navigation_artifact(
-            data=data,
-            corpus_npz=corpus_npz,
-            out_path=manual_out,
-            leafsize=int(args.manual_kdtree_leafsize),
-        )
-
-    if mode in ("random", "all"):
-        print("[info] Stage start: random model")
-        _train_random_policy(args=args, data=data)
-
-    if mode in ("reorganized", "all"):
-        print("[info] Stage start: reorganized model")
-        _train_reorganized_policy(args=args, data=data)
+    run_train(
+        corpus_dir=args.corpus_dir,
+        navigation_mode=args.navigation_mode,
+        manual_out_path=args.manual_out_path,
+        manual_kdtree_leafsize=args.manual_kdtree_leafsize,
+        seq_len=args.seq_len,
+        val_split=args.val_split,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        hidden=args.hidden,
+        layers=args.layers,
+        control_dim=args.control_dim,
+        lambda_recon=args.lambda_recon,
+        lambda_smooth=args.lambda_smooth,
+        lambda_manifold=args.lambda_manifold,
+        lambda_diversity=args.lambda_diversity,
+        lambda_window=args.lambda_window,
+        random_out_path=args.random_out_path,
+        reorganized_units_path=args.reorganized_units_path,
+        reorganized_out_path=args.reorganized_out_path,
+        reorganized_epochs=args.reorganized_epochs,
+        reorganized_batch_size=args.reorganized_batch_size,
+        reorganized_lr=args.reorganized_lr,
+        reorganized_hidden_dim=args.reorganized_hidden_dim,
+        reorganized_layers=args.reorganized_layers,
+        reorganized_dropout=args.reorganized_dropout,
+        reorganized_val_ratio=args.reorganized_val_ratio,
+        reorganized_seed=args.reorganized_seed,
+        log_every=args.log_every,
+        verbose=args.verbose,
+        json_progress=args.json_progress,
+    )
 
 
 if __name__ == "__main__":

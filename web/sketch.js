@@ -3,6 +3,13 @@
  * p5.js sketch for visualizing navigation trajectories
  */
 
+// Draw mode: 'perform' (existing 3D) or 'training' (loss curves)
+let drawMode = 'perform';
+
+function setDrawMode(mode) {
+    drawMode = mode;
+}
+
 // WebSocket connection
 let ws = null;
 let wsConnected = false;
@@ -104,7 +111,9 @@ function currentModeUsesShared3DView() {
 function draw() {
     background(...COLORS.background);
 
-    if (currentModeUsesShared3DView()) {
+    if (drawMode === 'training') {
+        drawTrainingCurves();
+    } else if (currentModeUsesShared3DView()) {
         updateManualCameraMotion();
         drawManual3DScene();
     }
@@ -113,6 +122,166 @@ function draw() {
     stroke(40, 40, 60);
     strokeWeight(2);
     rect(0, 0, width, height);
+}
+
+function drawTrainingCurves() {
+    const margin = { top: 40, right: 20, bottom: 50, left: 60 };
+    const plotW = width - margin.left - margin.right;
+    const plotH = (height - margin.top - margin.bottom - 30) / 2; // two charts stacked
+
+    // Gather data from pipeline.js trainingHistory
+    const rHist = (typeof trainingHistory !== 'undefined') ? trainingHistory : null;
+    if (!rHist) {
+        fill(160);
+        noStroke();
+        textSize(14);
+        textAlign(CENTER, CENTER);
+        text('Waiting for training data...', width / 2, height / 2);
+        return;
+    }
+
+    const randomTrain = rHist.random.train_loss;
+    const randomVal = rHist.random.val_loss;
+    const windowMAE = rHist.random.window_mae;
+    const reorgTrain = rHist.reorganized.train_loss;
+    const reorgVal = rHist.reorganized.val_loss;
+    const reorgAcc = rHist.reorganized.accuracy;
+
+    const hasRandom = randomTrain.length > 0;
+    const hasReorg = reorgTrain.length > 0;
+
+    if (!hasRandom && !hasReorg) {
+        fill(160);
+        noStroke();
+        textSize(14);
+        textAlign(CENTER, CENTER);
+        text('Waiting for training data...', width / 2, height / 2);
+        return;
+    }
+
+    // Helper: draw a chart in a given region
+    function drawChart(ox, oy, w, h, title, series, yLabel) {
+        // Title
+        fill(200);
+        noStroke();
+        textSize(12);
+        textAlign(LEFT, TOP);
+        text(title, ox, oy - 16);
+
+        // Background
+        fill(20, 20, 30);
+        noStroke();
+        rect(ox, oy, w, h, 4);
+
+        if (series.length === 0) return;
+
+        // Compute Y range across all series
+        let yMin = Infinity, yMax = -Infinity;
+        for (const s of series) {
+            for (const v of s.data) {
+                if (v < yMin) yMin = v;
+                if (v > yMax) yMax = v;
+            }
+        }
+        if (yMin === yMax) { yMin -= 0.1; yMax += 0.1; }
+        const yPad = (yMax - yMin) * 0.08;
+        yMin -= yPad;
+        yMax += yPad;
+
+        // Longest series for X axis
+        let maxLen = 0;
+        for (const s of series) {
+            if (s.data.length > maxLen) maxLen = s.data.length;
+        }
+
+        // Grid lines
+        stroke(40, 40, 55);
+        strokeWeight(0.5);
+        const nGridY = 4;
+        for (let i = 0; i <= nGridY; i++) {
+            const gy = oy + h - (i / nGridY) * h;
+            line(ox, gy, ox + w, gy);
+            // Y label
+            fill(100);
+            noStroke();
+            textSize(9);
+            textAlign(RIGHT, CENTER);
+            const val = yMin + (i / nGridY) * (yMax - yMin);
+            text(val.toFixed(3), ox - 4, gy);
+            stroke(40, 40, 55);
+            strokeWeight(0.5);
+        }
+
+        // Y axis label
+        push();
+        fill(120);
+        noStroke();
+        textSize(10);
+        textAlign(CENTER, CENTER);
+        translate(ox - 40, oy + h / 2);
+        rotate(-HALF_PI);
+        text(yLabel || '', 0, 0);
+        pop();
+
+        // X axis label
+        fill(100);
+        noStroke();
+        textSize(9);
+        textAlign(CENTER, TOP);
+        text(`Epoch (${maxLen})`, ox + w / 2, oy + h + 4);
+
+        // Draw each series
+        for (const s of series) {
+            if (s.data.length < 2) continue;
+            stroke(s.color[0], s.color[1], s.color[2]);
+            strokeWeight(1.5);
+            noFill();
+            beginShape();
+            for (let i = 0; i < s.data.length; i++) {
+                const px = ox + (i / (maxLen - 1)) * w;
+                const py = oy + h - ((s.data[i] - yMin) / (yMax - yMin)) * h;
+                vertex(px, py);
+            }
+            endShape();
+        }
+
+        // Legend
+        const legendX = ox + w - 10;
+        let legendY = oy + 10;
+        textAlign(RIGHT, TOP);
+        textSize(10);
+        for (const s of series) {
+            fill(s.color[0], s.color[1], s.color[2]);
+            noStroke();
+            text(s.label, legendX, legendY);
+            legendY += 14;
+        }
+    }
+
+    // Top chart: loss curves
+    const lossSeries = [];
+    if (hasRandom) {
+        lossSeries.push({ label: 'Train Loss', data: randomTrain, color: [74, 158, 255] });
+        lossSeries.push({ label: 'Val Loss', data: randomVal, color: [255, 100, 100] });
+    }
+    if (hasReorg) {
+        lossSeries.push({ label: 'Reorg Train', data: reorgTrain, color: [100, 255, 180] });
+        lossSeries.push({ label: 'Reorg Val', data: reorgVal, color: [255, 200, 100] });
+    }
+    drawChart(margin.left, margin.top, plotW, plotH, 'Loss', lossSeries, 'Loss');
+
+    // Bottom chart: secondary metrics (window MAE or accuracy)
+    const secSeries = [];
+    if (windowMAE.length > 0) {
+        secSeries.push({ label: 'Window MAE (frames)', data: windowMAE, color: [180, 130, 255] });
+    }
+    if (reorgAcc.length > 0) {
+        secSeries.push({ label: 'Reorg Accuracy', data: reorgAcc, color: [255, 220, 100] });
+    }
+    if (secSeries.length > 0) {
+        const secY = margin.top + plotH + 30;
+        drawChart(margin.left, secY, plotW, plotH, 'Metrics', secSeries, 'Value');
+    }
 }
 
 function projectManualPoint3D(point) {
@@ -456,6 +625,10 @@ function connectWebSocket() {
             console.log('WebSocket connected');
             sendTransportSetMode(selectedNavigationMode);
             sendManualControls();
+            // Request pipeline state if running via serve.py
+            if (typeof requestCorpusList === 'function') {
+                requestCorpusList();
+            }
         };
         
         ws.onclose = () => {
@@ -484,6 +657,14 @@ function connectWebSocket() {
 }
 
 function handleMessage(data) {
+    // Route pipeline messages to pipeline.js handler
+    if (data.type && data.type.startsWith('pipeline_')) {
+        if (typeof handlePipelineMessage === 'function') {
+            handlePipelineMessage(data);
+        }
+        return;
+    }
+
     if (data.type === 'corpus') {
         manualCorpusPoints3D = data.manual_positions_3d || [];
         manualCorpusColorValues = data.manual_color_values || [];

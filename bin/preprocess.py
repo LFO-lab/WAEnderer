@@ -531,6 +531,346 @@ def _compute_decoder_quality_targets(
     return targets_log2
 
 
+def run_preprocess(
+    audio_dir: str,
+    out_prefix: str,
+    pretrained: str = "stabilityai/stable-audio-open-1.0",
+    vae=None,
+    progress_callback=None,
+    cancel_event=None,
+    latent_nav_k: int = 32,
+    encode_chunk_sec: float = 60.0,
+    encode_chunk_overlap_sec: float = 1.0,
+    trim_silence: bool = True,
+    silence_threshold_db: float = SILENCE_THRESHOLD_DB_DEFAULT,
+    silence_min_duration_sec: float = SILENCE_MIN_DURATION_SEC_DEFAULT,
+    silence_keep_sec: float = SILENCE_KEEP_SEC_DEFAULT,
+    compute_decoder_targets: bool = False,
+    manual_reducer: str = MANUAL_REDUCER_PCA,
+    manual_embed_dim: int = MANUAL_EMBED_DIM,
+    manual_umap_n_neighbors: int = 30,
+    manual_umap_min_dist: float = 0.05,
+    manual_umap_metric: str = "euclidean",
+    manual_umap_random_state: int = 42,
+    reorg_min_sec: float = 2.0,
+    reorg_max_sec: float = 10.0,
+    reorg_target_sec: float = 5.0,
+    reorg_candidate_k: int = 64,
+    reorg_graph_k: int = 24,
+    reorg_weight_entry: float = 0.70,
+    reorg_weight_delta: float = 0.30,
+    reorg_crossfile_penalty: float = 0.10,
+    reorg_boundary_smoothness_weight: float = 0.35,
+) -> dict:
+    """
+    Run the full preprocessing pipeline.
+
+    Args:
+        audio_dir: Path to directory containing .wav files.
+        out_prefix: Name prefix for the output corpus directory.
+        pretrained: HuggingFace model ID for the VAE.
+        vae: Pre-loaded VAE model (avoids double load when shared with perform).
+        progress_callback: Optional callable(dict) for progress events.
+        cancel_event: Optional threading.Event for cancellation.
+        **remaining kwargs: All parameter defaults match CLI argparse defaults.
+
+    Returns:
+        dict with keys: corpus_dir, corpus_path, reorg_sidecar_path,
+        total_files, total_frames, silence_removed_pct, vae (the loaded model).
+    """
+
+    def _emit(event_type, **data):
+        if progress_callback is not None:
+            progress_callback({"event": event_type, **data})
+
+    def _cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    prefix = os.path.basename(out_prefix)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.join(os.getcwd(), "corpus", f"{prefix}_{ts}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    _emit("scan_start", audio_dir=audio_dir)
+    paths = sorted(glob.glob(os.path.join(audio_dir, "*.wav")))
+    if not paths:
+        raise FileNotFoundError("No WAV files in --audio_dir")
+    _emit("scan_done", file_count=len(paths), files=[os.path.basename(p) for p in paths])
+
+    if _cancelled():
+        return {"corpus_dir": out_dir, "cancelled": True}
+
+    _emit("vae_load_start")
+    ae = vae if vae is not None else load_vae(pretrained)
+    _emit("vae_load_done")
+
+    latent_sequences_raw: List[np.ndarray] = []
+    manual_descriptor_sequences: List[np.ndarray] = []
+    encode_chunk = float(encode_chunk_sec)
+    encode_overlap = float(encode_chunk_overlap_sec)
+    chunk_sec_val = encode_chunk if encode_chunk > 0.0 else None
+    latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
+    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
+    silence_cfg = SilenceTrimConfig(
+        enabled=bool(trim_silence),
+        threshold_db=float(silence_threshold_db),
+        min_silence_sec=float(max(0.0, silence_min_duration_sec)),
+        keep_silence_sec=float(max(0.0, silence_keep_sec)),
+    )
+    silence_original_frames = 0
+    silence_removed_frames = 0
+
+    _emit("encode_start", total_files=len(paths))
+    print("Encoding audio with VAE + extracting latent-aligned timbre descriptors...")
+    for fid, p in enumerate(tqdm(paths)):
+        if _cancelled():
+            return {"corpus_dir": out_dir, "cancelled": True}
+        _emit("encode_file_start", file_index=fid, file_name=os.path.basename(p), total_files=len(paths))
+        wav = load_wav(p)
+        z_full = encode_full(ae, wav, chunk_sec=chunk_sec_val, overlap_sec=encode_overlap).astype(np.float32)
+        descriptor_seq = compute_latent_aligned_descriptors(
+            wav_stereo=wav,
+            target_frames=z_full.shape[0],
+            mfcc_transform=mfcc_transform,
+            hop_length=latent_hop,
+        )
+        z_full, descriptor_seq, trim_result = trim_silent_frames(
+            wav_stereo=wav,
+            latents=z_full,
+            descriptors=descriptor_seq,
+            cfg=silence_cfg,
+            latent_hz=float(LATENT_HZ),
+        )
+        silence_original_frames += int(trim_result.original_frames)
+        silence_removed_frames += int(trim_result.removed_frames)
+        latent_sequences_raw.append(np.ascontiguousarray(z_full))
+        manual_descriptor_sequences.append(np.ascontiguousarray(descriptor_seq))
+        _emit(
+            "encode_file_done",
+            file_index=fid,
+            file_name=os.path.basename(p),
+            total_files=len(paths),
+            frames=z_full.shape[0],
+            original_frames=int(trim_result.original_frames),
+            removed_frames=int(trim_result.removed_frames),
+        )
+
+    if not latent_sequences_raw:
+        raise RuntimeError("No latent sequences were extracted.")
+    if len(manual_descriptor_sequences) != len(latent_sequences_raw):
+        raise RuntimeError("Manual descriptor extraction count mismatch.")
+
+    if _cancelled():
+        return {"corpus_dir": out_dir, "cancelled": True}
+
+    paths_arr = np.array(paths)
+    silence_removed_pct = 0.0
+    if silence_cfg.enabled:
+        silence_kept_frames = int(silence_original_frames - silence_removed_frames)
+        silence_removed_pct = 100.0 * float(silence_removed_frames) / float(max(1, silence_original_frames))
+        print(
+            "Silence trim summary:",
+            f"kept={silence_kept_frames}/{silence_original_frames} frames",
+            f"removed={silence_removed_frames} ({silence_removed_pct:.1f}%)",
+            f"threshold={silence_cfg.threshold_db:.1f} dB",
+            f"min_silence={silence_cfg.min_silence_sec:.2f}s",
+            f"keep={silence_cfg.keep_silence_sec:.2f}s",
+        )
+
+    # Compute normalization stats from all VAE latents
+    latent_stack = np.concatenate(latent_sequences_raw, axis=0).astype(np.float32)
+    Z_mean = latent_stack.mean(axis=0).astype(np.float32)
+    Z_var = latent_stack.var(axis=0).astype(np.float32)
+    Z_std = np.sqrt(Z_var + 1e-6).astype(np.float32)
+
+    # Canonical corpus representation: all observed frame latents (normalized), grouped by file offsets.
+    file_offsets = [0]
+    meta_list = []
+    normalized_by_file: Dict[str, np.ndarray] = {}
+    normalized_sequences = []
+
+    for fid, z_full_raw in enumerate(latent_sequences_raw):
+        z_norm = np.clip((z_full_raw - Z_mean[None, :]) / Z_std[None, :], -5.0, 5.0).astype(np.float32)
+        z_norm = np.ascontiguousarray(z_norm)
+        normalized_sequences.append(z_norm)
+        normalized_by_file[f"z_{fid}"] = z_norm
+
+        T_lat = z_norm.shape[0]
+        for t_lat in range(T_lat):
+            meta_list.append((fid, t_lat, 1))
+        file_offsets.append(file_offsets[-1] + T_lat)
+
+    Z_concat = np.concatenate(normalized_sequences, axis=0).astype(np.float32)
+    descriptor_concat = np.concatenate(manual_descriptor_sequences, axis=0).astype(np.float32)
+    file_offsets = np.asarray(file_offsets, dtype=np.int64)
+    meta = np.asarray(meta_list, dtype=np.int32)
+    frame_file_ids = meta[:, 0].astype(np.int32)
+    frame_t = meta[:, 1].astype(np.int32)
+
+    if descriptor_concat.shape[0] != Z_concat.shape[0]:
+        raise RuntimeError(
+            f"Manual descriptor frame count mismatch: {descriptor_concat.shape[0]} vs latent frames {Z_concat.shape[0]}"
+        )
+
+    if _cancelled():
+        return {"corpus_dir": out_dir, "cancelled": True}
+
+    _emit("embedding_start", reducer=manual_reducer, dim=int(manual_embed_dim))
+    print(
+        "Computing manual navigation embedding features "
+        f"(reducer={manual_reducer}, dim={int(manual_embed_dim)})..."
+    )
+    manual_arrays = compute_manual_navigation_features(
+        descriptor_concat,
+        reducer=str(manual_reducer),
+        embed_dim=int(manual_embed_dim),
+        umap_n_neighbors=int(manual_umap_n_neighbors),
+        umap_min_dist=float(manual_umap_min_dist),
+        umap_metric=str(manual_umap_metric),
+        umap_random_state=int(manual_umap_random_state),
+    )
+    p01 = manual_arrays["manual_fader_p01"]
+    p99 = manual_arrays["manual_fader_p99"]
+    desc_dim = int(manual_arrays["manual_desc_dim"])
+    reducer_name = str(np.asarray(manual_arrays["manual_embed_reducer"]).reshape(-1)[0])
+    print(
+        "  Manual embedding points:",
+        manual_arrays["manual_embed_points"].shape,
+        f"reducer={reducer_name}",
+        f"desc_dim={desc_dim}",
+        f"(fader p01 mean={p01.mean():.3f}, p99 mean={p99.mean():.3f})",
+    )
+    _emit("embedding_done")
+
+    if _cancelled():
+        return {"corpus_dir": out_dir, "cancelled": True}
+
+    _emit("geometry_start", k=int(latent_nav_k))
+    print(f"Computing latent geometry (k={latent_nav_k})...")
+    geometry = compute_latent_geometry(
+        Z_concat,
+        meta,
+        k=int(latent_nav_k),
+        k_short=int(K_SHORT),
+        ema_alpha_fast=float(EMA_ALPHA_FAST),
+        ema_alpha_slow=float(EMA_ALPHA_SLOW),
+        pca_dim=int(CONTEXT_PCA_DIM),
+    )
+    geometry_arrays = save_geometry_to_dict(geometry)
+    _emit("geometry_done")
+
+    # Compute continuous window targets for adaptive decoding
+    print("Computing window targets from latent velocity...")
+    window_targets_log2 = compute_window_targets(Z_concat, meta)
+    print(f"  Window targets (log2): min={window_targets_log2.min():.2f}, "
+          f"max={window_targets_log2.max():.2f}, mean={window_targets_log2.mean():.2f}")
+
+    # Optional decoder quality targets
+    extra_arrays = {}
+    if compute_decoder_targets:
+        print("Computing decoder quality targets (this may take a while)...")
+        try:
+            decoder_targets_arr = _compute_decoder_quality_targets(
+                normalized_by_file, meta, ae, Z_mean, Z_std
+            )
+            extra_arrays["decoder_quality_targets_log2"] = decoder_targets_arr
+            print(f"  Decoder quality targets: min={decoder_targets_arr.min():.2f}, "
+                  f"max={decoder_targets_arr.max():.2f}, mean={decoder_targets_arr.mean():.2f}")
+        except Exception as e:
+            print(f"  [warn] Failed to compute decoder quality targets: {e}")
+
+    if _cancelled():
+        return {"corpus_dir": out_dir, "cancelled": True}
+
+    corpus_path = os.path.join(out_dir, "corpus.npz")
+    _emit("units_start")
+    print("Building reorganized unit artifact...")
+    reorg_cfg = UnitGraphConfig(
+        min_sec=float(reorg_min_sec),
+        max_sec=float(reorg_max_sec),
+        target_sec=float(reorg_target_sec),
+        latent_hz=float(LATENT_HZ),
+        candidate_k=int(reorg_candidate_k),
+        graph_k=int(reorg_graph_k),
+        weight_entry=float(reorg_weight_entry),
+        weight_delta=float(reorg_weight_delta),
+        crossfile_penalty=float(reorg_crossfile_penalty),
+        boundary_smoothness_weight=float(reorg_boundary_smoothness_weight),
+    )
+    reorg_artifact = build_v2_unit_artifact(
+        file_offsets=file_offsets,
+        frame_file_ids=frame_file_ids,
+        frame_t=frame_t,
+        desc_weighted=manual_arrays["manual_desc_weighted"],
+        cfg=reorg_cfg,
+        source_corpus_path=os.path.abspath(corpus_path),
+    )
+    reorg_sidecar_path = os.path.join(out_dir, "policy_v2_units.npz")
+    np.savez_compressed(reorg_sidecar_path, **reorg_artifact)
+    reorg_embed_arrays = {
+        key: value
+        for key, value in reorg_artifact.items()
+        if key.startswith("unit_") or key == "frame_to_unit"
+    }
+    print(
+        "  Reorganized units:",
+        int(np.asarray(reorg_artifact["unit_start_idx"], dtype=np.int32).shape[0]),
+        f"(graph_k={int(np.asarray(reorg_artifact['unit_graph_neighbors']).shape[1])})",
+    )
+    _emit("units_done")
+
+    # Save corpus
+    _emit("save_start")
+    save_corpus(
+        corpus_path,
+        Z_concat=Z_concat,
+        file_offsets=file_offsets,
+        frame_file_ids=frame_file_ids,
+        frame_t=frame_t,
+        meta=meta,
+        paths=paths_arr,
+        Z_mean=Z_mean,
+        Z_std=Z_std,
+        sr=np.array(int(SR), dtype=np.int32),
+        latent_hz=np.array(float(LATENT_HZ), dtype=np.float32),
+        segment_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
+        hop_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
+        latent_nav_k=np.array(int(latent_nav_k), dtype=np.int32),
+        k_short=np.array(int(K_SHORT), dtype=np.int32),
+        ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
+        ema_alpha_slow=np.array(float(EMA_ALPHA_SLOW), dtype=np.float32),
+        context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
+        trim_silence=np.array(int(silence_cfg.enabled), dtype=np.int32),
+        silence_threshold_db=np.array(float(silence_cfg.threshold_db), dtype=np.float32),
+        silence_min_duration_sec=np.array(float(silence_cfg.min_silence_sec), dtype=np.float32),
+        silence_keep_sec=np.array(float(silence_cfg.keep_silence_sec), dtype=np.float32),
+        silence_original_frames=np.array(int(silence_original_frames), dtype=np.int64),
+        silence_removed_frames=np.array(int(silence_removed_frames), dtype=np.int64),
+        window_targets_log2=window_targets_log2,
+        **geometry_arrays,
+        **manual_arrays,
+        **reorg_embed_arrays,
+        **extra_arrays,
+    )
+
+    print("\nSaved:")
+    print("  Corpus         :", corpus_path)
+    print("  Reorg units    :", reorg_sidecar_path)
+
+    result = {
+        "corpus_dir": out_dir,
+        "corpus_path": corpus_path,
+        "reorg_sidecar_path": reorg_sidecar_path,
+        "total_files": len(paths),
+        "total_frames": int(Z_concat.shape[0]),
+        "silence_removed_pct": silence_removed_pct,
+        "vae": ae,
+        "cancelled": False,
+    }
+    _emit("complete", **{k: v for k, v in result.items() if k != "vae"})
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Preprocess: VAE latents -> 64D corpus + geometry."
@@ -668,237 +1008,34 @@ def main():
     )
 
     args = ap.parse_args()
-
-    prefix = os.path.basename(args.out_prefix)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = os.path.join(os.getcwd(), "corpus", f"{prefix}_{ts}")
-    os.makedirs(out_dir, exist_ok=True)
-
-    paths = sorted(glob.glob(os.path.join(args.audio_dir, "*.wav")))
-    if not paths:
-        raise FileNotFoundError("No WAV files in --audio_dir")
-
-    ae = load_vae(args.pretrained)
-
-    latent_sequences_raw: List[np.ndarray] = []
-    manual_descriptor_sequences: List[np.ndarray] = []
-    encode_chunk_sec = float(args.encode_chunk_sec)
-    encode_overlap_sec = float(args.encode_chunk_overlap_sec)
-    chunk_sec = encode_chunk_sec if encode_chunk_sec > 0.0 else None
-    latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
-    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
-    silence_cfg = SilenceTrimConfig(
-        enabled=bool(args.trim_silence),
-        threshold_db=float(args.silence_threshold_db),
-        min_silence_sec=float(max(0.0, args.silence_min_duration_sec)),
-        keep_silence_sec=float(max(0.0, args.silence_keep_sec)),
+    run_preprocess(
+        audio_dir=args.audio_dir,
+        out_prefix=args.out_prefix,
+        pretrained=args.pretrained,
+        latent_nav_k=args.latent_nav_k,
+        encode_chunk_sec=args.encode_chunk_sec,
+        encode_chunk_overlap_sec=args.encode_chunk_overlap_sec,
+        trim_silence=args.trim_silence,
+        silence_threshold_db=args.silence_threshold_db,
+        silence_min_duration_sec=args.silence_min_duration_sec,
+        silence_keep_sec=args.silence_keep_sec,
+        compute_decoder_targets=args.compute_decoder_targets,
+        manual_reducer=args.manual_reducer,
+        manual_embed_dim=args.manual_embed_dim,
+        manual_umap_n_neighbors=args.manual_umap_n_neighbors,
+        manual_umap_min_dist=args.manual_umap_min_dist,
+        manual_umap_metric=args.manual_umap_metric,
+        manual_umap_random_state=args.manual_umap_random_state,
+        reorg_min_sec=args.reorg_min_sec,
+        reorg_max_sec=args.reorg_max_sec,
+        reorg_target_sec=args.reorg_target_sec,
+        reorg_candidate_k=args.reorg_candidate_k,
+        reorg_graph_k=args.reorg_graph_k,
+        reorg_weight_entry=args.reorg_weight_entry,
+        reorg_weight_delta=args.reorg_weight_delta,
+        reorg_crossfile_penalty=args.reorg_crossfile_penalty,
+        reorg_boundary_smoothness_weight=args.reorg_boundary_smoothness_weight,
     )
-    silence_original_frames = 0
-    silence_removed_frames = 0
-
-    print("Encoding audio with VAE + extracting latent-aligned timbre descriptors...")
-    for fid, p in enumerate(tqdm(paths)):
-        wav = load_wav(p)
-        z_full = encode_full(ae, wav, chunk_sec=chunk_sec, overlap_sec=encode_overlap_sec).astype(np.float32)
-        descriptor_seq = compute_latent_aligned_descriptors(
-            wav_stereo=wav,
-            target_frames=z_full.shape[0],
-            mfcc_transform=mfcc_transform,
-            hop_length=latent_hop,
-        )
-        z_full, descriptor_seq, trim_result = trim_silent_frames(
-            wav_stereo=wav,
-            latents=z_full,
-            descriptors=descriptor_seq,
-            cfg=silence_cfg,
-            latent_hz=float(LATENT_HZ),
-        )
-        silence_original_frames += int(trim_result.original_frames)
-        silence_removed_frames += int(trim_result.removed_frames)
-        latent_sequences_raw.append(np.ascontiguousarray(z_full))
-        manual_descriptor_sequences.append(np.ascontiguousarray(descriptor_seq))
-
-    if not latent_sequences_raw:
-        raise RuntimeError("No latent sequences were extracted.")
-    if len(manual_descriptor_sequences) != len(latent_sequences_raw):
-        raise RuntimeError("Manual descriptor extraction count mismatch.")
-
-    paths_arr = np.array(paths)
-    if silence_cfg.enabled:
-        silence_kept_frames = int(silence_original_frames - silence_removed_frames)
-        removed_pct = 100.0 * float(silence_removed_frames) / float(max(1, silence_original_frames))
-        print(
-            "Silence trim summary:",
-            f"kept={silence_kept_frames}/{silence_original_frames} frames",
-            f"removed={silence_removed_frames} ({removed_pct:.1f}%)",
-            f"threshold={silence_cfg.threshold_db:.1f} dB",
-            f"min_silence={silence_cfg.min_silence_sec:.2f}s",
-            f"keep={silence_cfg.keep_silence_sec:.2f}s",
-        )
-
-    # Compute normalization stats from all VAE latents
-    latent_stack = np.concatenate(latent_sequences_raw, axis=0).astype(np.float32)
-    Z_mean = latent_stack.mean(axis=0).astype(np.float32)
-    Z_var = latent_stack.var(axis=0).astype(np.float32)
-    Z_std = np.sqrt(Z_var + 1e-6).astype(np.float32)
-
-    # Canonical corpus representation: all observed frame latents (normalized), grouped by file offsets.
-    file_offsets = [0]
-    meta_list = []
-    normalized_by_file: Dict[str, np.ndarray] = {}
-    normalized_sequences = []
-
-    for fid, z_full_raw in enumerate(latent_sequences_raw):
-        z_norm = np.clip((z_full_raw - Z_mean[None, :]) / Z_std[None, :], -5.0, 5.0).astype(np.float32)
-        z_norm = np.ascontiguousarray(z_norm)
-        normalized_sequences.append(z_norm)
-        normalized_by_file[f"z_{fid}"] = z_norm
-
-        T_lat = z_norm.shape[0]
-        for t_lat in range(T_lat):
-            meta_list.append((fid, t_lat, 1))
-        file_offsets.append(file_offsets[-1] + T_lat)
-
-    Z_concat = np.concatenate(normalized_sequences, axis=0).astype(np.float32)
-    descriptor_concat = np.concatenate(manual_descriptor_sequences, axis=0).astype(np.float32)
-    file_offsets = np.asarray(file_offsets, dtype=np.int64)
-    meta = np.asarray(meta_list, dtype=np.int32)
-    frame_file_ids = meta[:, 0].astype(np.int32)
-    frame_t = meta[:, 1].astype(np.int32)
-
-    if descriptor_concat.shape[0] != Z_concat.shape[0]:
-        raise RuntimeError(
-            f"Manual descriptor frame count mismatch: {descriptor_concat.shape[0]} vs latent frames {Z_concat.shape[0]}"
-        )
-
-    print(
-        "Computing manual navigation embedding features "
-        f"(reducer={args.manual_reducer}, dim={int(args.manual_embed_dim)})..."
-    )
-    manual_arrays = compute_manual_navigation_features(
-        descriptor_concat,
-        reducer=str(args.manual_reducer),
-        embed_dim=int(args.manual_embed_dim),
-        umap_n_neighbors=int(args.manual_umap_n_neighbors),
-        umap_min_dist=float(args.manual_umap_min_dist),
-        umap_metric=str(args.manual_umap_metric),
-        umap_random_state=int(args.manual_umap_random_state),
-    )
-    p01 = manual_arrays["manual_fader_p01"]
-    p99 = manual_arrays["manual_fader_p99"]
-    desc_dim = int(manual_arrays["manual_desc_dim"])
-    reducer_name = str(np.asarray(manual_arrays["manual_embed_reducer"]).reshape(-1)[0])
-    print(
-        "  Manual embedding points:",
-        manual_arrays["manual_embed_points"].shape,
-        f"reducer={reducer_name}",
-        f"desc_dim={desc_dim}",
-        f"(fader p01 mean={p01.mean():.3f}, p99 mean={p99.mean():.3f})",
-    )
-
-    print(f"Computing latent geometry (k={args.latent_nav_k})...")
-    geometry = compute_latent_geometry(
-        Z_concat,
-        meta,
-        k=int(args.latent_nav_k),
-        k_short=int(K_SHORT),
-        ema_alpha_fast=float(EMA_ALPHA_FAST),
-        ema_alpha_slow=float(EMA_ALPHA_SLOW),
-        pca_dim=int(CONTEXT_PCA_DIM),
-    )
-    geometry_arrays = save_geometry_to_dict(geometry)
-
-    # Compute continuous window targets for adaptive decoding
-    print("Computing window targets from latent velocity...")
-    window_targets_log2 = compute_window_targets(Z_concat, meta)
-    print(f"  Window targets (log2): min={window_targets_log2.min():.2f}, "
-          f"max={window_targets_log2.max():.2f}, mean={window_targets_log2.mean():.2f}")
-
-    # Optional decoder quality targets
-    extra_arrays = {}
-    if args.compute_decoder_targets:
-        print("Computing decoder quality targets (this may take a while)...")
-        try:
-            decoder_targets = _compute_decoder_quality_targets(
-                normalized_by_file, meta, ae, Z_mean, Z_std
-            )
-            extra_arrays["decoder_quality_targets_log2"] = decoder_targets
-            print(f"  Decoder quality targets: min={decoder_targets.min():.2f}, "
-                  f"max={decoder_targets.max():.2f}, mean={decoder_targets.mean():.2f}")
-        except Exception as e:
-            print(f"  [warn] Failed to compute decoder quality targets: {e}")
-
-    corpus_path = os.path.join(out_dir, "corpus.npz")
-    print("Building reorganized unit artifact...")
-    reorg_cfg = UnitGraphConfig(
-        min_sec=float(args.reorg_min_sec),
-        max_sec=float(args.reorg_max_sec),
-        target_sec=float(args.reorg_target_sec),
-        latent_hz=float(LATENT_HZ),
-        candidate_k=int(args.reorg_candidate_k),
-        graph_k=int(args.reorg_graph_k),
-        weight_entry=float(args.reorg_weight_entry),
-        weight_delta=float(args.reorg_weight_delta),
-        crossfile_penalty=float(args.reorg_crossfile_penalty),
-        boundary_smoothness_weight=float(args.reorg_boundary_smoothness_weight),
-    )
-    reorg_artifact = build_v2_unit_artifact(
-        file_offsets=file_offsets,
-        frame_file_ids=frame_file_ids,
-        frame_t=frame_t,
-        desc_weighted=manual_arrays["manual_desc_weighted"],
-        cfg=reorg_cfg,
-        source_corpus_path=os.path.abspath(corpus_path),
-    )
-    reorg_sidecar_path = os.path.join(out_dir, "policy_v2_units.npz")
-    np.savez_compressed(reorg_sidecar_path, **reorg_artifact)
-    reorg_embed_arrays = {
-        key: value
-        for key, value in reorg_artifact.items()
-        if key.startswith("unit_") or key == "frame_to_unit"
-    }
-    print(
-        "  Reorganized units:",
-        int(np.asarray(reorg_artifact["unit_start_idx"], dtype=np.int32).shape[0]),
-        f"(graph_k={int(np.asarray(reorg_artifact['unit_graph_neighbors']).shape[1])})",
-    )
-
-    # Save corpus
-    save_corpus(
-        corpus_path,
-        Z_concat=Z_concat,
-        file_offsets=file_offsets,
-        frame_file_ids=frame_file_ids,
-        frame_t=frame_t,
-        meta=meta,
-        paths=paths_arr,
-        Z_mean=Z_mean,
-        Z_std=Z_std,
-        sr=np.array(int(SR), dtype=np.int32),
-        latent_hz=np.array(float(LATENT_HZ), dtype=np.float32),
-        segment_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
-        hop_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
-        latent_nav_k=np.array(int(args.latent_nav_k), dtype=np.int32),
-        k_short=np.array(int(K_SHORT), dtype=np.int32),
-        ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
-        ema_alpha_slow=np.array(float(EMA_ALPHA_SLOW), dtype=np.float32),
-        context_pca_dim=np.array(int(CONTEXT_PCA_DIM), dtype=np.int32),
-        trim_silence=np.array(int(silence_cfg.enabled), dtype=np.int32),
-        silence_threshold_db=np.array(float(silence_cfg.threshold_db), dtype=np.float32),
-        silence_min_duration_sec=np.array(float(silence_cfg.min_silence_sec), dtype=np.float32),
-        silence_keep_sec=np.array(float(silence_cfg.keep_silence_sec), dtype=np.float32),
-        silence_original_frames=np.array(int(silence_original_frames), dtype=np.int64),
-        silence_removed_frames=np.array(int(silence_removed_frames), dtype=np.int64),
-        window_targets_log2=window_targets_log2,
-        **geometry_arrays,
-        **manual_arrays,
-        **reorg_embed_arrays,
-        **extra_arrays,
-    )
-
-    print("\nSaved:")
-    print("  Corpus         :", corpus_path)
-    print("  Reorg units    :", reorg_sidecar_path)
 
 
 if __name__ == "__main__":

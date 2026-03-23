@@ -279,6 +279,166 @@
             display: none;
         }
 
+        /* Phase bar */
+        .phase-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0;
+            margin-bottom: 16px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #2a2a3a;
+        }
+
+        .phase-step {
+            padding: 8px 4px;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #666;
+            background: #1a1a24;
+            border-right: 1px solid #2a2a3a;
+            transition: all 0.3s;
+        }
+
+        .phase-step:last-child {
+            border-right: none;
+        }
+
+        .phase-step.active {
+            background: #4a9eff;
+            color: #fff;
+        }
+
+        .phase-step.completed {
+            background: #2a4a2a;
+            color: #6aff6a;
+        }
+
+        /* Pipeline panels */
+        .pipeline-section {
+            margin-bottom: 16px;
+        }
+
+        .pipeline-section h3 {
+            margin: 8px 0 6px;
+        }
+
+        .pipeline-input-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .pipeline-input-row input[type="text"],
+        .pipeline-input-row input[type="number"] {
+            flex: 1;
+            padding: 6px 8px;
+            font-size: 12px;
+            background: #1a1a24;
+            border: 1px solid #2a2a3a;
+            border-radius: 4px;
+            color: #e0e0e0;
+        }
+
+        .pipeline-input-row input:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .pipeline-input-row button {
+            width: auto;
+            margin-top: 0;
+            padding: 6px 12px;
+            white-space: nowrap;
+        }
+
+        .file-list-table {
+            width: 100%;
+            font-size: 11px;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+            max-height: 150px;
+            overflow-y: auto;
+            display: block;
+        }
+
+        .file-list-table th,
+        .file-list-table td {
+            padding: 3px 6px;
+            text-align: left;
+            border-bottom: 1px solid #1a1a24;
+        }
+
+        .file-list-table th {
+            color: #888;
+            font-weight: 500;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #1a1a24;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: #4a9eff;
+            border-radius: 3px;
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .stats-text {
+            font-size: 11px;
+            color: #aaa;
+            background: #1a1a24;
+            padding: 6px 8px;
+            border-radius: 4px;
+            margin: 6px 0;
+            font-family: 'SF Mono', Monaco, monospace;
+            line-height: 1.6;
+        }
+
+        .collapsible-header {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 4px 0;
+        }
+
+        .collapsible-header::before {
+            content: '\25B6';
+            font-size: 8px;
+            margin-right: 6px;
+            transition: transform 0.2s;
+            color: #666;
+        }
+
+        .collapsible-header.open::before {
+            transform: rotate(90deg);
+        }
+
+        .collapsible-body {
+            display: none;
+        }
+
+        .collapsible-body.open {
+            display: block;
+        }
+
         /* Toggle switch styles */
         .toggle {
             position: relative;
@@ -332,7 +492,208 @@
         <div id="canvas-container"></div>
         <div id="controls">
             <h1>Stable Audio Wanderer</h1>
-            
+
+            <!-- Pipeline Phase Bar -->
+            <div id="pipeline-phase-bar" class="phase-bar panel-hidden">
+                <div class="phase-step" id="phase-preprocess">Preprocess</div>
+                <div class="phase-step" id="phase-train">Train</div>
+                <div class="phase-step" id="phase-perform">Perform</div>
+            </div>
+
+            <!-- Preprocess Panel -->
+            <div id="preprocess-panel" class="panel-hidden">
+                <h2>Preprocess</h2>
+                <div class="pipeline-section">
+                    <h3>Audio Source</h3>
+                    <div class="pipeline-input-row">
+                        <input type="text" id="pp-audio-dir" placeholder="Path to audio directory...">
+                        <button id="pp-scan-btn" type="button" class="secondary">Scan</button>
+                    </div>
+                    <div id="pp-file-list-container" class="panel-hidden">
+                        <table class="file-list-table" id="pp-file-list">
+                            <thead><tr><th>File</th><th>Duration</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="pipeline-section">
+                    <h3>Or Use Existing Corpus</h3>
+                    <select id="pp-corpus-select">
+                        <option value="">-- Select Corpus --</option>
+                    </select>
+                    <button id="pp-use-corpus-btn" type="button" class="secondary" style="margin-top:4px">Use Selected</button>
+                </div>
+
+                <div class="pipeline-section">
+                    <h3>Settings</h3>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Silence Trim</span></div>
+                            <label class="toggle">
+                                <input type="checkbox" id="pp-trim-silence" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Threshold (dB)</span>
+                                <span class="control-value" id="val-pp-threshold">-45</span>
+                            </div>
+                            <input type="range" id="pp-threshold" min="-80" max="-10" step="1" value="-45">
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Reducer</span></div>
+                            <select id="pp-reducer">
+                                <option value="pca" selected>PCA</option>
+                                <option value="umap">UMAP</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Embed Dim</span></div>
+                            <select id="pp-embed-dim">
+                                <option value="3">3 (XYZ)</option>
+                                <option value="4" selected>4 (XYZW)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-header" id="pp-advanced-header">Advanced</div>
+                    <div class="collapsible-body" id="pp-advanced-body">
+                        <div class="control-row">
+                            <div class="control-group">
+                                <div class="control-label"><span>kNN k</span></div>
+                                <input type="number" id="pp-latent-nav-k" value="32" min="4" max="128" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                            </div>
+                            <div class="control-group">
+                                <div class="control-label"><span>Reorg Target (s)</span></div>
+                                <input type="number" id="pp-reorg-target-sec" value="5.0" min="1" max="30" step="0.5" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                            </div>
+                        </div>
+                        <div class="control-row">
+                            <div class="control-group">
+                                <div class="control-label"><span>Reorg Min (s)</span></div>
+                                <input type="number" id="pp-reorg-min-sec" value="2.0" min="0.5" max="15" step="0.5" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                            </div>
+                            <div class="control-group">
+                                <div class="control-label"><span>Reorg Max (s)</span></div>
+                                <input type="number" id="pp-reorg-max-sec" value="10.0" min="2" max="60" step="1" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pipeline-section">
+                    <div class="control-row">
+                        <button id="pp-start-btn" type="button">Start Preprocess</button>
+                        <button id="pp-cancel-btn" type="button" class="secondary">Cancel</button>
+                    </div>
+                    <div class="progress-bar" id="pp-progress-bar"><div class="progress-bar-fill" id="pp-progress-fill"></div></div>
+                    <div class="progress-text" id="pp-progress-text"></div>
+                    <div class="stats-text panel-hidden" id="pp-stats"></div>
+                </div>
+            </div>
+
+            <!-- Train Panel -->
+            <div id="train-panel" class="panel-hidden">
+                <h2>Train</h2>
+                <div class="pipeline-section">
+                    <div class="stats-text" id="train-corpus-info">No corpus loaded</div>
+                </div>
+
+                <div class="pipeline-section">
+                    <h3>Mode</h3>
+                    <select id="train-mode">
+                        <option value="all" selected>All (Manual + Random + Reorganized)</option>
+                        <option value="manual">Manual Only</option>
+                        <option value="random">Random Only</option>
+                        <option value="reorganized">Reorganized Only</option>
+                    </select>
+                </div>
+
+                <div class="pipeline-section">
+                    <h3>Core Parameters</h3>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Epochs</span></div>
+                            <input type="number" id="train-epochs" value="2000" min="10" max="50000" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Batch Size</span></div>
+                            <input type="number" id="train-batch-size" value="64" min="8" max="512" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Learning Rate</span></div>
+                            <input type="number" id="train-lr" value="0.001" min="0.00001" max="0.1" step="0.0001" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Hidden</span></div>
+                            <input type="number" id="train-hidden" value="256" min="32" max="1024" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-header" id="train-loss-header">Loss Weights</div>
+                <div class="collapsible-body" id="train-loss-body">
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Recon</span><span class="control-value" id="val-train-recon">1.00</span></div>
+                            <input type="range" id="train-recon" min="0" max="5" step="0.1" value="1.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Smooth</span><span class="control-value" id="val-train-smooth">0.10</span></div>
+                            <input type="range" id="train-smooth" min="0" max="2" step="0.01" value="0.1">
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Manifold</span><span class="control-value" id="val-train-manifold">0.10</span></div>
+                            <input type="range" id="train-manifold" min="0" max="2" step="0.01" value="0.1">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Window</span><span class="control-value" id="val-train-window">0.50</span></div>
+                            <input type="range" id="train-window" min="0" max="3" step="0.1" value="0.5">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-header" id="train-reorg-header">Reorganized Settings</div>
+                <div class="collapsible-body" id="train-reorg-body">
+                    <div class="control-row">
+                        <div class="control-group">
+                            <div class="control-label"><span>Reorg Epochs</span></div>
+                            <input type="number" id="train-reorg-epochs" value="120" min="10" max="5000" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label"><span>Reorg Hidden</span></div>
+                            <input type="number" id="train-reorg-hidden" value="192" min="32" max="512" style="width:100%;padding:4px 6px;font-size:12px;background:#1a1a24;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pipeline-section">
+                    <div class="control-row">
+                        <button id="train-start-btn" type="button">Start Training</button>
+                        <button id="train-cancel-btn" type="button" class="secondary">Cancel</button>
+                    </div>
+                    <div class="progress-bar" id="train-progress-bar"><div class="progress-bar-fill" id="train-progress-fill"></div></div>
+                    <div class="progress-text" id="train-progress-text"></div>
+                    <div class="stats-text panel-hidden" id="train-stats"></div>
+                </div>
+            </div>
+
+            <!-- Perform Panel (wraps existing UI) -->
+            <div id="perform-panel" class="panel-hidden">
+                <h2>Perform</h2>
+                <div class="pipeline-section">
+                    <button id="perform-start-btn" type="button">Start Perform</button>
+                </div>
+            </div>
+
             <div class="status">
                 <div class="status-dot" id="status-dot"></div>
                 <span id="status-text">Disconnected</span>
@@ -605,6 +966,7 @@
         </div>
     </div>
     
+    <script src="pipeline.js"></script>
     <script src="sketch.js"></script>
 </body>
 </html>
