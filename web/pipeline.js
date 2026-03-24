@@ -1,12 +1,12 @@
 /**
  * Pipeline frontend logic for Stable Audio Wanderer.
- * Manages preprocess/train/perform phase UI and WebSocket pipeline messages.
+ * Manages preprocess/train/perform tab UI and WebSocket pipeline messages.
  */
 
 // Pipeline state
 let pipelinePhase = 'idle';
 let pipelineCorpusDir = null;
-let pipelineMode = false; // true when running via serve.py (pipeline_* messages detected)
+let selectedTab = 'preprocess';
 
 // Training history for chart rendering
 let trainingHistory = {
@@ -14,33 +14,37 @@ let trainingHistory = {
     reorganized: { train_loss: [], val_loss: [], accuracy: [] },
 };
 
-// Detect pipeline mode on first pipeline message
-function enablePipelineMode() {
-    if (pipelineMode) return;
-    pipelineMode = true;
-    const phaseBar = document.getElementById('pipeline-phase-bar');
-    if (phaseBar) phaseBar.classList.remove('panel-hidden');
+// ---- Tab Navigation ----
+
+function selectTab(tab) {
+    selectedTab = tab;
     updatePipelinePhaseUI();
 }
 
 function handlePipelineMessage(data) {
-    enablePipelineMode();
     const type = data.type;
 
     if (type === 'pipeline_state') {
         pipelinePhase = data.phase || 'idle';
         pipelineCorpusDir = data.corpus_dir || pipelineCorpusDir;
+        // If server is already in a phase, switch to that tab
+        if (pipelinePhase !== 'idle') selectTab(pipelinePhase);
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_phase_change') {
-        const prevPhase = pipelinePhase;
         pipelinePhase = data.phase || 'idle';
         pipelineCorpusDir = data.corpus_dir || pipelineCorpusDir;
 
         if (data.completed === 'preprocess') {
             onPreprocessComplete(data);
+            selectTab('train');
         } else if (data.completed === 'train') {
             onTrainComplete(data);
+            selectTab('perform');
         }
+
+        // Auto-switch to tab when a phase starts
+        if (pipelinePhase !== 'idle') selectTab(pipelinePhase);
+
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
         }
@@ -59,36 +63,24 @@ function handlePipelineMessage(data) {
 }
 
 function updatePipelinePhaseUI() {
-    if (!pipelineMode) return;
-
     const phases = ['preprocess', 'train', 'perform'];
-    const phaseOrder = { idle: -1, preprocess: 0, train: 1, perform: 2 };
-    const currentOrder = phaseOrder[pipelinePhase] ?? -1;
 
-    phases.forEach((p, i) => {
+    // Update tab appearance: selected tab + running indicator
+    phases.forEach(p => {
         const el = document.getElementById(`phase-${p}`);
         if (!el) return;
-        el.classList.remove('active', 'completed');
-        if (i === currentOrder) {
-            el.classList.add('active');
-        } else if (i < currentOrder) {
-            el.classList.add('completed');
-        }
+        el.classList.toggle('selected', p === selectedTab);
+        el.classList.toggle('running', p === pipelinePhase && pipelinePhase !== 'idle');
     });
 
-    // Show/hide pipeline panels
+    // Show/hide panels based on selected tab
     const ppPanel = document.getElementById('preprocess-panel');
     const trainPanel = document.getElementById('train-panel');
     const performPanel = document.getElementById('perform-panel');
 
-    // In pipeline mode, show preprocess/train panels when in idle or their respective phase
-    const showPreprocess = pipelinePhase === 'idle' || pipelinePhase === 'preprocess';
-    const showTrain = pipelinePhase === 'idle' || pipelinePhase === 'train';
-    const showPerform = pipelinePhase === 'idle' || pipelinePhase === 'perform';
-
-    if (ppPanel) ppPanel.classList.toggle('panel-hidden', !showPreprocess);
-    if (trainPanel) trainPanel.classList.toggle('panel-hidden', !showTrain);
-    if (performPanel) performPanel.classList.toggle('panel-hidden', !showPerform);
+    if (ppPanel) ppPanel.classList.toggle('panel-hidden', selectedTab !== 'preprocess');
+    if (trainPanel) trainPanel.classList.toggle('panel-hidden', selectedTab !== 'train');
+    if (performPanel) performPanel.classList.toggle('panel-hidden', selectedTab !== 'perform');
 
     // Disable start buttons during active phase
     const ppStartBtn = document.getElementById('pp-start-btn');
@@ -255,6 +247,17 @@ function onTrainComplete(data) {
 // ---- Setup Controls ----
 
 function setupPipelineControls() {
+    // Tab click handlers
+    ['preprocess', 'train', 'perform'].forEach(tab => {
+        const el = document.getElementById(`phase-${tab}`);
+        if (el) {
+            el.addEventListener('click', () => selectTab(tab));
+        }
+    });
+
+    // Set initial tab state
+    updatePipelinePhaseUI();
+
     // Scan button
     const scanBtn = document.getElementById('pp-scan-btn');
     if (scanBtn) {
@@ -264,9 +267,6 @@ function setupPipelineControls() {
             sendPipelineMessage({ type: 'pipeline_list_files', audio_dir: dir });
         });
     }
-
-    // Request corpus list on connect
-    // (called from connectWebSocket onopen)
 
     // Use existing corpus
     const useCorpusBtn = document.getElementById('pp-use-corpus-btn');

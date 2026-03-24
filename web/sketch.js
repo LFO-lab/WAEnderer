@@ -679,6 +679,11 @@ function handleMessage(data) {
             `Received corpus: manual3d=${manualCorpusPoints3D.length}, manualColor=${manualCorpusColorValues.length}`
         );
 
+        // Auto-switch to perform tab when corpus arrives in idle state (legacy server)
+        if (typeof selectTab === 'function' && pipelinePhase === 'idle') {
+            selectTab('perform');
+        }
+
     } else if (data.type === 'state') {
         const nav = data.navigation || {};
         const transport = data.transport || {};

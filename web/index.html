@@ -301,20 +301,44 @@
             background: #1a1a24;
             border-right: 1px solid #2a2a3a;
             transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
         }
 
         .phase-step:last-child {
             border-right: none;
         }
 
-        .phase-step.active {
+        .phase-step:hover:not(.selected) {
+            background: #222233;
+            color: #aaa;
+        }
+
+        .phase-step.selected {
             background: #4a9eff;
             color: #fff;
         }
 
-        .phase-step.completed {
-            background: #2a4a2a;
-            color: #6aff6a;
+        .phase-step.running::after {
+            content: '';
+            position: absolute;
+            bottom: 3px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 5px;
+            height: 5px;
+            background: #4aff6a;
+            border-radius: 50%;
+            animation: phase-pulse 1.5s ease-in-out infinite;
+        }
+
+        .phase-step.selected.running::after {
+            background: #fff;
+        }
+
+        @keyframes phase-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
 
         /* Pipeline panels */
@@ -494,14 +518,14 @@
             <h1>Stable Audio Wanderer</h1>
 
             <!-- Pipeline Phase Bar -->
-            <div id="pipeline-phase-bar" class="phase-bar panel-hidden">
-                <div class="phase-step" id="phase-preprocess">Preprocess</div>
+            <div id="pipeline-phase-bar" class="phase-bar">
+                <div class="phase-step selected" id="phase-preprocess">Preprocess</div>
                 <div class="phase-step" id="phase-train">Train</div>
                 <div class="phase-step" id="phase-perform">Perform</div>
             </div>
 
             <!-- Preprocess Panel -->
-            <div id="preprocess-panel" class="panel-hidden">
+            <div id="preprocess-panel">
                 <h2>Preprocess</h2>
                 <div class="pipeline-section">
                     <h3>Audio Source</h3>
@@ -686,13 +710,12 @@
                 </div>
             </div>
 
-            <!-- Perform Panel (wraps existing UI) -->
+            <!-- Perform Panel -->
             <div id="perform-panel" class="panel-hidden">
                 <h2>Perform</h2>
                 <div class="pipeline-section">
                     <button id="perform-start-btn" type="button">Start Perform</button>
                 </div>
-            </div>
 
             <div class="status">
                 <div class="status-dot" id="status-dot"></div>
@@ -963,6 +986,7 @@
 
             <button id="btn-reconnect" class="secondary">Reconnect</button>
             <button id="btn-exit" class="danger">Exit Performer</button>
+            </div><!-- /perform-panel -->
         </div>
     </div>
     
