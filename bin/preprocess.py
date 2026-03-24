@@ -29,6 +29,7 @@ from stable_audio_wanderer.config import (
     EMA_ALPHA_SLOW,
     CONTEXT_PCA_DIM,
 )
+from stable_audio_wanderer.vae import load_vae_adapter
 from stable_audio_wanderer.vae.sae import load_vae, encode_full
 from stable_audio_wanderer.io.audio_io import load_wav
 from stable_audio_wanderer.io.corpus_io import save_corpus
@@ -132,12 +133,12 @@ def _align_feature_frames(feature_seq: np.ndarray, target_frames: int) -> np.nda
     return feat
 
 
-def _build_mfcc_transform(hop_length: int):
+def _build_mfcc_transform(hop_length: int, sample_rate: int = SR):
     """
     Build MFCC extractor using latent-aligned hop length.
     """
     return torchaudio.transforms.MFCC(
-        sample_rate=int(SR),
+        sample_rate=int(sample_rate),
         n_mfcc=int(MANUAL_MFCC_TOTAL),
         melkwargs={
             "n_fft": int(MANUAL_N_FFT),
@@ -187,6 +188,7 @@ def compute_latent_aligned_descriptors(
     target_frames: int,
     mfcc_transform,
     hop_length: int,
+    sample_rate: int = SR,
 ) -> np.ndarray:
     """
     Compute descriptor stack aligned to latent frame rate.
@@ -218,8 +220,8 @@ def compute_latent_aligned_descriptors(
         power = (stft.abs().pow(2.0) + 1e-8).cpu().numpy().astype(np.float32)
         pitch_hz = AF.detect_pitch_frequency(
             x,
-            sample_rate=int(SR),
-            frame_time=float(hop_length) / float(SR),
+            sample_rate=int(sample_rate),
+            frame_time=float(hop_length) / float(sample_rate),
             freq_low=50,
             freq_high=2000,
         )
@@ -227,7 +229,7 @@ def compute_latent_aligned_descriptors(
 
     mfcc = _align_feature_frames(mfcc_full[:, MANUAL_MFCC_SLICE], int(target_frames))
     n_bins, n_frames_stft = power.shape
-    freqs = np.linspace(0.0, float(SR) * 0.5, n_bins, dtype=np.float32)[:, None]
+    freqs = np.linspace(0.0, float(sample_rate) * 0.5, n_bins, dtype=np.float32)[:, None]
     p_sum = power.sum(axis=0, keepdims=True) + 1e-8
     centroid = (freqs * power).sum(axis=0, keepdims=True) / p_sum
     diff = freqs - centroid
@@ -245,7 +247,7 @@ def compute_latent_aligned_descriptors(
     )
     crest = np.max(power, axis=0, keepdims=True) / (np.mean(power, axis=0, keepdims=True) + 1e-8)
 
-    chroma_map = _build_chroma_matrix(int(MANUAL_N_FFT), int(SR))
+    chroma_map = _build_chroma_matrix(int(MANUAL_N_FFT), int(sample_rate))
     chroma = chroma_map @ power
     chroma = chroma / (np.sum(chroma, axis=0, keepdims=True) + 1e-8)
 
@@ -446,7 +448,7 @@ def compute_window_targets(Z_concat: np.ndarray, meta: np.ndarray) -> np.ndarray
 def _compute_decoder_quality_targets(
     latents_dict: Dict[str, np.ndarray],
     meta: np.ndarray,
-    vae,
+    vae,  # VAEAdapter
     Z_mean: np.ndarray,
     Z_std: np.ndarray,
 ) -> np.ndarray:
@@ -536,6 +538,8 @@ def run_preprocess(
     out_prefix: str,
     pretrained: str = "stabilityai/stable-audio-open-1.0",
     vae=None,
+    vae_id: str = "",
+    vae_weight_path: str = "",
     progress_callback=None,
     cancel_event=None,
     latent_nav_k: int = 32,
@@ -601,7 +605,22 @@ def run_preprocess(
         return {"corpus_dir": out_dir, "cancelled": True}
 
     _emit("vae_load_start")
-    ae = vae if vae is not None else load_vae(pretrained)
+    # Load VAE adapter: prefer vae_id (new path), fall back to pretrained (compat)
+    from stable_audio_wanderer.vae.base import VAEAdapter
+    if isinstance(vae, VAEAdapter):
+        adapter = vae
+    elif vae_id:
+        adapter = load_vae_adapter(vae_id, weight_path=vae_weight_path)
+    elif vae is not None:
+        # Legacy: raw model passed in — wrap in Stable Audio adapter
+        from stable_audio_wanderer.vae.adapters.stable_audio_open import StableAudioOpenAdapter
+        adapter = StableAudioOpenAdapter(vae)
+    else:
+        adapter = load_vae(pretrained)
+    ae = adapter  # alias for backward compat in this file
+    vae_info = adapter.info()
+    corpus_sr = vae_info.sample_rate
+    corpus_latent_hz = vae_info.latent_hz
     _emit("vae_load_done")
 
     latent_sequences_raw: List[np.ndarray] = []
@@ -609,8 +628,8 @@ def run_preprocess(
     encode_chunk = float(encode_chunk_sec)
     encode_overlap = float(encode_chunk_overlap_sec)
     chunk_sec_val = encode_chunk if encode_chunk > 0.0 else None
-    latent_hop = max(1, int(round(float(SR) / float(LATENT_HZ))))
-    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop)
+    latent_hop = max(1, int(round(float(corpus_sr) / float(corpus_latent_hz))))
+    mfcc_transform = _build_mfcc_transform(hop_length=latent_hop, sample_rate=corpus_sr)
     silence_cfg = SilenceTrimConfig(
         enabled=bool(trim_silence),
         threshold_db=float(silence_threshold_db),
@@ -626,20 +645,21 @@ def run_preprocess(
         if _cancelled():
             return {"corpus_dir": out_dir, "cancelled": True}
         _emit("encode_file_start", file_index=fid, file_name=os.path.basename(p), total_files=len(paths))
-        wav = load_wav(p)
-        z_full = encode_full(ae, wav, chunk_sec=chunk_sec_val, overlap_sec=encode_overlap).astype(np.float32)
+        wav = load_wav(p, target_sr=corpus_sr)
+        z_full = encode_full(adapter, wav, chunk_sec=chunk_sec_val, overlap_sec=encode_overlap).astype(np.float32)
         descriptor_seq = compute_latent_aligned_descriptors(
             wav_stereo=wav,
             target_frames=z_full.shape[0],
             mfcc_transform=mfcc_transform,
             hop_length=latent_hop,
+            sample_rate=corpus_sr,
         )
         z_full, descriptor_seq, trim_result = trim_silent_frames(
             wav_stereo=wav,
             latents=z_full,
             descriptors=descriptor_seq,
             cfg=silence_cfg,
-            latent_hz=float(LATENT_HZ),
+            latent_hz=float(corpus_latent_hz),
         )
         silence_original_frames += int(trim_result.original_frames)
         silence_removed_frames += int(trim_result.removed_frames)
@@ -789,7 +809,7 @@ def run_preprocess(
         min_sec=float(reorg_min_sec),
         max_sec=float(reorg_max_sec),
         target_sec=float(reorg_target_sec),
-        latent_hz=float(LATENT_HZ),
+        latent_hz=float(corpus_latent_hz),
         candidate_k=int(reorg_candidate_k),
         graph_k=int(reorg_graph_k),
         weight_entry=float(reorg_weight_entry),
@@ -831,10 +851,11 @@ def run_preprocess(
         paths=paths_arr,
         Z_mean=Z_mean,
         Z_std=Z_std,
-        sr=np.array(int(SR), dtype=np.int32),
-        latent_hz=np.array(float(LATENT_HZ), dtype=np.float32),
-        segment_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
-        hop_dur=np.array(float(1.0 / LATENT_HZ), dtype=np.float32),
+        vae_id=np.array(vae_info.vae_id),
+        sr=np.array(int(corpus_sr), dtype=np.int32),
+        latent_hz=np.array(float(corpus_latent_hz), dtype=np.float32),
+        segment_dur=np.array(float(1.0 / corpus_latent_hz), dtype=np.float32),
+        hop_dur=np.array(float(1.0 / corpus_latent_hz), dtype=np.float32),
         latent_nav_k=np.array(int(latent_nav_k), dtype=np.int32),
         k_short=np.array(int(K_SHORT), dtype=np.int32),
         ema_alpha_fast=np.array(float(EMA_ALPHA_FAST), dtype=np.float32),
@@ -864,7 +885,7 @@ def run_preprocess(
         "total_files": len(paths),
         "total_frames": int(Z_concat.shape[0]),
         "silence_removed_pct": silence_removed_pct,
-        "vae": ae,
+        "vae": adapter,
         "cancelled": False,
     }
     _emit("complete", **{k: v for k, v in result.items() if k != "vae"})
@@ -877,7 +898,10 @@ def main():
     )
     ap.add_argument("--audio_dir", required=True)
     ap.add_argument("--out_prefix", required=True)
-    ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
+    ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0",
+                    help="HuggingFace model ID (legacy, use --vae_id instead).")
+    ap.add_argument("--vae_id", default="", help="VAE adapter ID (e.g. stable_audio_open, ear_vae_44k).")
+    ap.add_argument("--vae_weight_path", default="", help="Path to local weight file (for VAEs that require it).")
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
     ap.add_argument("--encode_chunk_sec", type=float, default=60.0,
                     help="Chunk size (seconds) for VAE encoding. Set 0 to disable chunking.")
@@ -1012,6 +1036,8 @@ def main():
         audio_dir=args.audio_dir,
         out_prefix=args.out_prefix,
         pretrained=args.pretrained,
+        vae_id=args.vae_id,
+        vae_weight_path=args.vae_weight_path,
         latent_nav_k=args.latent_nav_k,
         encode_chunk_sec=args.encode_chunk_sec,
         encode_chunk_overlap_sec=args.encode_chunk_overlap_sec,

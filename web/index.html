@@ -542,6 +542,23 @@
                 </div>
 
                 <div class="pipeline-section">
+                    <h3>VAE Model</h3>
+                    <div class="control-row">
+                        <div class="control-group" style="width:100%">
+                            <select id="pp-vae-select">
+                                <option value="stable_audio_open" selected>Stable Audio Open (44.1k)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="pp-vae-path-group" class="control-row panel-hidden">
+                        <div class="control-group" style="width:100%">
+                            <div class="control-label"><span id="pp-vae-path-label">Path to model weights</span></div>
+                            <input type="text" id="pp-vae-path" placeholder="Path to model weights...">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pipeline-section">
                     <h3>Or Use Existing Corpus</h3>
                     <select id="pp-corpus-select">
                         <option value="">-- Select Corpus --</option>

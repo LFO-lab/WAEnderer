@@ -6,20 +6,22 @@ import numpy as np
 import torch
 
 from ..config import DEVICE, DTYPE
+from .base import VAEAdapter
 
 
-@torch.inference_mode()
-def decode_latents(ae, z_raw: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+def decode_latents(adapter: VAEAdapter, z_raw: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
     """
     Decode latent vectors into audio.
 
     Args:
-        ae: Loaded AutoencoderOobleck instance
-        z_raw: [64] or [T, 64] latent vectors (numpy or torch)
+        adapter: A loaded VAEAdapter instance.
+        z_raw: [D] or [T, D] latent vectors (numpy or torch), where D = adapter latent_dim.
 
     Returns:
-        Audio array with shape [T_audio, 2]
+        Audio array with shape [T_audio, channels].
     """
+    latent_dim = adapter.info().latent_dim
+
     if isinstance(z_raw, torch.Tensor):
         z_np = z_raw.detach().cpu().numpy()
     else:
@@ -27,10 +29,12 @@ def decode_latents(ae, z_raw: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
 
     if z_np.ndim == 1:
         z_np = z_np[None, :]
-    if z_np.ndim != 2 or z_np.shape[1] != 64:
-        raise ValueError(f"Expected z_raw shape [64] or [T,64], got {z_np.shape}")
+    if z_np.ndim != 2 or z_np.shape[1] != latent_dim:
+        raise ValueError(
+            f"Expected z_raw shape [{latent_dim}] or [T,{latent_dim}], got {z_np.shape}"
+        )
 
-    z_t = torch.from_numpy(z_np.T).unsqueeze(0).to(DEVICE, dtype=DTYPE)  # [1, 64, T]
-    audio = ae.decode(z_t).sample  # [1, 2, T_audio]
+    z_t = torch.from_numpy(z_np.T).unsqueeze(0).to(DEVICE, dtype=DTYPE)  # [1, D, T]
+    audio = adapter.decode(z_t)  # [1, C, T_audio]
     audio_np = audio.squeeze(0).permute(1, 0).cpu().numpy().astype(np.float32)
     return audio_np

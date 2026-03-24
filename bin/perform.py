@@ -28,6 +28,7 @@ from stable_audio_wanderer.runtime.manifold import (
 from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
 from stable_audio_wanderer.runtime.osc_server import run_server
 from stable_audio_wanderer.runtime.player import LatentNavigationEngine
+from stable_audio_wanderer.vae import load_vae_adapter
 from stable_audio_wanderer.vae.decoder import decode_latents
 from stable_audio_wanderer.vae.sae import load_vae
 
@@ -77,6 +78,7 @@ def load_navigation_engine(
     reorganized_novelty: float = 0.50,
     reorganized_crossfile: float = 0.70,
     policy_variant: str = "random",
+    latent_frame_seconds: float = 0.0465,
 ):
     """Factory function to create the LatentNavigationEngine."""
     geometry = load_geometry_from_dict(data)
@@ -118,6 +120,7 @@ def load_navigation_engine(
         policy_v2_model_path=reorganized_model_path,
         policy_v2_temperature=reorganized_temperature,
         policy_variant=policy_variant,
+        latent_frame_seconds=latent_frame_seconds,
     )
 
 
@@ -358,7 +361,6 @@ class TransportController:
     TARGET_BUFFER_HIGH_POLICY = 1.0
     TARGET_BUFFER_HIGH_MANUAL = 0.22
     MANUAL_PREBUFFER_SEC = 0.22
-    MANUAL_FRAME_SEC = 0.0465
 
     def __init__(
         self,
@@ -373,6 +375,7 @@ class TransportController:
         Z_mean: np.ndarray,
         Z_std: np.ndarray,
         initial_mode: str,
+        latent_frame_sec: float = 0.0465,
     ):
         self.args = args
         self.nav = nav
@@ -385,6 +388,7 @@ class TransportController:
         self.Z_mean = np.asarray(Z_mean, dtype=np.float32)
         self.Z_std = np.asarray(Z_std, dtype=np.float32)
 
+        self.MANUAL_FRAME_SEC = float(latent_frame_sec)
         self.selected_mode = str(initial_mode)
         self._active_mode = str(initial_mode)
         self._running = threading.Event()
@@ -607,7 +611,7 @@ class TransportController:
 
         # Pre-buffer: fill audio buffer with ~1 second of audio before starting stream.
         print("[info] Pre-buffering audio...")
-        audio_per_hop = hop_size * 0.0465
+        audio_per_hop = hop_size * self.MANUAL_FRAME_SEC
         num_hops = max(4, int(1.0 / audio_per_hop) + 1)
 
         frame_buffer = [self.nav.step() for _ in range(window_size)]
@@ -1123,7 +1127,10 @@ def main():
     ap.add_argument(
         "--corpus_dir", required=True, help="Directory containing corpus.npz"
     )
-    ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0")
+    ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0",
+                    help="HuggingFace model ID (legacy, use corpus vae_id instead).")
+    ap.add_argument("--vae_id", default="", help="VAE adapter ID override (reads from corpus if empty).")
+    ap.add_argument("--vae_weight_path", default="", help="Path to local weight file (for VAEs that require it).")
     ap.add_argument("--osc_ip", default="127.0.0.1")
     ap.add_argument("--osc_port", type=int, default=9000)
     ap.add_argument(
@@ -1462,6 +1469,7 @@ def main():
             if args.initial_navigation_mode in ("random", "reorganized")
             else "random"
         ),
+        latent_frame_seconds=latent_frame_sec,
     )
 
     manifold_cfg = ManifoldConfig(
@@ -1504,9 +1512,20 @@ def main():
         f"refine_k={int(args.manual_refine_k)}, interp_k={int(args.manual_desc_interp_k)}"
     )
 
-    print("[info] Loading VAE decoder...")
-    vae = load_vae(args.pretrained)
-    decoder = DecoderPlayer(gain=args.output_gain)
+    # Load VAE: prefer vae_id from corpus, fall back to CLI args
+    corpus_vae_id = str(_read_scalar(data, "vae_id", ""))
+    corpus_sr = int(_read_scalar(data, "sr", 44100))
+    corpus_latent_hz = float(_read_scalar(data, "latent_hz", 21.5))
+    latent_frame_sec = 1.0 / corpus_latent_hz
+
+    vae_id = args.vae_id or corpus_vae_id
+    if vae_id:
+        print(f"[info] Loading VAE adapter: {vae_id}")
+        vae = load_vae_adapter(vae_id, weight_path=args.vae_weight_path)
+    else:
+        print("[info] Loading VAE decoder (legacy)...")
+        vae = load_vae(args.pretrained)
+    decoder = DecoderPlayer(gain=args.output_gain, sr=corpus_sr)
 
     controller = TransportController(
         args=args,
@@ -1520,6 +1539,7 @@ def main():
         Z_mean=Z_mean,
         Z_std=Z_std,
         initial_mode=args.initial_navigation_mode,
+        latent_frame_sec=latent_frame_sec,
     )
 
     ws_server = None

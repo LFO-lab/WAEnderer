@@ -56,7 +56,7 @@ class LatentNavigationEngine:
     RECOMPOSE_MIN_POOL = 3
     PHRASE_MIN_SECONDS = 2.0
     PHRASE_MAX_SECONDS = 10.0
-    LATENT_FRAME_SECONDS = 0.0465
+    LATENT_FRAME_SECONDS = 0.0465  # default, overridden by __init__ latent_frame_seconds
     V2_MIN_CANDIDATES = 4
     V2_MODEL_BLEND = 0.65
     V2_REPEAT_WINDOW = 32
@@ -92,7 +92,9 @@ class LatentNavigationEngine:
         policy_v2_model_path: Optional[str] = None,
         policy_v2_temperature: float = 1.0,
         policy_variant: Optional[str] = None,
+        latent_frame_seconds: float = 0.0465,
     ):
+        self.LATENT_FRAME_SECONDS = float(latent_frame_seconds)
         self.GG = np.asarray(GG, dtype=np.float32)
         self.meta = np.asarray(meta, dtype=np.int32) if meta is not None else None
         self.geometry = geometry

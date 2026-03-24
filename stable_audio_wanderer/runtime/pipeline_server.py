@@ -22,7 +22,7 @@ class PipelineManager:
     PHASES = ("idle", "preprocess", "train", "perform")
 
     def __init__(self, pretrained: str = "stabilityai/stable-audio-open-1.0"):
-        self.pretrained = pretrained
+        self.pretrained = pretrained  # legacy fallback
         self.phase = "idle"
         self._vae = None
         self._corpus_dir: Optional[str] = None
@@ -57,6 +57,8 @@ class PipelineManager:
             self._handle_list_files(data)
         elif msg_type == "pipeline_list_corpora":
             self._handle_list_corpora()
+        elif msg_type == "pipeline_list_vaes":
+            self._handle_list_vaes()
         elif msg_type == "pipeline_start_preprocess":
             self._handle_start_preprocess(data)
         elif msg_type == "pipeline_start_train":
@@ -130,6 +132,26 @@ class PipelineManager:
         })
 
     # ------------------------------------------------------------------
+    # VAE listing
+    # ------------------------------------------------------------------
+
+    def _handle_list_vaes(self):
+        from stable_audio_wanderer.vae import list_vaes
+        vaes = []
+        for info in list_vaes():
+            vaes.append({
+                "vae_id": info.vae_id,
+                "display_name": info.display_name,
+                "sample_rate": info.sample_rate,
+                "latent_hz": info.latent_hz,
+                "latent_dim": info.latent_dim,
+                "channels": info.channels,
+                "requires_path": info.requires_path,
+                "path_label": info.path_label,
+            })
+        self._emit({"type": "pipeline_vae_list", "vaes": vaes})
+
+    # ------------------------------------------------------------------
     # Preprocess
     # ------------------------------------------------------------------
 
@@ -165,6 +187,8 @@ class PipelineManager:
                 out_prefix=config.get("out_prefix", "corpus"),
                 pretrained=self.pretrained,
                 vae=self._vae,
+                vae_id=str(config.get("vae_id", "")),
+                vae_weight_path=str(config.get("vae_weight_path", "")),
                 progress_callback=progress_cb,
                 cancel_event=self._cancel,
                 latent_nav_k=int(config.get("latent_nav_k", 32)),

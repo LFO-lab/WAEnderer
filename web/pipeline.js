@@ -59,6 +59,8 @@ function handlePipelineMessage(data) {
         onFileList(data);
     } else if (type === 'pipeline_corpus_list') {
         onCorpusList(data);
+    } else if (type === 'pipeline_vae_list') {
+        onVAEList(data);
     }
 }
 
@@ -128,6 +130,37 @@ function onCorpusList(data) {
         opt.textContent = c.name;
         select.appendChild(opt);
     });
+}
+
+function onVAEList(data) {
+    const select = document.getElementById('pp-vae-select');
+    if (!select) return;
+
+    select.innerHTML = '';
+    (data.vaes || []).forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.vae_id;
+        opt.textContent = v.display_name;
+        opt.dataset.requiresPath = v.requires_path ? '1' : '0';
+        opt.dataset.pathLabel = v.path_label || 'Path to model weights';
+        select.appendChild(opt);
+    });
+    // Trigger change to update path visibility
+    updateVAEPathVisibility();
+}
+
+function updateVAEPathVisibility() {
+    const select = document.getElementById('pp-vae-select');
+    const pathGroup = document.getElementById('pp-vae-path-group');
+    const pathLabel = document.getElementById('pp-vae-path-label');
+    if (!select || !pathGroup) return;
+
+    const opt = select.options[select.selectedIndex];
+    const needsPath = opt && opt.dataset.requiresPath === '1';
+    pathGroup.classList.toggle('panel-hidden', !needsPath);
+    if (pathLabel && opt) {
+        pathLabel.textContent = opt.dataset.pathLabel || 'Path to model weights';
+    }
 }
 
 function onPreprocessProgress(data) {
@@ -258,6 +291,12 @@ function setupPipelineControls() {
     // Set initial tab state
     updatePipelinePhaseUI();
 
+    // VAE dropdown change handler
+    const vaeSelect = document.getElementById('pp-vae-select');
+    if (vaeSelect) {
+        vaeSelect.addEventListener('change', updateVAEPathVisibility);
+    }
+
     // Scan button
     const scanBtn = document.getElementById('pp-scan-btn');
     if (scanBtn) {
@@ -292,6 +331,8 @@ function setupPipelineControls() {
             const config = {
                 audio_dir: audioDir,
                 out_prefix: audioDir.split('/').pop() || 'corpus',
+                vae_id: document.getElementById('pp-vae-select')?.value || 'stable_audio_open',
+                vae_weight_path: document.getElementById('pp-vae-path')?.value || '',
                 trim_silence: document.getElementById('pp-trim-silence')?.checked ?? true,
                 silence_threshold_db: parseFloat(document.getElementById('pp-threshold')?.value || '-45'),
                 manual_reducer: document.getElementById('pp-reducer')?.value || 'pca',
@@ -419,6 +460,7 @@ function sendPipelineMessage(data) {
 
 function requestCorpusList() {
     sendPipelineMessage({ type: 'pipeline_list_corpora' });
+    sendPipelineMessage({ type: 'pipeline_list_vaes' });
     sendPipelineMessage({ type: 'pipeline_get_state' });
 }
 

@@ -1,10 +1,10 @@
 # Stable Audio Wanderer
 
-A real-time 64-dimensional latent space navigation instrument for exploring audio corpora. Audio is encoded with the Stable Audio Open VAE, segmented into a geometry-enabled latent corpus, and navigated using a learned GRU policy with manifold-constrained generation for real-time synthesis.
+A real-time latent space navigation instrument for exploring audio corpora. Audio is encoded with a selectable VAE, segmented into a geometry-enabled latent corpus, and navigated using a learned GRU policy with manifold-constrained generation for real-time synthesis.
 
 ## Features
 
-- **64D Latent Navigation** - Explore audio corpora in continuous latent space
+- **Latent Navigation** - Explore audio corpora in continuous latent space
 - **Manual Navigation Mode** - 4-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
 - **Random Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
 - **Reorganized Morphologies Mode** - Unit-graph sequencing with optional learned transition scorer
@@ -29,7 +29,36 @@ pip install -r requirements.txt
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
 | Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
 | Runtime | `sounddevice`, `python-osc`, `websockets` |
-| VAE | `diffusers`, `transformers`, `accelerate`, `safetensors` |
+| VAE (Stable Audio Open) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
+
+### Using Other VAEs
+
+The pipeline supports pluggable VAE backends. The default is [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) (44.1 kHz, 64D latents). Additional VAEs can be selected from the GUI dropdown or via CLI flags.
+
+#### EAR VAE
+
+[EAR VAE](https://huggingface.co/earlab/EAR_VAE) supports 44.1 kHz and 48 kHz encoding with 64D latents. To use it:
+
+1. **Clone the repository** (contains model code + pretrained weights):
+   ```bash
+   git clone https://huggingface.co/earlab/EAR_VAE /path/to/EAR_VAE
+   ```
+
+2. **Install its dependency**:
+   ```bash
+   pip install descript-audio-codec
+   ```
+
+3. **Select in the GUI**: Choose "EAR VAE (48k)" or "EAR VAE (44.1k)" from the VAE dropdown in the Preprocess panel, then provide the path to the `.pyt` weight file (e.g. `/path/to/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt`).
+
+   **Or via CLI**:
+   ```bash
+   python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus \
+       --vae_id ear_vae_48k \
+       --vae_weight_path /path/to/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt
+   ```
+
+The corpus records which VAE was used (`vae_id`), so train and perform phases automatically load the correct adapter and parameters.
 
 ## Pipeline
 
@@ -45,6 +74,8 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 |--------|---------|-------------|
 | `--audio_dir` | required | Directory containing WAV files |
 | `--out_prefix` | required | Output corpus name prefix |
+| `--vae_id` | `stable_audio_open` | VAE to use (`stable_audio_open`, `ear_vae_44k`, `ear_vae_48k`) |
+| `--vae_weight_path` | | Path to VAE weights (required for EAR VAE) |
 | `--seg_sec` | 0.2 | Segment duration in seconds |
 | `--hop_sec` | 0.05 | Hop duration in seconds |
 | `--latent_nav_k` | 32 | k-NN neighbors for geometry |
@@ -173,7 +204,7 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--manual_coarse_k` | 96 | Coarse candidate count for manual two-stage retrieval |
 | `--manual_refine_k` | 16 | Refined descriptor-nearest subset size for manual retrieval/wander |
 | `--manual_desc_interp_k` | 8 | Descriptor interpolation neighbors (mainly for UMAP query rerank) |
-| `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,64]` per chunk) |
+| `--manual_window_size` | 6 | Fixed manual decode batch size (`[T,D]` per chunk) |
 | `--manual_buffer_ratio` | 0.15 | Manual target buffer ratio vs current chunk duration (higher = safer, higher latency) |
 | `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
@@ -207,7 +238,7 @@ Audio Files
     │
     ▼
 ┌─────────────────┐
-│  corpus.npz     │  64D latents + kNN + PCA + metadata
+│  corpus.npz     │  Latents + kNN + PCA + metadata
 └─────────────────┘
     │
     ▼
@@ -246,7 +277,7 @@ Audio Files
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **LatentNavigationEngine** | `runtime/player.py` | Maintains 64D position, runs policy, applies controls |
+| **LatentNavigationEngine** | `runtime/player.py` | Maintains latent position, runs policy, applies controls |
 | **ManifoldConstrainedGenerator** | `runtime/manifold.py` | Projects navigation onto corpus manifold via PCA |
 | **DecoderPlayer** | `runtime/decoder_player.py` | Streaming audio with overlap-add crossfade |
 | **LatentPolicy** | `policy/latent_policy.py` | GRU model with Gaussian mixture output |
@@ -291,7 +322,7 @@ Backward compatibility:
 
 **Cursor**:
 ```
-/cursor x [y [z ...]]   Set cursor position (up to 64D)
+/cursor x [y [z ...]]   Set cursor position (up to latent dim)
 ```
 
 **Manual Controls** (0.0 - 1.0):
@@ -323,21 +354,24 @@ The web interface (`web/index.html`) provides:
 
 ## Corpus Format
 
-The `corpus.npz` file contains:
+The `corpus.npz` file contains (where `D` = latent dim, typically 64):
 
 | Array | Shape | Description |
 |-------|-------|-------------|
-| `Z_concat` | `[N, 64]` | Normalized frame-level latents |
+| `Z_concat` | `[N, D]` | Normalized frame-level latents |
 | `file_offsets` | `[num_files + 1]` | Frame offsets per source file |
 | `meta` | `[N, 3]` | (file_id, t_lat, win_lat) per segment |
 | `paths` | `[M]` | Source audio file paths |
-| `Z_mean`, `Z_std` | `[64]` | Denormalization statistics |
+| `Z_mean`, `Z_std` | `[D]` | Denormalization statistics |
+| `vae_id` | scalar | VAE adapter ID used for encoding (e.g. `stable_audio_open`, `ear_vae_48k`) |
+| `sr` | scalar | Audio sample rate used for encoding |
+| `latent_hz` | scalar | Latent frame rate of the VAE |
 | `window_targets_log2` | `[N]` | Adaptive policy window targets in log2(frame) space |
 | `geom_knn_indices` | `[N, K]` | Neighbor indices |
 | `geom_knn_distances` | `[N, K]` | Neighbor distances |
 | `geom_local_sigma` | `[N]` | Local density scale |
-| `geom_pca_components` | `[D, 64]` | Full-rank PCA matrix |
-| `geom_pca_mean` | `[64]` | PCA centering mean |
+| `geom_pca_components` | `[D, D]` | Full-rank PCA matrix |
+| `geom_pca_mean` | `[D]` | PCA centering mean |
 | `manual_embed_points` | `[N, 3 or 4]` | Manual navigation control coordinates (descriptor embedding) |
 | `manual_embed_reducer` | `["pca"|"umap"]` | Embedding method used for manual space |
 | `manual_pca_components` | `[embed_dim, D_desc]` | PCA basis over weighted descriptor space (PCA reducer only) |
@@ -354,9 +388,11 @@ Global constants in `stable_audio_wanderer/config.py`:
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `SR` | 44100 | Audio sample rate |
-| `LATENT_HZ` | 21.5 | VAE latent frame rate |
+| `SR` | 44100 | Default audio sample rate (overridden by VAE adapter) |
+| `LATENT_HZ` | 21.5 | Default VAE latent frame rate (overridden by VAE adapter) |
 | `DEVICE` | auto | MPS / CUDA / CPU |
+
+Pipeline code reads sample rate and latent rate from the active VAE adapter's `info()`, not from these globals. The globals remain for backward compatibility with standalone scripts and tests.
 
 Default preprocessing:
 - Segment: 200ms window, 50ms hop
@@ -387,7 +423,8 @@ stable-audio-wanderer/
 ├── bin/
 │   ├── preprocess.py      # Audio → corpus pipeline
 │   ├── train_policy.py    # Policy training
-│   └── perform.py         # Real-time performance
+│   ├── perform.py         # Real-time performance (standalone)
+│   └── serve.py           # GUI pipeline server (web UI)
 ├── stable_audio_wanderer/
 │   ├── config.py          # Global constants
 │   ├── io/
@@ -398,8 +435,13 @@ stable-audio-wanderer/
 │   │   ├── latent_geometry.py  # kNN, PCA, density
 │   │   └── sequence.py         # Temporal grouping
 │   ├── vae/
-│   │   ├── sae.py         # VAE encoding
-│   │   └── decoder.py     # VAE decoding
+│   │   ├── base.py        # VAEAdapter ABC + VAEInfo
+│   │   ├── registry.py    # VAE registry (list/load adapters)
+│   │   ├── sae.py         # VAE encoding utilities
+│   │   ├── decoder.py     # VAE decoding utilities
+│   │   └── adapters/
+│   │       ├── stable_audio_open.py  # Stable Audio Open adapter
+│   │       └── ear_vae.py            # EAR VAE adapter (44k/48k)
 │   └── runtime/
 │       ├── player.py          # Navigation engine
 │       ├── manual_player.py   # 3-axis manual timbre embedding engine
@@ -418,5 +460,6 @@ stable-audio-wanderer/
 ## Acknowledgments
 
 - [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) VAE by Stability AI
+- [EAR VAE](https://huggingface.co/earlab/EAR_VAE) by earlab
 - [FAISS](https://github.com/facebookresearch/faiss) for fast nearest neighbor search
 - [p5.js](https://p5js.org/) for web visualization

@@ -51,7 +51,10 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
     from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
     from stable_audio_wanderer.runtime.manifold import ManifoldConfig, ManifoldConstrainedGenerator
     from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
+    from stable_audio_wanderer.io.corpus_io import read_scalar
+    from stable_audio_wanderer.vae import load_vae_adapter
     from stable_audio_wanderer.vae.sae import load_vae
+    from stable_audio_wanderer.vae.base import VAEAdapter
 
     corpus_npz = find_corpus_file(corpus_dir)
     print(f"[serve] Using corpus: {corpus_npz}")
@@ -60,6 +63,12 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
     Z_concat = data["Z_concat"].astype(np.float32)
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
+
+    # Read VAE params from corpus
+    corpus_vae_id = str(read_scalar(data, "vae_id", ""))
+    corpus_sr = int(read_scalar(data, "sr", 44100))
+    corpus_latent_hz = float(read_scalar(data, "latent_hz", 21.5))
+    latent_frame_sec = 1.0 / corpus_latent_hz
 
     manual_artifact_path = _resolve_manual_artifact_path(corpus_dir, None)
     manual_data = load_manual_artifact(manual_artifact_path, expected_frames=Z_concat.shape[0])
@@ -79,6 +88,7 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
         reorganized_enabled=bool(v2_data is not None),
         reorganized_artifact=v2_data,
         reorganized_model_path=reorganized_model_path,
+        latent_frame_seconds=latent_frame_sec,
     )
 
     geometry = load_geometry_from_dict(data)
@@ -96,8 +106,19 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
         leafsize=int(manual_data["kdtree_leafsize"]),
     )
 
-    ae = vae if vae is not None else load_vae("stabilityai/stable-audio-open-1.0")
-    decoder = DecoderPlayer(gain=1.0)
+    # Load VAE adapter: prefer corpus vae_id, fall back to passed-in vae
+    if isinstance(vae, VAEAdapter):
+        ae = vae
+    elif corpus_vae_id:
+        print(f"[serve] Loading VAE adapter from corpus: {corpus_vae_id}")
+        ae = load_vae_adapter(corpus_vae_id)
+    elif vae is not None:
+        # Legacy raw model — wrap
+        from stable_audio_wanderer.vae.adapters.stable_audio_open import StableAudioOpenAdapter
+        ae = StableAudioOpenAdapter(vae)
+    else:
+        ae = load_vae("stabilityai/stable-audio-open-1.0")
+    decoder = DecoderPlayer(gain=1.0, sr=corpus_sr)
 
     # Build a minimal args namespace for TransportController
     perform_args = argparse.Namespace(
@@ -124,6 +145,7 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
         Z_mean=Z_mean,
         Z_std=Z_std,
         initial_mode="random",
+        latent_frame_sec=latent_frame_sec,
     )
 
     # Bind to the existing broadcaster
@@ -163,7 +185,7 @@ def main():
     from stable_audio_wanderer.runtime.pipeline_server import PipelineManager
     from stable_audio_wanderer.runtime.ws_server import start_ws_server
 
-    pipeline = PipelineManager(pretrained=args.pretrained)
+    pipeline = PipelineManager()
 
     # Start HTTP server
     _start_http_server(web_dir, args.http_port)

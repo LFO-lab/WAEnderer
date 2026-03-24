@@ -1,8 +1,10 @@
 import os
 import torch
 
+# Default VAE parameters (Stable Audio Open). Pipeline code should use
+# values from the active VAEAdapter; these remain for backward compat
+# with scripts and tests that don't use the adapter pattern.
 SR = 44100
-# LATENT_HZ: VAE encoder downsampling rate (used during preprocess only)
 LATENT_HZ = 21.5
 DTYPE = torch.float32
 
