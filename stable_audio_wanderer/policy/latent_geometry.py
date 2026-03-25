@@ -302,10 +302,15 @@ def compute_latent_geometry(
     centroid = latents.mean(axis=0).astype(np.float32)
 
     # Full-rank latent PCA basis (D x D) for manifold projection and visualization.
-    # SVD with full_matrices=True provides an orthonormal completion even if N < D.
     pca_mean = latents.mean(axis=0).astype(np.float32)
     centered = latents - pca_mean[None, :]
-    _, _, vt = np.linalg.svd(centered, full_matrices=True)
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    D = centered.shape[1]
+    if vt.shape[0] < D:
+        # N < D: complete the basis with random orthonormal vectors via null space
+        from scipy.linalg import null_space as _null_space
+        ns = _null_space(vt).T
+        vt = np.vstack([vt, ns[: D - vt.shape[0]]])
     pca_components = vt.astype(np.float32)
 
     return LatentGeometry(
