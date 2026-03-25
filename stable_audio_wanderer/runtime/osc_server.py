@@ -331,6 +331,23 @@ def run_server(
         except Exception as exc:
             print(f"[osc] /manual/wander_k exception: {exc}")
 
+    def on_manual_dither(addr, *vals):
+        v = _as_scalar(vals)
+        if v is None or manual_controller is None:
+            _dbg(f"{addr} ignored (no controller or invalid value)")
+            return
+        setter = getattr(manual_controller, "set_manual_dither", None)
+        if setter is None:
+            return
+        try:
+            amount = float(max(0.0, min(1.0, v)))
+            ok, msg = setter(amount)
+            if not ok:
+                print(f"[osc] /manual/dither error: {msg}")
+            _dbg(f"{addr} {amount} ({msg})")
+        except Exception as exc:
+            print(f"[osc] /manual/dither exception: {exc}")
+
     def on_unmapped(addr, *vals):
         _dbg(f"unmapped {addr} args={list(vals)}")
 
@@ -359,6 +376,7 @@ def run_server(
     dispatcher.map("/manual/z", on_manual_z)
     dispatcher.map("/manual/w", on_manual_w)
     dispatcher.map("/manual/wander_k", on_manual_wander_k)
+    dispatcher.map("/manual/dither", on_manual_dither)
     dispatcher.map("/manual/xyz", on_manual_xyz)
     dispatcher.map("/manual/xyzw", on_manual_xyzw)
     dispatcher.set_default_handler(on_unmapped)
@@ -376,7 +394,7 @@ def run_server(
         "/evolution, /novelty, /crossfile (0..1), /reorganized/reset"
     )
     print("  Decoder: /decoder/gain (0..2)")
-    print("  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/xyz x y z, /manual/xyzw x y z w")
+    print("  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/dither (0..0.2), /manual/xyz x y z, /manual/xyzw x y z w")
     if bool(osc_debug):
         print("  OSC debug: enabled (logs matched and unmatched OSC messages)")
 

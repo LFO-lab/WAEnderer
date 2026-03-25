@@ -747,6 +747,15 @@ function handleMessage(data) {
                     input.value = manualBufferRatio.toFixed(2);
                 }
             }
+            if (typeof manual.dither === 'number') {
+                const ditherVal = Number(manual.dither);
+                if (!activeControls.has('manual-dither')) {
+                    const display = document.getElementById('val-manual-dither');
+                    if (display) display.textContent = ditherVal.toFixed(2);
+                    const input = document.getElementById('manual-dither');
+                    if (input) input.value = String(ditherVal);
+                }
+            }
             if (typeof manual.wander_k === 'number') {
                 manualWanderK = Math.round(Number(manual.wander_k));
                 const display = document.getElementById('val-manual-wander-k');
@@ -1062,6 +1071,25 @@ function setupControls() {
         });
     }
 
+    const manualDitherInput = document.getElementById('manual-dither');
+    const manualDitherDisplay = document.getElementById('val-manual-dither');
+    if (manualDitherInput) {
+        const inputId = 'manual-dither';
+        manualDitherInput.addEventListener('mousedown', () => activeControls.add(inputId));
+        manualDitherInput.addEventListener('touchstart', () => activeControls.add(inputId));
+        manualDitherInput.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualDitherInput.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+        manualDitherInput.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+
+        manualDitherInput.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (!Number.isFinite(value)) return;
+            const clamped = Math.max(0, Math.min(0.20, value));
+            if (manualDitherDisplay) manualDitherDisplay.textContent = clamped.toFixed(2);
+            sendManualDither(clamped);
+        });
+    }
+
     const manualWanderInput = document.getElementById('manual-wander-k');
     const manualWanderDisplay = document.getElementById('val-manual-wander-k');
     if (manualWanderInput) {
@@ -1312,6 +1340,15 @@ function sendManualWander(k) {
         ws.send(JSON.stringify({
             type: 'manual_wander',
             k: Math.max(1, Math.min(64, Math.round(Number(k)))),
+        }));
+    }
+}
+
+function sendManualDither(amount) {
+    if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+            type: 'manual_dither',
+            amount: Math.max(0, Math.min(0.20, Number(amount))),
         }));
     }
 }

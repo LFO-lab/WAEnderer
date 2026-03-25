@@ -415,6 +415,10 @@ class TransportController:
         self._manual_fader_motion_threshold = float(
             np.clip(float(args.manual_fader_motion_threshold), 0.0, 1.0)
         )
+        self._manual_dither_amount = float(
+            np.clip(float(getattr(args, "manual_dither", 0.0)), 0.0, 1.0)
+        )
+        self._manual_prev_half: Optional[np.ndarray] = None
         self._manual_live_faders = np.full(self.manual.control_dim, 0.5, dtype=np.float32)
         self._manual_render_faders = np.full(
             self.manual.control_dim, 0.5, dtype=np.float32
@@ -534,6 +538,16 @@ class TransportController:
         with self._lock:
             self._manual_buffer_ratio = ratio_f
         return True, f"manual buffer ratio set to {ratio_f:.2f}"
+
+    def set_manual_dither(self, amount) -> Tuple[bool, str]:
+        try:
+            amount_f = float(amount)
+        except Exception:
+            return False, f"invalid manual dither amount: {amount}"
+        amount_f = float(np.clip(amount_f, 0.0, 1.0))
+        with self._lock:
+            self._manual_dither_amount = amount_f
+        return True, f"manual dither set to {amount_f:.3f}"
 
     def stop(self) -> Tuple[bool, str]:
         if not self._running.is_set():
@@ -672,29 +686,46 @@ class TransportController:
         self._set_manual_window_stats(start_window, changed=False)
         manual_target_buffer_high = self._manual_target_buffer_high()
         manual_prebuffer_sec = max(self.MANUAL_PREBUFFER_SEC, manual_target_buffer_high)
+        hop_size = (start_window + 1) // 2
         print(
             "[info] Manual decode window config: "
-            f"window={start_window}, queue={self.MANUAL_QUEUE_SIZE}, "
+            f"window={start_window}, hop={hop_size}, queue={self.MANUAL_QUEUE_SIZE}, "
             f"target_buf={manual_target_buffer_high:.2f}s"
         )
 
         # Scale prebuffer with window size so large decode batches do not underrun.
-        print("[info] Pre-buffering manual audio...")
-        pre_frames = max(4, int(manual_prebuffer_sec / self.MANUAL_FRAME_SEC) + 1)
-        pre_remaining = int(pre_frames)
-        while pre_remaining > 0:
-            batch_size = min(int(start_window), pre_remaining)
-            z_raw = self._next_manual_latent_batch(batch_size)
-            audio = decode_latents(self.vae, z_raw)
+        # Use latent-level overlap-add: first batch is full window, subsequent
+        # batches generate hop_size new frames prepended with prev_half.
+        print("[info] Pre-buffering manual audio (with latent OLA)...")
+        pre_hops = max(4, int(manual_prebuffer_sec / (hop_size * self.MANUAL_FRAME_SEC)) + 1)
+
+        # First batch: full window
+        z_raw = self._next_manual_latent_batch(start_window)
+        audio = decode_latents(self.vae, z_raw)
+        self.decoder.write_frame(audio)
+        prev_half = z_raw[hop_size:]
+
+        for _ in range(pre_hops - 1):
+            new_frames = self._next_manual_latent_batch(hop_size)
+            full_window = np.concatenate([prev_half, new_frames], axis=0)
+            audio = decode_latents(self.vae, full_window)
             self.decoder.write_frame(audio)
-            pre_remaining -= batch_size
+            prev_half = full_window[hop_size:]
+
         print(
-            f"[info] Pre-buffered {pre_frames} manual frames ({self.decoder.buffer_duration():.2f}s)"
+            f"[info] Pre-buffered {pre_hops} manual windows ({self.decoder.buffer_duration():.2f}s)"
         )
 
+        # Fill latent queue with overlap
         for _ in range(self._latent_queue.maxsize):
-            batch_size = self._manual_batch_window_size()
-            self._latent_queue.put(self._next_manual_latent_batch(batch_size))
+            window_size = self._manual_batch_window_size()
+            hop = (window_size + 1) // 2
+            new_frames = self._next_manual_latent_batch(hop)
+            full_window = np.concatenate([prev_half, new_frames], axis=0)
+            self._latent_queue.put(full_window)
+            prev_half = full_window[hop:]
+
+        self._manual_prev_half = prev_half
         print(
             f"[info] Manual latent queue filled ({self._latent_queue.qsize()} batches)"
         )
@@ -766,6 +797,11 @@ class TransportController:
 
         with self._lock:
             self._manual_render_faders = target_faders.copy()
+            dither = float(self._manual_dither_amount)
+
+        if dither > 0.0:
+            noise = np.random.randn(*batch.shape).astype(np.float32)
+            batch += noise * (dither * self.Z_std)
 
         return batch
 
@@ -774,7 +810,7 @@ class TransportController:
             if changed:
                 self._runtime_stats["window_changes"] += 1
             self._runtime_stats["current_window"] = int(window_size)
-            self._runtime_stats["current_hop"] = int(window_size)
+            self._runtime_stats["current_hop"] = (int(window_size) + 1) // 2
 
     def _manual_batch_window_size(self) -> int:
         with self._lock:
@@ -893,16 +929,23 @@ class TransportController:
             print("[info] Navigation loop stopped")
 
     def _manual_nav_loop(self):
-        print("[info] Manual navigation loop started")
+        print("[info] Manual navigation loop started (with latent OLA)")
+        prev_half = self._manual_prev_half
         try:
             while self._running.is_set():
                 if self._latent_queue.full():
                     time.sleep(0.005)
                     continue
-                batch_size = self._manual_batch_window_size()
-                z_raw = self._next_manual_latent_batch(batch_size)
+                window_size = self._manual_batch_window_size()
+                hop_size = (window_size + 1) // 2
+                new_frames = self._next_manual_latent_batch(hop_size)
+                if prev_half is not None and len(prev_half) > 0:
+                    full_window = np.concatenate([prev_half, new_frames], axis=0)
+                else:
+                    full_window = new_frames
+                prev_half = full_window[hop_size:]
                 try:
-                    self._latent_queue.put(z_raw, timeout=0.1)
+                    self._latent_queue.put(full_window, timeout=0.1)
                 except queue.Full:
                     pass
         except Exception as e:
@@ -1045,6 +1088,7 @@ class TransportController:
                 "wander_progress": float(
                     manual_engine_state.get("wander_progress", 0.0)
                 ),
+                "dither": float(self._manual_dither_amount),
             }
         return {
             "transport": {
@@ -1115,6 +1159,12 @@ class TransportController:
             ok, msg = self.set_manual_buffer_ratio(ratio)
             if not ok:
                 print(f"[ws] manual_buffer error: {msg}")
+            return True
+
+        if msg_type == "manual_dither":
+            amount = data.get("amount", 0.0)
+            ok, msg = self.set_manual_dither(amount)
+            print(f"[ws] manual_dither -> {msg}")
             return True
 
         return False
@@ -1203,6 +1253,14 @@ def main():
         type=float,
         default=0.15,
         help="Manual mode buffer target ratio relative to chunk duration (higher = safer, more latency).",
+    )
+    ap.add_argument(
+        "--manual_dither",
+        type=float,
+        default=0.0,
+        help="Latent micro-dither amount (0.0 = off, 0.01-0.05 typical). "
+             "Adds small noise to latent vectors before decoding to break "
+             "periodic pitch artifacts from repeated frames.",
     )
     ap.add_argument(
         "--autostart",
