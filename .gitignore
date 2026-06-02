@@ -12,3 +12,5 @@ dist/
 *.egg-info/
 __pycache__/
 .idea/
+/test_bundle
+/JUCE_Project

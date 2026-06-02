@@ -900,7 +900,7 @@ def main():
     ap.add_argument("--out_prefix", required=True)
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0",
                     help="HuggingFace model ID (legacy, use --vae_id instead).")
-    ap.add_argument("--vae_id", default="", help="VAE adapter ID (e.g. stable_audio_open, ear_vae_44k).")
+    ap.add_argument("--vae_id", default="", help="VAE adapter ID (e.g. stable_audio_open, same_s, ear_vae_44k).")
     ap.add_argument("--vae_weight_path", default="", help="Path to local weight file (for VAEs that require it).")
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
     ap.add_argument("--encode_chunk_sec", type=float, default=60.0,

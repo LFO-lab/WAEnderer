@@ -60,6 +60,20 @@ The pipeline supports pluggable VAE backends. The default is [Stable Audio Open]
 
 The corpus records which VAE was used (`vae_id`), so train and perform phases automatically load the correct adapter and parameters.
 
+[SAME-S](https://huggingface.co/stabilityai/SAME-S) is also available as a 44.1 kHz stereo adapter with 256D latents and a 4096x temporal compression ratio. Install the Stable Audio 3 library without dependency resolution so this project keeps its existing Torch/Torchaudio build:
+
+```bash
+pip install --no-deps git+https://github.com/Stability-AI/stable-audio-3.git
+pip install einops-exts "huggingface-hub>=1.7.1"
+```
+
+Then select "SAME-S (44.1k)" in the GUI or use:
+
+```bash
+python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus \
+    --vae_id same_s
+```
+
 ## Pipeline
 
 ### 1. Preprocess
@@ -74,7 +88,7 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 |--------|---------|-------------|
 | `--audio_dir` | required | Directory containing WAV files |
 | `--out_prefix` | required | Output corpus name prefix |
-| `--vae_id` | `stable_audio_open` | VAE to use (`stable_audio_open`, `ear_vae_44k`, `ear_vae_48k`) |
+| `--vae_id` | `stable_audio_open` | VAE to use (`stable_audio_open`, `same_s`, `ear_vae_44k`, `ear_vae_48k`) |
 | `--vae_weight_path` | | Path to VAE weights (required for EAR VAE) |
 | `--seg_sec` | 0.2 | Segment duration in seconds |
 | `--hop_sec` | 0.05 | Hop duration in seconds |
@@ -363,7 +377,7 @@ The `corpus.npz` file contains (where `D` = latent dim, typically 64):
 | `meta` | `[N, 3]` | (file_id, t_lat, win_lat) per segment |
 | `paths` | `[M]` | Source audio file paths |
 | `Z_mean`, `Z_std` | `[D]` | Denormalization statistics |
-| `vae_id` | scalar | VAE adapter ID used for encoding (e.g. `stable_audio_open`, `ear_vae_48k`) |
+| `vae_id` | scalar | VAE adapter ID used for encoding (e.g. `stable_audio_open`, `same_s`, `ear_vae_48k`) |
 | `sr` | scalar | Audio sample rate used for encoding |
 | `latent_hz` | scalar | Latent frame rate of the VAE |
 | `window_targets_log2` | `[N]` | Adaptive policy window targets in log2(frame) space |
@@ -441,6 +455,7 @@ stable-audio-wanderer/
 │   │   ├── decoder.py     # VAE decoding utilities
 │   │   └── adapters/
 │   │       ├── stable_audio_open.py  # Stable Audio Open adapter
+│   │       ├── same_s.py             # SAME-S adapter
 │   │       └── ear_vae.py            # EAR VAE adapter (44k/48k)
 │   └── runtime/
 │       ├── player.py          # Navigation engine
