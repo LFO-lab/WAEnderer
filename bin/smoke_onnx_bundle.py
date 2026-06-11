@@ -59,7 +59,7 @@ def choose_decoder_window(manifest: Dict[str, Any], requested: Optional[int]) ->
     windows = decoder.get("windows", {})
 
     if not windows:
-        raise RuntimeError("Bundle decoder has no fixed-window models")
+        raise RuntimeError("Bundle decoder has no ONNX window entries")
 
     if requested is not None:
         entry = windows.get(str(requested))
@@ -69,8 +69,8 @@ def choose_decoder_window(manifest: Dict[str, Any], requested: Optional[int]) ->
 
         return entry
 
-    first_key = sorted(windows, key=lambda item: int(item))[0]
-    return windows[first_key]
+    largest_key = sorted(windows, key=lambda item: int(item))[-1]
+    return windows[largest_key]
 
 
 def run_decoder(bundle: Path, window_entry: Dict[str, Any], start_frame: int) -> np.ndarray:

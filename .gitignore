@@ -14,3 +14,16 @@ __pycache__/
 .idea/
 /test_bundle
 /JUCE_Project
+/bundle_smooth
+/diagnostics_bundle
+/dynamic_bundle
+/dynamic_bundle_beats
+/dynamic_bundle_large
+/rehab_bundles
+/rehab_dynamic_same_s_bundle
+/T1_bundle
+/T2_bundle
+/T2_deum
+/T32_bundle
+/T4_deum
+/T8_bundle

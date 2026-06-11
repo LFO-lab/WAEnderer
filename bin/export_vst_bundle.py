@@ -3,9 +3,8 @@
 
 This is intentionally narrower than the full TOUCH.md design. It exports the
 arrays the current C++ MVP can consume: normalized latents and manual embedding
-points. With --export-decoder-onnx, it also exports fixed-window Stable Audio
-Open or SAME-S decoder ONNX artifacts and a CPU parity report for the next
-runtime step.
+points. With --export-decoder-onnx, it also exports decoder ONNX artifacts and a
+CPU parity report for the runtime.
 """
 
 from __future__ import annotations
@@ -29,11 +28,18 @@ FLOAT_ARRAYS = {
     "manual_embed_points": "manual_embed_points.f32.npy",
     "manual_fader_p01": "manual_fader_p01.f32.npy",
     "manual_fader_p99": "manual_fader_p99.f32.npy",
+    "manual_desc_weighted": "manual_desc_weighted.f32.npy",
+    "manual_pca_components": "manual_pca_components.f32.npy",
+    "manual_pca_mean": "manual_pca_mean.f32.npy",
     "geom_embeddings_l2": "geom_embeddings_l2.f32.npy",
     "geom_ctx_pca_components": "geom_ctx_pca_components.f32.npy",
     "geom_ctx_pca_mean": "geom_ctx_pca_mean.f32.npy",
     "geom_local_sigma": "geom_local_sigma.f32.npy",
     "geom_time_gradients": "geom_time_gradients.f32.npy",
+    "unit_graph_scores": "unit_graph_scores.f32.npy",
+    "unit_entry_desc": "unit_entry_desc.f32.npy",
+    "unit_exit_desc": "unit_exit_desc.f32.npy",
+    "unit_delta_desc": "unit_delta_desc.f32.npy",
 }
 
 INT_ARRAYS = {
@@ -42,10 +48,14 @@ INT_ARRAYS = {
     "frame_t": "frame_t.i32.npy",
     "unit_start_idx": "unit_start_idx.i32.npy",
     "unit_end_idx": "unit_end_idx.i32.npy",
+    "unit_file_id": "unit_file_id.i32.npy",
+    "unit_start_t": "unit_start_t.i32.npy",
+    "unit_end_t": "unit_end_t.i32.npy",
+    "frame_to_unit": "frame_to_unit.i32.npy",
     "unit_graph_neighbors": "unit_graph_neighbors.i32.npy",
 }
 
-DEFAULT_DECODER_WINDOWS = (1,)
+DEFAULT_DECODER_WINDOWS = (2, 4, 8, 16, 32)
 STABLE_AUDIO_OPEN_REPO = "stabilityai/stable-audio-open-1.0"
 SAME_S_REPO = "same-s"
 
@@ -189,6 +199,16 @@ def _decoder_samples_from_corpus(
     return samples
 
 
+def _decoder_timing_entry(window: int, samples_per_latent: int) -> Dict[str, Any]:
+    latent_hop = max(1, (int(window) + 1) // 2)
+    return {
+        "samples_per_latent": int(samples_per_latent),
+        "latent_hop": int(latent_hop),
+        "audio_hop_samples": int(latent_hop * int(samples_per_latent)),
+        "ola_mode": "full_overlap_add",
+    }
+
+
 def _snr_db(reference: np.ndarray, actual: np.ndarray) -> float:
     error = reference - actual
     signal_rms = float(np.sqrt(np.mean(np.square(reference), dtype=np.float64)))
@@ -224,6 +244,7 @@ def export_stable_audio_open_decoder_onnx(
     models_dir: Path,
     reports_dir: Path,
     latent_samples: Mapping[int, np.ndarray],
+    samples_per_latent: int,
     repo_or_path: str,
     opset: int,
 ) -> Dict[str, Any]:
@@ -295,6 +316,7 @@ def export_stable_audio_open_decoder_onnx(
             "output_shape": list(torch_audio.shape),
             "output_samples": int(torch_audio.shape[-1]) if torch_audio.ndim >= 3 else None,
             "opset": opset,
+            **_decoder_timing_entry(window, samples_per_latent),
         }
         windows[str(window)] = entry
         parity["windows"][str(window)] = {
@@ -324,6 +346,7 @@ def export_same_s_decoder_onnx(
     models_dir: Path,
     reports_dir: Path,
     latent_samples: Mapping[int, np.ndarray],
+    samples_per_latent: int,
     repo_or_path: str,
     opset: int,
 ) -> Dict[str, Any]:
@@ -351,6 +374,23 @@ def export_same_s_decoder_onnx(
 
     model = AutoencoderModel.from_pretrained(repo_or_path, device="cpu")
     wrapper = DecoderWrapper(model).eval()
+    validated_windows = tuple(sorted(int(window) for window in latent_samples.keys()))
+
+    if not validated_windows:
+        raise RuntimeError("At least one latent window is required for SAME-S ONNX export")
+
+    if any(window < 2 for window in validated_windows):
+        raise RuntimeError("SAME-S dynamic ONNX export requires latent windows >= 2")
+
+    if any(window % 2 != 0 for window in validated_windows):
+        raise RuntimeError(
+            "SAME-S dynamic ONNX export currently requires even latent windows. "
+            "ONNX Runtime fails SAME-S decoder reshapes for odd T values."
+        )
+
+    export_window = 8 if 8 in latent_samples else validated_windows[min(len(validated_windows) // 2, len(validated_windows) - 1)]
+    onnx_path = decoder_dir / "same_s_decoder_dynamic.onnx"
+    dummy = torch.from_numpy(latent_samples[export_window]).to("cpu")
 
     windows: Dict[str, Any] = {}
     parity: Dict[str, Any] = {
@@ -358,31 +398,42 @@ def export_same_s_decoder_onnx(
         "provider": "CPUExecutionProvider",
         "repo_or_path": repo_or_path,
         "opset": opset,
+        "dynamic_latent_window": True,
+        "validated_latent_windows": list(validated_windows),
+        "min_latent_window": int(min(validated_windows)),
+        "max_latent_window": int(max(validated_windows)),
         "windows": {},
     }
 
-    for window, latents_np in latent_samples.items():
-        onnx_path = decoder_dir / f"same_s_decoder_T{window}.onnx"
-        dummy = torch.from_numpy(latents_np).to("cpu")
+    latent_time_dim = torch.export.Dim(
+        "latent_time",
+        min=int(min(validated_windows)),
+        max=int(max(validated_windows)),
+    )
+    torch.onnx.export(
+        wrapper,
+        (dummy,),
+        str(onnx_path),
+        input_names=["latents"],
+        output_names=["audio"],
+        opset_version=opset,
+        dynamo=True,
+        dynamic_shapes={"latents": {2: latent_time_dim}},
+        external_data=False,
+    )
+
+    onnx_model = onnx.load(str(onnx_path))
+    onnx.checker.check_model(onnx_model)
+
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+
+    for window in validated_windows:
+        latents_np = latent_samples[window]
+        torch_latents = torch.from_numpy(latents_np).to("cpu")
 
         with torch.inference_mode():
-            torch_audio = wrapper(dummy).detach().cpu().numpy().astype(np.float32)
+            torch_audio = wrapper(torch_latents).detach().cpu().numpy().astype(np.float32)
 
-        torch.onnx.export(
-            wrapper,
-            (dummy,),
-            str(onnx_path),
-            input_names=["latents"],
-            output_names=["audio"],
-            opset_version=opset,
-            dynamo=True,
-            external_data=False,
-        )
-
-        onnx_model = onnx.load(str(onnx_path))
-        onnx.checker.check_model(onnx_model)
-
-        session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         onnx_audio = session.run(["audio"], {"latents": latents_np})[0].astype(np.float32)
         metrics = _parity_metrics(torch_audio, onnx_audio)
 
@@ -390,12 +441,14 @@ def export_same_s_decoder_onnx(
             "path": f"models/decoder/{onnx_path.name}",
             "sha256": _sha256(onnx_path),
             "latent_window": int(window),
+            "dynamic_latent_window": True,
             "input_name": "latents",
             "output_name": "audio",
             "input_shape": list(latents_np.shape),
             "output_shape": list(torch_audio.shape),
             "output_samples": int(torch_audio.shape[-1]) if torch_audio.ndim >= 3 else None,
             "opset": opset,
+            **_decoder_timing_entry(window, samples_per_latent),
         }
         windows[str(window)] = entry
         parity["windows"][str(window)] = {
@@ -414,6 +467,14 @@ def export_same_s_decoder_onnx(
         "opset": opset,
         "input_name": "latents",
         "output_name": "audio",
+        "path": f"models/decoder/{onnx_path.name}",
+        "sha256": _sha256(onnx_path),
+        "dynamic_latent_window": True,
+        "validated_latent_windows": list(validated_windows),
+        "min_latent_window": int(min(validated_windows)),
+        "max_latent_window": int(max(validated_windows)),
+        "samples_per_latent": int(samples_per_latent),
+        "ola_mode": "full_overlap_add",
         "parity_report": "reports/decoder_parity.json",
         "parity_report_sha256": _sha256(parity_path),
         "windows": windows,
@@ -484,6 +545,21 @@ def validate_bundle(bundle_dir: Path) -> Dict[str, Any]:
     decoder = manifest.get("models", {}).get("decoder", {})
 
     if isinstance(decoder, dict):
+        if decoder.get("backend") == "onnxruntime" and decoder.get("dynamic_latent_window"):
+            _validate_manifest_file(
+                bundle_dir=bundle_dir,
+                label="dynamic decoder",
+                rel_path=decoder.get("path"),
+                expected_sha256=decoder.get("sha256"),
+                errors=errors,
+            )
+
+            if int(decoder.get("samples_per_latent", 0) or 0) <= 0:
+                errors.append("dynamic decoder: missing positive samples_per_latent")
+
+            if decoder.get("ola_mode") != "full_overlap_add":
+                errors.append("dynamic decoder: ola_mode must be full_overlap_add")
+
         for window, entry in decoder.get("windows", {}).items():
             _validate_manifest_file(
                 bundle_dir=bundle_dir,
@@ -492,6 +568,14 @@ def validate_bundle(bundle_dir: Path) -> Dict[str, Any]:
                 expected_sha256=entry.get("sha256"),
                 errors=errors,
             )
+
+            if decoder.get("backend") == "onnxruntime":
+                for key in ("samples_per_latent", "latent_hop", "audio_hop_samples"):
+                    if int(entry.get(key, 0) or 0) <= 0:
+                        errors.append(f"decoder window {window}: missing positive {key}")
+
+                if entry.get("ola_mode") != "full_overlap_add":
+                    errors.append(f"decoder window {window}: ola_mode must be full_overlap_add")
 
         if decoder.get("parity_report"):
             _validate_manifest_file(
@@ -617,6 +701,13 @@ def export_bundle(
     with np.load(corpus_npz, allow_pickle=False) as corpus:
         if export_decoder_onnx:
             vae_id = str(_scalar(corpus, "vae_id", "unknown"))
+            sample_rate = int(_scalar(corpus, "sr", _scalar(corpus, "sample_rate", 44100)))
+            latent_hz = float(_scalar(corpus, "latent_hz", 0.0))
+
+            if latent_hz <= 0.0:
+                raise RuntimeError("corpus.npz must include a positive latent_hz for ONNX OLA export")
+
+            samples_per_latent = max(1, int(round(float(sample_rate) / latent_hz)))
             latent_samples = _decoder_samples_from_corpus(corpus, decoder_windows)
 
             if vae_id == "stable_audio_open":
@@ -624,6 +715,7 @@ def export_bundle(
                     models_dir=models_dir,
                     reports_dir=reports_dir,
                     latent_samples=latent_samples,
+                    samples_per_latent=samples_per_latent,
                     repo_or_path=decoder_repo or STABLE_AUDIO_OPEN_REPO,
                     opset=decoder_opset,
                 )
@@ -632,6 +724,7 @@ def export_bundle(
                     models_dir=models_dir,
                     reports_dir=reports_dir,
                     latent_samples=latent_samples,
+                    samples_per_latent=samples_per_latent,
                     repo_or_path=decoder_repo or SAME_S_REPO,
                     opset=decoder_opset,
                 )
@@ -705,7 +798,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--export-decoder-onnx",
         action="store_true",
-        help="Export fixed-window decoder ONNX models and CPU parity report for supported VAEs.",
+        help="Export decoder ONNX model(s) and CPU parity report for supported VAEs.",
     )
     parser.add_argument(
         "--decoder-windows",
