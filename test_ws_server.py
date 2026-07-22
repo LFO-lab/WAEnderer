@@ -162,7 +162,15 @@ def test_ws_broadcaster_merges_onnx_transport_decoder_metadata():
                 "audio_hop_samples": 4096,
                 "error": "latched failure",
                 "underruns": 3,
-            }
+            },
+            "wander_render": {
+                "requested_frame_source": "morphology_graph",
+                "effective_frame_source": "contiguous",
+                "graph_available": False,
+                "frame_order": 0.25,
+                "latent_colour": 0.5,
+                "seed": 0x476F6F64,
+            },
         },
     )
 
@@ -177,6 +185,14 @@ def test_ws_broadcaster_merges_onnx_transport_decoder_metadata():
         "selected_window": 2,
         "audio_hop_samples": 4096,
         "error": "latched failure",
+    }
+    assert state["wander_render"] == {
+        "requested_frame_source": "morphology_graph",
+        "effective_frame_source": "contiguous",
+        "graph_available": False,
+        "frame_order": 0.25,
+        "latent_colour": 0.5,
+        "seed": 0x476F6F64,
     }
 
 

@@ -41,6 +41,11 @@ let manualWindowLastSent = 6;
 let manualBufferRatio = 0.15;
 let manualWanderK = 1;
 let manualControlDim = 4;
+const WANDER_FRAME_SOURCE_LABELS = {
+    k_nearest: 'K Nearest',
+    contiguous: 'Contiguous',
+    morphology_graph: 'Morphology Graph',
+};
 
 // Manual 3D camera controls
 let manualViewYawDeg = -34.4;
@@ -813,6 +818,10 @@ function handleMessage(data) {
             }
         }
 
+        if (data.wander_render) {
+            updateWanderRenderControls(data.wander_render);
+        }
+
         if (data.decoder) {
             updateControlDisplays('decoder', data.decoder);
             updateDecoderRuntimeDisplay(data.decoder);
@@ -830,7 +839,10 @@ function updateConnectionStatus(connected) {
     if (connected) {
         dot.classList.add('connected');
         const runStatus = transportRunning ? 'Running' : 'Idle';
-        text.textContent = `Connected (${selectedNavigationMode}, ${runStatus})`;
+        const modeLabel = selectedNavigationMode === 'random'
+            ? 'Wander'
+            : selectedNavigationMode;
+        text.textContent = `Connected (${modeLabel}, ${runStatus})`;
     } else {
         dot.classList.remove('connected');
         text.textContent = 'Disconnected';
@@ -988,6 +1000,60 @@ function updateControlDisplays(prefix, values, displayPrefix = null) {
     }
 }
 
+function updateWanderRenderControls(values) {
+    if (!values || typeof values !== 'object') return;
+
+    const requestedSource = (
+        values.requested_frame_source ??
+        values.requested_source ??
+        values.frame_source
+    );
+    const effectiveSource = (
+        values.effective_frame_source ??
+        values.effective_source ??
+        requestedSource
+    );
+    const sourceInput = document.getElementById('wander-frame-source');
+    if (
+        sourceInput &&
+        Object.hasOwn(WANDER_FRAME_SOURCE_LABELS, requestedSource)
+    ) {
+        sourceInput.value = requestedSource;
+    }
+
+    const numericControls = [
+        ['frame_order', 'wander-frame-order', 'val-wander-frame-order'],
+        ['latent_colour', 'wander-latent-colour', 'val-wander-latent-colour'],
+    ];
+    numericControls.forEach(([key, inputId, displayId]) => {
+        const value = Number(values[key]);
+        if (!Number.isFinite(value) || activeControls.has(inputId)) return;
+        const clamped = Math.max(0, Math.min(1, value));
+        const input = document.getElementById(inputId);
+        const display = document.getElementById(displayId);
+        if (input) input.value = String(clamped);
+        if (display) display.textContent = clamped.toFixed(2);
+    });
+
+    const status = document.getElementById('wander-render-status');
+    if (!status) return;
+    const requestedLabel = WANDER_FRAME_SOURCE_LABELS[requestedSource] || requestedSource;
+    const effectiveLabel = WANDER_FRAME_SOURCE_LABELS[effectiveSource] || effectiveSource;
+    if (!effectiveLabel) {
+        status.textContent = 'Effective source unavailable';
+        return;
+    }
+
+    const parts = [`Effective: ${effectiveLabel}`];
+    if (requestedLabel && requestedSource !== effectiveSource) {
+        parts.push(`requested ${requestedLabel}`);
+    }
+    if (typeof values.graph_available === 'boolean') {
+        parts.push(values.graph_available ? 'graph ready' : 'graph unavailable');
+    }
+    status.textContent = parts.join(' · ');
+}
+
 // UI Control handlers
 function setupControls() {
     const modeRandomBtn = document.getElementById('mode-random');
@@ -1060,6 +1126,35 @@ function setupControls() {
                 sendRandomControl(ctrl, value);
             });
         }
+    });
+
+    const wanderFrameSource = document.getElementById('wander-frame-source');
+    if (wanderFrameSource) {
+        wanderFrameSource.addEventListener('change', (e) => {
+            sendWanderRenderControl('frame_source', e.target.value);
+        });
+    }
+
+    [
+        ['frame_order', 'wander-frame-order', 'val-wander-frame-order'],
+        ['latent_colour', 'wander-latent-colour', 'val-wander-latent-colour'],
+    ].forEach(([key, inputId, displayId]) => {
+        const input = document.getElementById(inputId);
+        const display = document.getElementById(displayId);
+        if (!input) return;
+
+        input.addEventListener('mousedown', () => activeControls.add(inputId));
+        input.addEventListener('touchstart', () => activeControls.add(inputId));
+        input.addEventListener('mouseup', () => setTimeout(() => activeControls.delete(inputId), 100));
+        input.addEventListener('touchend', () => setTimeout(() => activeControls.delete(inputId), 100));
+        input.addEventListener('mouseleave', () => setTimeout(() => activeControls.delete(inputId), 100));
+        input.addEventListener('input', (e) => {
+            const numeric = Number(e.target.value);
+            if (!Number.isFinite(numeric)) return;
+            const value = Math.max(0, Math.min(1, numeric));
+            if (display) display.textContent = value.toFixed(2);
+            sendWanderRenderControl(key, value);
+        });
     });
 
     // Reorganized controls
@@ -1365,6 +1460,26 @@ function sendRandomControl(name, value) {
             controls: { [name]: value }
         }));
     }
+}
+
+function sendWanderRenderControl(name, value) {
+    if (!ws || !wsConnected) return;
+
+    let normalized = value;
+    if (name === 'frame_source') {
+        if (!Object.hasOwn(WANDER_FRAME_SOURCE_LABELS, value)) return;
+    } else if (name === 'frame_order' || name === 'latent_colour') {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return;
+        normalized = Math.max(0, Math.min(1, numeric));
+    } else {
+        return;
+    }
+
+    ws.send(JSON.stringify({
+        type: 'wander_render',
+        controls: { [name]: normalized },
+    }));
 }
 
 function sendReorganizedControl(name, value) {

@@ -20,6 +20,7 @@ import numpy as np
 from .decoder_player import DecoderPlayer, GENERATION_TRANSITION_SAMPLES
 from .manual_windows import build_file_bounded_latent_window
 from .overlap_add import StreamingFullOverlapAdd
+from .wander_windows import WanderWindowPlanner
 from ..vae.onnx_decoder import SameSOnnxDecoder
 
 
@@ -49,6 +50,11 @@ class OnnxTransportController:
         frame_file_ids: np.ndarray,
         z_mean: np.ndarray,
         z_std: np.ndarray,
+        manual_points: Optional[np.ndarray] = None,
+        unit_start_idx: Optional[np.ndarray] = None,
+        unit_end_idx: Optional[np.ndarray] = None,
+        unit_graph_neighbors: Optional[np.ndarray] = None,
+        unit_graph_scores: Optional[np.ndarray] = None,
         initial_mode: str = "random",
         initial_window: int = 2,
     ) -> None:
@@ -71,6 +77,25 @@ class OnnxTransportController:
             raise ValueError("frame_file_ids must align with Z_concat")
         if self.Z_mean.shape != (256,) or self.Z_std.shape != (256,):
             raise ValueError("Z_mean and Z_std must both have shape [256]")
+
+        if manual_points is None:
+            # Compatibility for direct/test construction. Production passes the
+            # corpus manual embedding explicitly.
+            coordinate = np.linspace(
+                0.0, 1.0, self.Z_concat.shape[0], dtype=np.float32
+            )
+            manual_points = np.column_stack((coordinate, coordinate))
+        self.wander_planner = WanderWindowPlanner(
+            self.Z_concat,
+            self.file_offsets,
+            manual_points,
+            self.Z_mean,
+            self.Z_std,
+            unit_start_idx=unit_start_idx,
+            unit_end_idx=unit_end_idx,
+            unit_graph_neighbors=unit_graph_neighbors,
+            unit_graph_scores=unit_graph_scores,
+        )
 
         requested_window = int(initial_window)
         if requested_window not in latent_decoder.supported_windows:
@@ -99,6 +124,10 @@ class OnnxTransportController:
         self._requested_generation = 0
         self._requested_window = requested_window
         self._generation_windows: dict[int, int] = {}
+        self._wander_frame_source = "k_nearest"
+        self._wander_frame_order = 0.0
+        self._wander_latent_colour = 0.0
+        self._wander_reset_serial = 0
         self._transport_error: Optional[str] = None
         self._prebuffering = False
         self._decode_times_ms: deque[float] = deque(maxlen=512)
@@ -177,6 +206,7 @@ class OnnxTransportController:
             if window == self._requested_window:
                 return True, f"decoder window already T{window}"
             self._requested_window = window
+            self._wander_reset_serial += 1
             if self._running.is_set():
                 self._generation_counter += 1
                 self._requested_generation = self._generation_counter
@@ -195,6 +225,86 @@ class OnnxTransportController:
                 f"(dropped {dropped} stale requests)"
             )
         return True, f"decoder window set to T{window}"
+
+    def set_wander_render_controls(self, controls) -> Tuple[bool, str]:
+        """Apply decoder-window rendering controls without renaming Random policy APIs."""
+        if not isinstance(controls, dict):
+            return False, "wander_render controls must be an object"
+
+        valid_sources = {"k_nearest", "contiguous", "morphology_graph"}
+        with self._lock:
+            source = self._wander_frame_source
+            frame_order = self._wander_frame_order
+            latent_colour = self._wander_latent_colour
+
+            candidate_source = controls.get("frame_source")
+            if isinstance(candidate_source, str) and candidate_source in valid_sources:
+                source = candidate_source
+
+            for key, current in (
+                ("frame_order", frame_order),
+                ("latent_colour", latent_colour),
+            ):
+                if key not in controls:
+                    continue
+                try:
+                    parsed = float(controls[key])
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(parsed):
+                    continue
+                if key == "frame_order":
+                    frame_order = float(np.clip(parsed, 0.0, 1.0))
+                else:
+                    latent_colour = float(np.clip(parsed, 0.0, 1.0))
+
+            source_changed = source != self._wander_frame_source
+            changed = (
+                source_changed
+                or frame_order != self._wander_frame_order
+                or latent_colour != self._wander_latent_colour
+            )
+            if not changed:
+                return True, "wander render controls unchanged"
+
+            self._wander_frame_source = source
+            self._wander_frame_order = frame_order
+            self._wander_latent_colour = latent_colour
+            if source_changed:
+                self._wander_reset_serial += 1
+
+            if self._running.is_set() and self._active_mode == "random":
+                self._generation_counter += 1
+                self._requested_generation = self._generation_counter
+                self._generation_windows[self._requested_generation] = self._requested_window
+                generation = self._requested_generation
+            else:
+                generation = None
+
+        if generation is not None:
+            self.decoder.request_generation(generation)
+            dropped = self._drop_pending_requests()
+            return True, (
+                f"staging Wander render generation {generation} "
+                f"(dropped {dropped} stale requests)"
+            )
+        return True, "wander render controls updated"
+
+    def reset_wander(self, idx=None) -> Tuple[bool, str]:
+        self.nav.reset_policy(idx=idx)
+        with self._lock:
+            self._wander_reset_serial += 1
+            if self._running.is_set() and self._active_mode == "random":
+                self._generation_counter += 1
+                self._requested_generation = self._generation_counter
+                self._generation_windows[self._requested_generation] = self._requested_window
+                generation = self._requested_generation
+            else:
+                generation = None
+        if generation is not None:
+            self.decoder.request_generation(generation)
+            self._drop_pending_requests()
+        return True, "Wander reset"
 
     def _cleanup_previous_run(self) -> None:
         self._running.clear()
@@ -232,6 +342,7 @@ class OnnxTransportController:
             self._generation_windows = {generation: window}
             self._transport_error = None
             self._prebuffering = True
+            self._wander_reset_serial += 1
 
         self.decoder.request_generation(generation)
 
@@ -301,9 +412,45 @@ class OnnxTransportController:
             self._manual_last_distance = float(frame.distance)
         return _DecodeRequest(generation, window, raw)
 
+    def _wander_request(
+        self,
+        generation: int,
+        window: int,
+        previous_generation: Optional[int],
+        planner_reset_serial: int,
+    ) -> tuple[_DecodeRequest, int]:
+        """Advance the policy at the existing cadence, then plan one full T window."""
+        hop = (window + 1) // 2
+        step_count = window if generation != previous_generation else hop
+        anchor = None
+        for _ in range(step_count):
+            anchor = self.nav.step(fixed_retrieval_window=window)
+        if anchor is None:
+            raise RuntimeError("Wander navigation produced no anchor")
+        anchor_frame = int(getattr(anchor, "nearest_idx", anchor))
+        with self._lock:
+            frame_source = self._wander_frame_source
+            frame_order = self._wander_frame_order
+            latent_colour = self._wander_latent_colour
+            reset_serial = self._wander_reset_serial
+        if reset_serial != planner_reset_serial:
+            self.wander_planner.reset()
+            planner_reset_serial = reset_serial
+        controls = self.nav.get_random_controls()
+        planned = self.wander_planner.plan(
+            anchor_frame,
+            window,
+            frame_source=frame_source,
+            frame_order=frame_order,
+            latent_colour=latent_colour,
+            **controls,
+        )
+        return _DecodeRequest(generation, window, planned.raw_latents), planner_reset_serial
+
     def _producer_loop(self) -> None:
         previous_frames = []
         previous_generation = None
+        planner_reset_serial = -1
         try:
             while self._running.is_set():
                 latent_queue = self._latent_queue
@@ -316,6 +463,14 @@ class OnnxTransportController:
                 generation, window, mode = self._snapshot_request()
                 if mode == "manual":
                     request = self._manual_request(generation, window)
+                elif mode == "random":
+                    request, planner_reset_serial = self._wander_request(
+                        generation,
+                        window,
+                        previous_generation,
+                        planner_reset_serial,
+                    )
+                    previous_generation = generation
                 else:
                     def next_frame():
                         return self.nav.step(fixed_retrieval_window=window)
@@ -497,7 +652,22 @@ class OnnxTransportController:
             error = self._transport_error
             faders = self._manual_faders.tolist()
             requested_window = int(self._requested_window)
+            frame_source = self._wander_frame_source
+            frame_order = float(self._wander_frame_order)
+            latent_colour = float(self._wander_latent_colour)
         manual_state = self.manual.get_state()
+        wander_diagnostics = self.wander_planner.last_diagnostics
+        effective_source = (
+            "contiguous"
+            if frame_source == "morphology_graph"
+            and not self.wander_planner.graph_available
+            else frame_source
+        )
+        if (
+            wander_diagnostics is not None
+            and wander_diagnostics.requested_frame_source == frame_source
+        ):
+            effective_source = wander_diagnostics.effective_frame_source
         with self._stats_lock:
             manual_index = int(self._manual_last_index)
             manual_distance = float(self._manual_last_distance)
@@ -508,6 +678,15 @@ class OnnxTransportController:
                 "error": error,
             },
             "navigation_mode": selected_mode,
+            "wander_render": {
+                "frame_source": frame_source,
+                "requested_frame_source": frame_source,
+                "effective_frame_source": effective_source,
+                "graph_available": bool(self.wander_planner.graph_available),
+                "frame_order": frame_order,
+                "latent_colour": latent_colour,
+                "seed": int(self.wander_planner.seed),
+            },
             "manual": {
                 **manual_state,
                 "nearest_index": manual_index,
@@ -545,6 +724,10 @@ class OnnxTransportController:
             ok, message = self.set_decoder_window(data.get("size"))
             print(f"[ws] decoder window: {message}")
             return True
+        if msg_type == "wander_render":
+            ok, message = self.set_wander_render_controls(data.get("controls", {}))
+            print(f"[ws] wander render: {message}")
+            return True
         if msg_type in ("random_control", "control"):
             controls = data.get("controls", {})
             if isinstance(controls, dict):
@@ -560,6 +743,10 @@ class OnnxTransportController:
             return True
         if msg_type == "manual_wander":
             self.set_manual_wander_params(k=data.get("k"), speed=data.get("speed"))
+            return True
+        if msg_type == "reset":
+            ok, message = self.reset_wander(idx=data.get("index"))
+            print(f"[ws] reset: {message}")
             return True
         if msg_type in ("manual_window", "manual_dither"):
             # These legacy controls are intentionally unavailable in Web-ONNX mode.

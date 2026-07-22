@@ -78,6 +78,17 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
     v2_data = None
     if reorganized_units_path is not None:
         v2_data = load_policy_v2_artifact(reorganized_units_path, expected_frames=Z_concat.shape[0])
+    # Wander's decoder-window graph is a corpus property and does not require
+    # a trained Reorganized model. Prefer the arrays embedded by preprocessing.
+    graph_keys = ("unit_start_idx", "unit_end_idx", "unit_graph_neighbors")
+    if all(key in data for key in graph_keys):
+        wander_graph = {key: data[key] for key in graph_keys}
+        if "unit_graph_scores" in data:
+            wander_graph["unit_graph_scores"] = data["unit_graph_scores"]
+    elif v2_data is not None:
+        wander_graph = v2_data
+    else:
+        wander_graph = {}
     reorganized_model_path = _resolve_optional_model_path(corpus_dir, None, "policy_v2_*.pt")
 
     nav = load_navigation_engine(
@@ -126,6 +137,11 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
             frame_file_ids=manual_data["frame_file_ids"],
             z_mean=Z_mean,
             z_std=Z_std,
+            manual_points=manual_data["manual_embed_points"],
+            unit_start_idx=wander_graph.get("unit_start_idx"),
+            unit_end_idx=wander_graph.get("unit_end_idx"),
+            unit_graph_neighbors=wander_graph.get("unit_graph_neighbors"),
+            unit_graph_scores=wander_graph.get("unit_graph_scores"),
             initial_mode="random",
             initial_window=selected_window,
         )

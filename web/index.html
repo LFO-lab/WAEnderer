@@ -827,7 +827,7 @@
             
             <h2>Navigation Mode</h2>
             <div class="mode-tabs">
-                <button id="mode-random" class="mode-tab active" type="button">Random</button>
+                <button id="mode-random" class="mode-tab active" type="button">Wander</button>
                 <button id="mode-reorganized" class="mode-tab" type="button">Reorganized</button>
                 <button id="mode-manual" class="mode-tab" type="button">Manual</button>
             </div>
@@ -838,7 +838,39 @@
             </div>
 
             <div id="random-panel">
-                <h2>Random Morphologies</h2>
+                <h2>Wander</h2>
+
+                <div class="control-row">
+                    <div class="control-group" style="width:100%;grid-column:1 / -1">
+                        <div class="control-label">
+                            <span>Frame Source</span>
+                        </div>
+                        <select id="wander-frame-source">
+                            <option value="k_nearest" selected>K Nearest</option>
+                            <option value="contiguous">Contiguous</option>
+                            <option value="morphology_graph">Morphology Graph</option>
+                        </select>
+                        <div class="stats-text" id="wander-render-status">Effective: K Nearest</div>
+                    </div>
+                </div>
+
+                <div class="control-row">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Frame Order</span>
+                            <span class="control-value" id="val-wander-frame-order">0.00</span>
+                        </div>
+                        <input type="range" id="wander-frame-order" min="0" max="1" step="0.01" value="0">
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Latent Colour (Dither)</span>
+                            <span class="control-value" id="val-wander-latent-colour">0.00</span>
+                        </div>
+                        <input type="range" id="wander-latent-colour" min="0" max="1" step="0.01" value="0">
+                    </div>
+                </div>
                 
                 <div class="control-row">
                     <div class="control-group">
@@ -896,7 +928,7 @@
                     </div>
                 </div>
 
-                <button id="btn-random-reset">Reset Random</button>
+                <button id="btn-random-reset">Reset Wander</button>
             </div>
 
             <div id="reorganized-panel" class="panel-hidden">

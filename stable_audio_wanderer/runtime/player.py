@@ -594,6 +594,18 @@ class LatentNavigationEngine:
                 self._controls_dirty = True
                 self._prev_random_control_vector = new_vec
 
+    def get_random_controls(self) -> dict:
+        """Return an atomic snapshot for decoder-window source planning."""
+        with self._lock:
+            return {
+                "phrase_scale": float(self.ctrl_phrase_scale),
+                "jump_rate": float(self.ctrl_jump_rate),
+                "timbre_lock": float(self.ctrl_timbre_lock),
+                "drift": float(self.ctrl_drift),
+                "repeat_avoid": float(self.ctrl_repeat_avoid),
+                "crossfile": float(self.ctrl_crossfile),
+            }
+
     def set_reorganized_controls(
         self,
         morph_len=None,

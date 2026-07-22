@@ -375,6 +375,9 @@ class WSBroadcaster:
                                 float(pos_norm[2]),
                             ]
                     state["manual"] = manual
+                wander_render = extra.get("wander_render")
+                if isinstance(wander_render, dict):
+                    state["wander_render"] = dict(wander_render)
                 decoder_state = extra.get("decoder")
                 if isinstance(decoder_state, dict):
                     existing_decoder = state.get("decoder")
