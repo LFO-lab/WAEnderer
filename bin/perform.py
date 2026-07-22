@@ -1450,6 +1450,12 @@ def main():
     Z_concat = data["Z_concat"].astype(np.float32)
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
+    corpus_vae_id = str(_read_scalar(data, "vae_id", ""))
+    corpus_sr = int(_read_scalar(data, "sr", 44100))
+    corpus_latent_hz = float(_read_scalar(data, "latent_hz", 21.5))
+    if not np.isfinite(corpus_latent_hz) or corpus_latent_hz <= 0.0:
+        raise RuntimeError(f"Corpus latent_hz must be positive, got {corpus_latent_hz}")
+    latent_frame_sec = 1.0 / corpus_latent_hz
 
     manual_artifact_path = _resolve_manual_artifact_path(
         args.corpus_dir, args.manual_artifact
@@ -1571,11 +1577,6 @@ def main():
     )
 
     # Load VAE: prefer vae_id from corpus, fall back to CLI args
-    corpus_vae_id = str(_read_scalar(data, "vae_id", ""))
-    corpus_sr = int(_read_scalar(data, "sr", 44100))
-    corpus_latent_hz = float(_read_scalar(data, "latent_hz", 21.5))
-    latent_frame_sec = 1.0 / corpus_latent_hz
-
     vae_id = args.vae_id or corpus_vae_id
     if vae_id:
         print(f"[info] Loading VAE adapter: {vae_id}")

@@ -141,6 +141,19 @@ class WSBroadcaster:
             manual_fader_p99,
         )
         self._bind_nav_projections()
+        # The unified browser normally connects before perform setup.  Replace
+        # the empty pre-bind corpus immediately so it need not reconnect to see
+        # the manual point cloud and file ids.
+        self.broadcast_corpus()
+
+    def broadcast_corpus(self):
+        """Push the currently bound corpus to every connected client."""
+        try:
+            data = json.loads(self._get_corpus_json())
+        except Exception as exc:
+            print(f"[ws] Error building corpus JSON: {exc}")
+            return
+        self.broadcast_pipeline_message(data)
 
     def broadcast_pipeline_message(self, data: dict):
         """Push a pipeline message to all connected clients from any thread."""
@@ -362,6 +375,12 @@ class WSBroadcaster:
                                 float(pos_norm[2]),
                             ]
                     state["manual"] = manual
+                decoder_state = extra.get("decoder")
+                if isinstance(decoder_state, dict):
+                    existing_decoder = state.get("decoder")
+                    if not isinstance(existing_decoder, dict):
+                        existing_decoder = {}
+                    state["decoder"] = {**existing_decoder, **decoder_state}
 
         return json.dumps(state)
     

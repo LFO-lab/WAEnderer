@@ -34,11 +34,9 @@ def _start_http_server(web_dir: str, port: int) -> threading.Thread:
     return thread
 
 
-def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
-    """Set up the perform phase: load corpus, create nav engine, bind to broadcaster."""
+def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_port):
+    """Set up the fail-closed SAME-S ONNX Web performance phase."""
     from bin.perform import (
-        TransportController,
-        find_corpus_file,
         load_manual_artifact,
         load_navigation_engine,
         load_policy_v2_artifact,
@@ -51,18 +49,19 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
     from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
     from stable_audio_wanderer.runtime.manifold import ManifoldConfig, ManifoldConstrainedGenerator
     from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
+    from stable_audio_wanderer.runtime.onnx_transport import OnnxTransportController
     from stable_audio_wanderer.io.corpus_io import read_scalar
-    from stable_audio_wanderer.vae import load_vae_adapter
-    from stable_audio_wanderer.vae.sae import load_vae
-    from stable_audio_wanderer.vae.base import VAEAdapter
 
-    corpus_npz = find_corpus_file(corpus_dir)
+    corpus_npz = os.path.join(corpus_dir, "corpus.npz")
+    if not os.path.isfile(corpus_npz):
+        raise FileNotFoundError(f"Corpus file is missing: {corpus_npz}")
     print(f"[serve] Using corpus: {corpus_npz}")
     data = load_corpus(corpus_npz)
 
     Z_concat = data["Z_concat"].astype(np.float32)
     Z_mean = data["Z_mean"].astype(np.float32)
     Z_std = data["Z_std"].astype(np.float32)
+    file_offsets = data["file_offsets"].astype(np.int64)
 
     # Read VAE params from corpus
     corpus_vae_id = str(read_scalar(data, "vae_id", ""))
@@ -106,59 +105,49 @@ def _setup_perform_phase(corpus_dir, vae, broadcaster, ws_port):
         leafsize=int(manual_data["kdtree_leafsize"]),
     )
 
-    # Load VAE adapter: prefer corpus vae_id, fall back to passed-in vae
-    if isinstance(vae, VAEAdapter):
-        ae = vae
-    elif corpus_vae_id:
-        print(f"[serve] Loading VAE adapter from corpus: {corpus_vae_id}")
-        ae = load_vae_adapter(corpus_vae_id)
-    elif vae is not None:
-        # Legacy raw model — wrap
-        from stable_audio_wanderer.vae.adapters.stable_audio_open import StableAudioOpenAdapter
-        ae = StableAudioOpenAdapter(vae)
-    else:
-        ae = load_vae("stabilityai/stable-audio-open-1.0")
-    decoder = DecoderPlayer(gain=1.0, sr=corpus_sr)
+    if corpus_vae_id != "same_s":
+        raise RuntimeError(
+            f"Unified Web performance requires a SAME-S corpus, got {corpus_vae_id!r}"
+        )
+    if latent_decoder is None:
+        raise RuntimeError("App-owned SAME-S ONNX decoder is required")
+    selected_window = int(config.get("decoder_window", latent_decoder.default_window))
+    audio_player = DecoderPlayer(gain=1.0, sr=corpus_sr)
 
-    # Build a minimal args namespace for TransportController
-    perform_args = argparse.Namespace(
-        window_size=2,
-        fixed_window=False,
-        boundary_window_updates=False,
-        manual_window_size=6,
-        manual_buffer_ratio=0.15,
-        manual_fader_motion_threshold=0.01,
-        audio_stats=False,
-        audio_stats_interval=1.0,
-        autostart=False,
-    )
-
-    controller = TransportController(
-        args=perform_args,
-        nav=nav,
-        manual_engine=manual_engine,
-        manifold=manifold,
-        decoder=decoder,
-        vae=ae,
-        Z_concat=Z_concat,
-        frame_file_ids=manual_data["frame_file_ids"],
-        Z_mean=Z_mean,
-        Z_std=Z_std,
-        initial_mode="random",
-        latent_frame_sec=latent_frame_sec,
-    )
+    try:
+        controller = OnnxTransportController(
+            nav=nav,
+            manual_engine=manual_engine,
+            manifold=manifold,
+            player=audio_player,
+            latent_decoder=latent_decoder,
+            z_concat=Z_concat,
+            file_offsets=file_offsets,
+            frame_file_ids=manual_data["frame_file_ids"],
+            z_mean=Z_mean,
+            z_std=Z_std,
+            initial_mode="random",
+            initial_window=selected_window,
+        )
+    except Exception:
+        audio_player.close()
+        raise
 
     # Bind to the existing broadcaster
-    broadcaster.bind_nav_decoder(
-        nav=nav,
-        decoder=decoder,
-        message_handler=controller.handle_ws_message,
-        extra_state_provider=controller.get_extra_state,
-        manual_points_3d=manual_data["manual_embed_points"],
-        manual_file_ids=manual_data["frame_file_ids"],
-        manual_fader_p01=manual_data["manual_fader_p01"],
-        manual_fader_p99=manual_data["manual_fader_p99"],
-    )
+    try:
+        broadcaster.bind_nav_decoder(
+            nav=nav,
+            decoder=audio_player,
+            message_handler=controller.handle_ws_message,
+            extra_state_provider=controller.get_extra_state,
+            manual_points_3d=manual_data["manual_embed_points"],
+            manual_file_ids=manual_data["frame_file_ids"],
+            manual_fader_p01=manual_data["manual_fader_p01"],
+            manual_fader_p99=manual_data["manual_fader_p99"],
+        )
+    except Exception:
+        controller.close()
+        raise
 
     print("[serve] Perform phase ready. Use the web UI to start transport.")
     return controller
@@ -185,7 +174,7 @@ def main():
     from stable_audio_wanderer.runtime.pipeline_server import PipelineManager
     from stable_audio_wanderer.runtime.ws_server import start_ws_server
 
-    pipeline = PipelineManager()
+    pipeline = PipelineManager(pretrained=args.pretrained)
 
     # Start HTTP server
     _start_http_server(web_dir, args.http_port)
@@ -193,8 +182,10 @@ def main():
     # Mutable container for the controller reference
     _controller_ref = [None]
 
-    def on_perform_setup(corpus_dir, vae):
-        controller = _setup_perform_phase(corpus_dir, vae, broadcaster, args.port)
+    def on_perform_setup(corpus_dir, decoder, config):
+        controller = _setup_perform_phase(
+            corpus_dir, decoder, config, broadcaster, args.port
+        )
         _controller_ref[0] = controller
 
     pipeline.set_perform_setup_callback(on_perform_setup)

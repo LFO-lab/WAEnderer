@@ -27,3 +27,6 @@ __pycache__/
 /T32_bundle
 /T4_deum
 /T8_bundle
+stable_audio_wanderer/resources/same_s/*.onnx
+stable_audio_wanderer/resources/same_s/decoder.json
+stable_audio_wanderer/resources/same_s/decoder_parity.json

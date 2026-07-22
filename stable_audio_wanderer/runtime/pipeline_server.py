@@ -4,6 +4,7 @@ over a shared WebSocket connection.
 """
 import glob
 import os
+import sys
 import threading
 import time
 from typing import Optional
@@ -21,7 +22,8 @@ class PipelineManager:
 
     PHASES = ("idle", "preprocess", "train", "perform")
 
-    def __init__(self, pretrained: str = "stabilityai/stable-audio-open-1.0"):
+    def __init__(self, pretrained: str = "stabilityai/stable-audio-open-1.0",
+                 decoder_resource_dir=None):
         self.pretrained = pretrained  # legacy fallback
         self.phase = "idle"
         self._vae = None
@@ -30,6 +32,8 @@ class PipelineManager:
         self._worker: Optional[threading.Thread] = None
         self._broadcaster = None  # set by serve.py after WS server starts
         self._perform_setup_callback = None  # called when perform phase starts
+        self._decoder_resource_dir = decoder_resource_dir
+        self._app_decoder = None
 
         # Preprocess result for passing VAE + corpus to train/perform
         self._preprocess_result: Optional[dict] = None
@@ -40,7 +44,7 @@ class PipelineManager:
 
     def set_perform_setup_callback(self, callback):
         """Set callback invoked when entering perform phase.
-        Signature: callback(corpus_dir: str, vae) -> None
+        Signature: callback(corpus_dir: str, decoder, config: dict) -> None
         """
         self._perform_setup_callback = callback
 
@@ -219,6 +223,7 @@ class PipelineManager:
             self._preprocess_result = result
             self._corpus_dir = result["corpus_dir"]
             self._vae = result.get("vae")
+            self._release_preprocessing_vae()
             self.phase = "idle"
             self._emit({
                 "type": "pipeline_phase_change",
@@ -314,6 +319,64 @@ class PipelineManager:
     # Perform
     # ------------------------------------------------------------------
 
+    def _release_preprocessing_vae(self):
+        """Release the encode-side model only after ONNX handoff succeeds."""
+        retained_vae = self._vae
+        device_types = set()
+        candidates = [
+            retained_vae,
+            getattr(retained_vae, "raw_model", None),
+            getattr(retained_vae, "_model", None),
+        ]
+        for candidate in candidates:
+            parameters = getattr(candidate, "parameters", None)
+            if not callable(parameters):
+                continue
+            try:
+                for parameter in parameters():
+                    device_type = getattr(getattr(parameter, "device", None), "type", None)
+                    if isinstance(device_type, str):
+                        device_types.add(device_type)
+                    break
+            except Exception:
+                pass
+
+        self._vae = None
+        if isinstance(self._preprocess_result, dict):
+            self._preprocess_result["vae"] = None
+
+        # Drop the local inspection references before collection/cache release.
+        candidates.clear()
+        retained_vae = None
+        candidate = None
+        parameter = None
+        parameters = None
+
+        import gc
+
+        gc.collect()
+        torch = sys.modules.get("torch")
+        if torch is None:
+            return
+        try:
+            if (
+                "mps" in device_types
+                and hasattr(torch, "mps")
+                and hasattr(torch.mps, "empty_cache")
+            ):
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+        try:
+            if (
+                "cuda" in device_types
+                and hasattr(torch, "cuda")
+                and hasattr(torch.cuda, "empty_cache")
+            ):
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     def _handle_start_perform(self, data: dict):
         if self.phase not in ("idle",):
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Cannot start perform now"})
@@ -325,18 +388,48 @@ class PipelineManager:
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": "No corpus_dir"})
             return
 
-        self.phase = "perform"
+        try:
+            decoder_window = int(config.get("decoder_window", 2))
+        except (TypeError, ValueError):
+            self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Invalid decoder_window"})
+            return
         self._corpus_dir = corpus_dir
-        self._emit({"type": "pipeline_phase_change", "phase": "perform", "corpus_dir": corpus_dir})
 
         if self._perform_setup_callback is not None:
             try:
-                self._perform_setup_callback(corpus_dir, self._vae)
+                if self._app_decoder is None:
+                    from stable_audio_wanderer.vae.onnx_decoder import load_same_s_app_decoder
+                    self._app_decoder = load_same_s_app_decoder(
+                        corpus_path=corpus_dir,
+                        resource_dir=self._decoder_resource_dir,
+                    )
+                else:
+                    from stable_audio_wanderer.vae.onnx_decoder import validate_same_s_corpus
+                    validate_same_s_corpus(corpus_dir)
+                decoder = self._app_decoder
+                if decoder_window not in decoder.supported_windows:
+                    raise RuntimeError(
+                        f"Decoder window T{decoder_window} is unavailable; supported: "
+                        f"{decoder.supported_windows}"
+                    )
+                self._perform_setup_callback(corpus_dir, decoder, dict(config))
+                self.phase = "perform"
+                self._emit({
+                    "type": "pipeline_phase_change",
+                    "phase": "perform",
+                    "corpus_dir": corpus_dir,
+                })
             except Exception as e:
                 self.phase = "idle"
                 self._emit({"type": "pipeline_phase_change", "phase": "idle", "error": str(e)})
                 import traceback
                 traceback.print_exc()
+        else:
+            self._emit({
+                "type": "pipeline_state",
+                "phase": self.phase,
+                "error": "Perform setup callback is unavailable",
+            })
 
     # ------------------------------------------------------------------
     # Cancel

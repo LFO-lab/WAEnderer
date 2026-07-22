@@ -1,0 +1,1 @@
+"""Application-owned binary resources."""

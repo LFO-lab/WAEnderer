@@ -7,6 +7,8 @@
 let pipelinePhase = 'idle';
 let pipelineCorpusDir = null;
 let selectedTab = 'preprocess';
+let pipelineServerSeen = false;
+const APP_DECODER_WINDOWS = [2, 4, 8, 16, 32];
 
 // Training history for chart rendering
 let trainingHistory = {
@@ -21,18 +23,135 @@ function selectTab(tab) {
     updatePipelinePhaseUI();
 }
 
+function setPipelineCorpusDir(corpusDir) {
+    if (!corpusDir || corpusDir === pipelineCorpusDir) return;
+    pipelineCorpusDir = corpusDir;
+    updateDecoderControls();
+}
+
+function normalizeDecoderWindows(values) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(value => {
+        const parsed = Number(String(value).replace(/^T/i, ''));
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }).filter(value => value !== null))].sort((a, b) => a - b);
+}
+
+function setDecoderStatus(message, kind = 'neutral') {
+    const status = document.getElementById('perform-decoder-status');
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = kind === 'ok' ? '#4aff6a' : (kind === 'error' ? '#ff6b6b' : '#888');
+}
+
+function populateDecoderWindowOptions(windows, selectedWindow = null) {
+    const select = document.getElementById('perform-decoder-window');
+    const display = document.getElementById('val-decoder-window');
+    if (!select) return;
+
+    const normalized = normalizeDecoderWindows(windows);
+    select.innerHTML = '';
+    if (normalized.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Decoder unavailable';
+        select.appendChild(option);
+        if (display) display.textContent = '--';
+        return;
+    }
+
+    normalized.forEach(windowSize => {
+        const option = document.createElement('option');
+        option.value = String(windowSize);
+        option.textContent = `T${windowSize}`;
+        select.appendChild(option);
+    });
+
+    const requested = Number(selectedWindow);
+    const selected = normalized.includes(requested)
+        ? requested
+        : (normalized.includes(2) ? 2 : normalized[0]);
+    select.value = String(selected);
+    if (display) display.textContent = `T${selected}`;
+}
+
+function pipelineCanStartTransport() {
+    // The shared page must remain usable with standalone perform.py, which
+    // never emits pipeline_* messages.  Once the unified server identifies
+    // itself, decoding is unavailable until its validated handoff completes.
+    return !pipelineServerSeen || pipelinePhase === 'perform';
+}
+
+function updateDecoderControls() {
+    const windowSelect = document.getElementById('perform-decoder-window');
+    const performStartButton = document.getElementById('perform-start-btn');
+    const transportStartButton = document.getElementById('btn-start');
+    const performanceLoaded = pipelinePhase === 'perform';
+
+    if (windowSelect) {
+        windowSelect.disabled = !pipelineCorpusDir || !(pipelinePhase === 'idle' || performanceLoaded);
+    }
+    if (performStartButton) {
+        performStartButton.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
+    }
+    if (transportStartButton && pipelineServerSeen) {
+        transportStartButton.disabled = !pipelineCanStartTransport();
+        transportStartButton.title = transportStartButton.disabled
+            ? 'Start Perform first'
+            : '';
+    }
+}
+
+function updateDecoderWindowState(decoder) {
+    if (!decoder || typeof decoder !== 'object') return;
+    const windows = normalizeDecoderWindows(decoder.supported_windows);
+    const selected =
+        decoder.requested_window ??
+        decoder.pending_window ??
+        decoder.transition?.target_window ??
+        decoder.selected_window ??
+        decoder.decoder_window ??
+        decoder.window_size;
+    const select = document.getElementById('perform-decoder-window');
+    const existing = select
+        ? normalizeDecoderWindows(Array.from(select.options, option => option.value))
+        : [];
+    if (windows.length > 0 && windows.join(',') !== existing.join(',')) {
+        populateDecoderWindowOptions(windows, selected);
+    } else if (select && Number.isInteger(Number(selected)) && existing.includes(Number(selected))) {
+        select.value = String(Number(selected));
+        const display = document.getElementById('val-decoder-window');
+        if (display) display.textContent = `T${Number(selected)}`;
+    }
+    if (pipelinePhase === 'perform' && decoder.backend) {
+        const offered = windows.length > 0
+            ? ` · ${windows.map(value => `T${value}`).join(', ')}`
+            : '';
+        setDecoderStatus(
+            `Active: ${decoder.backend} · ${decoder.provider || 'CPUExecutionProvider'}${offered}`,
+            'ok'
+        );
+    }
+    updateDecoderControls();
+}
+
 function handlePipelineMessage(data) {
     const type = data.type;
+    pipelineServerSeen = true;
 
     if (type === 'pipeline_state') {
         pipelinePhase = data.phase || 'idle';
-        pipelineCorpusDir = data.corpus_dir || pipelineCorpusDir;
+        setPipelineCorpusDir(data.corpus_dir);
+        if (data.error) {
+            console.error('[pipeline] Error:', data.error);
+            setDecoderStatus(`Error: ${data.error}`, 'error');
+        }
         // If server is already in a phase, switch to that tab
         if (pipelinePhase !== 'idle') selectTab(pipelinePhase);
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_phase_change') {
         pipelinePhase = data.phase || 'idle';
-        pipelineCorpusDir = data.corpus_dir || pipelineCorpusDir;
+        setPipelineCorpusDir(data.corpus_dir);
 
         if (data.completed === 'preprocess') {
             onPreprocessComplete(data);
@@ -47,6 +166,7 @@ function handlePipelineMessage(data) {
 
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
+            setDecoderStatus(`Error: ${data.error}`, 'error');
         }
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_stats') {
@@ -92,6 +212,7 @@ function updatePipelinePhaseUI() {
     if (ppStartBtn) ppStartBtn.disabled = pipelinePhase !== 'idle';
     if (trainStartBtn) trainStartBtn.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
     if (performStartBtn) performStartBtn.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
+    updateDecoderControls();
 }
 
 // ---- Preprocess ----
@@ -145,6 +266,9 @@ function onVAEList(data) {
         opt.dataset.pathLabel = v.path_label || 'Path to model weights';
         select.appendChild(opt);
     });
+    if (Array.from(select.options).some(option => option.value === 'same_s')) {
+        select.value = 'same_s';
+    }
     // Trigger change to update path visibility
     updateVAEPathVisibility();
 }
@@ -203,7 +327,7 @@ function onPreprocessComplete(data) {
             `Silence removed: ${(data.silence_removed_pct || 0).toFixed(1)}%\n` +
             `Corpus: ${data.corpus_dir || ''}`;
     }
-    pipelineCorpusDir = data.corpus_dir || pipelineCorpusDir;
+    setPipelineCorpusDir(data.corpus_dir);
 
     // Update train panel corpus info
     const trainInfo = document.getElementById('train-corpus-info');
@@ -280,6 +404,8 @@ function onTrainComplete(data) {
 // ---- Setup Controls ----
 
 function setupPipelineControls() {
+    populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
+    setDecoderStatus('App decoder: SAME-S ONNX · CPU · T2 default');
     // Tab click handlers
     ['preprocess', 'train', 'perform'].forEach(tab => {
         const el = document.getElementById(`phase-${tab}`);
@@ -313,7 +439,7 @@ function setupPipelineControls() {
         useCorpusBtn.addEventListener('click', () => {
             const select = document.getElementById('pp-corpus-select');
             if (select && select.value) {
-                pipelineCorpusDir = select.value;
+                setPipelineCorpusDir(select.value);
                 const trainInfo = document.getElementById('train-corpus-info');
                 if (trainInfo) trainInfo.textContent = `Corpus: ${pipelineCorpusDir}`;
                 updatePipelinePhaseUI();
@@ -331,7 +457,7 @@ function setupPipelineControls() {
             const config = {
                 audio_dir: audioDir,
                 out_prefix: audioDir.split('/').pop() || 'corpus',
-                vae_id: document.getElementById('pp-vae-select')?.value || 'stable_audio_open',
+                vae_id: document.getElementById('pp-vae-select')?.value || 'same_s',
                 vae_weight_path: document.getElementById('pp-vae-path')?.value || '',
                 trim_silence: document.getElementById('pp-trim-silence')?.checked ?? true,
                 silence_threshold_db: parseFloat(document.getElementById('pp-threshold')?.value || '-45'),
@@ -413,11 +539,28 @@ function setupPipelineControls() {
     const performStartBtn = document.getElementById('perform-start-btn');
     if (performStartBtn) {
         performStartBtn.addEventListener('click', () => {
-            if (!pipelineCorpusDir) return;
+            const decoderWindow = Number(document.getElementById('perform-decoder-window')?.value);
+            if (!Number.isInteger(decoderWindow)) return;
             sendPipelineMessage({
                 type: 'pipeline_start_perform',
-                config: { corpus_dir: pipelineCorpusDir },
+                config: {
+                    corpus_dir: pipelineCorpusDir,
+                    decoder_window: decoderWindow,
+                },
             });
+        });
+    }
+
+    const decoderWindowSelect = document.getElementById('perform-decoder-window');
+    if (decoderWindowSelect) {
+        decoderWindowSelect.addEventListener('change', () => {
+            const size = Number(decoderWindowSelect.value);
+            if (!Number.isInteger(size)) return;
+            const display = document.getElementById('val-decoder-window');
+            if (display) display.textContent = `T${size}`;
+            if (pipelinePhase === 'perform') {
+                sendPipelineMessage({ type: 'decoder_window', size });
+            }
         });
     }
 
@@ -454,8 +597,14 @@ function setupPipelineControls() {
 
 function sendPipelineMessage(data) {
     if (typeof ws !== 'undefined' && ws && wsConnected) {
-        ws.send(JSON.stringify(data));
+        try {
+            ws.send(JSON.stringify(data));
+            return true;
+        } catch (error) {
+            console.error('[pipeline] Failed to send WebSocket message:', error);
+        }
     }
+    return false;
 }
 
 function requestCorpusList() {

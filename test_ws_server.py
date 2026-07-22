@@ -31,6 +31,11 @@ class FakeNav:
         self.cursor_index_calls.append(int(idx))
 
 
+class FakeDecoder:
+    def get_state(self):
+        return {"gain": 1.0, "underruns": 2, "transition_status": "idle"}
+
+
 def _make_nav_state():
     return {
         "policy_index": 1.0,
@@ -141,3 +146,56 @@ def test_ws_broadcaster_uses_point_indices_and_cursor_index_messages():
     )
 
     assert nav.cursor_index_calls == [2]
+
+
+def test_ws_broadcaster_merges_onnx_transport_decoder_metadata():
+    nav = FakeNav(_make_nav_state())
+    broadcaster = WSBroadcaster(
+        nav,
+        decoder=FakeDecoder(),
+        extra_state_provider=lambda: {
+            "decoder": {
+                "backend": "onnxruntime",
+                "provider": "CPUExecutionProvider",
+                "supported_windows": [2, 4],
+                "selected_window": 2,
+                "audio_hop_samples": 4096,
+                "error": "latched failure",
+                "underruns": 3,
+            }
+        },
+    )
+
+    state = json.loads(broadcaster._get_state_json())
+    assert state["decoder"] == {
+        "gain": 1.0,
+        "underruns": 3,
+        "transition_status": "idle",
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "supported_windows": [2, 4],
+        "selected_window": 2,
+        "audio_hop_samples": 4096,
+        "error": "latched failure",
+    }
+
+
+def test_late_bind_pushes_the_new_corpus_to_existing_clients():
+    broadcaster = WSBroadcaster()
+    pushed = []
+    broadcaster.broadcast_pipeline_message = lambda data: pushed.append(data)
+    nav = FakeNav(_make_nav_state())
+
+    broadcaster.bind_nav_decoder(
+        nav,
+        FakeDecoder(),
+        manual_points_3d=np.asarray(
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.5, 0.5, 0.5]],
+            dtype=np.float32,
+        ),
+    )
+
+    assert len(pushed) == 1
+    assert pushed[0]["type"] == "corpus"
+    assert pushed[0]["total_points"] == 3
+    assert len(pushed[0]["manual_positions_3d"]) == 3

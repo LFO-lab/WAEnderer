@@ -176,6 +176,11 @@
             color: #fff;
         }
 
+        #decoder-runtime-state .info-value {
+            font-size: 11px;
+            overflow-wrap: anywhere;
+        }
+
         button {
             width: 100%;
             padding: 8px;
@@ -216,6 +221,13 @@
 
         button:hover {
             background: #6ab0ff;
+        }
+
+        button:disabled,
+        input:disabled,
+        select:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
         }
         
         button.secondary {
@@ -732,7 +744,29 @@
             <div id="perform-panel" class="panel-hidden">
                 <h2>Perform</h2>
                 <div class="pipeline-section">
-                    <button id="perform-start-btn" type="button">Start Perform</button>
+                    <h3>SAME-S ONNX Decoder</h3>
+                    <div
+                        class="stats-text"
+                        id="perform-decoder-status"
+                        role="status"
+                        aria-live="polite"
+                    >App decoder: SAME-S ONNX · CPU · T2 default</div>
+                    <div class="control-row" style="margin-top:8px">
+                        <div class="control-group" style="width:100%;grid-column:1 / -1">
+                            <div class="control-label">
+                                <span>Decoder Window</span>
+                                <span class="control-value" id="val-decoder-window">T2</span>
+                            </div>
+                            <select id="perform-decoder-window">
+                                <option value="2" selected>T2</option>
+                                <option value="4">T4</option>
+                                <option value="8">T8</option>
+                                <option value="16">T16</option>
+                                <option value="32">T32</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button id="perform-start-btn" type="button" disabled>Start Perform</button>
                 </div>
 
             <div class="status">
@@ -933,7 +967,14 @@
                             <span>Decode Window</span>
                             <span class="control-value" id="val-manual-window">6</span>
                         </div>
-                        <input type="range" id="manual-window" min="1" max="64" step="1" value="6">
+                        <input
+                            type="range"
+                            id="manual-window"
+                            min="1"
+                            max="64"
+                            step="1"
+                            value="6"
+                        >
                     </div>
                 </div>
                 <div class="control-row">
@@ -999,6 +1040,45 @@
             </div>
 
             <h2>Decoder</h2>
+
+            <div class="info-grid" id="decoder-runtime-state">
+                <div class="info-item">
+                    <div class="info-label">Backend</div>
+                    <div class="info-value" id="info-decoder-backend">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Provider</div>
+                    <div class="info-value" id="info-decoder-provider">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Window</div>
+                    <div class="info-value" id="info-decoder-window">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Hop</div>
+                    <div class="info-value" id="info-decoder-hop">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Decode</div>
+                    <div class="info-value" id="info-decoder-timing">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Transition</div>
+                    <div class="info-value" id="info-decoder-transition">idle</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Underruns</div>
+                    <div class="info-value" id="info-decoder-underruns">0</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Resource</div>
+                    <div class="info-value" id="info-decoder-resource" title="">app-owned</div>
+                </div>
+                <div class="info-item" style="grid-column:1 / -1">
+                    <div class="info-label">Transport Error</div>
+                    <div class="info-value" id="info-decoder-error" role="alert">--</div>
+                </div>
+            </div>
 
             <div class="control-row">
                 <div class="control-group">

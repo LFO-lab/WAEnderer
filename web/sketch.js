@@ -815,6 +815,10 @@ function handleMessage(data) {
 
         if (data.decoder) {
             updateControlDisplays('decoder', data.decoder);
+            updateDecoderRuntimeDisplay(data.decoder);
+            if (typeof updateDecoderWindowState === 'function') {
+                updateDecoderWindowState(data.decoder);
+            }
         }
     }
 }
@@ -845,6 +849,104 @@ function updateInfoDisplay(data) {
     document.getElementById('info-index').textContent = nav.index || 0;
     document.getElementById('info-velocity').textContent = (nav.velocity || 0).toFixed(2);
     document.getElementById('info-file').textContent = nav.file_id || 0;
+}
+
+function updateDecoderRuntimeDisplay(decoder) {
+    const setText = (id, value, title = null) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.textContent = value;
+        if (title !== null) element.title = title;
+    };
+    const firstValue = (...values) => values.find(value => value !== undefined && value !== null);
+    const windows = Array.isArray(decoder.supported_windows)
+        ? decoder.supported_windows
+            .map(value => Number(String(value).replace(/^T/i, '')))
+            .filter(value => Number.isInteger(value) && value > 0)
+        : [];
+    const selectedWindow = Number(firstValue(
+        decoder.requested_window,
+        decoder.pending_window,
+        decoder.transition?.target_window,
+        decoder.selected_window,
+        decoder.decoder_window,
+        decoder.window_size
+    ));
+
+    setText('info-decoder-backend', String(firstValue(decoder.backend, '--')));
+    setText('info-decoder-provider', String(firstValue(decoder.provider, '--')));
+
+    let windowText = Number.isInteger(selectedWindow) ? `T${selectedWindow}` : '--';
+    if (windows.length > 0) {
+        windowText += ` / ${windows.map(value => `T${value}`).join(',')}`;
+    }
+    setText('info-decoder-window', windowText);
+
+    const latentHop = Number(firstValue(decoder.latent_hop, decoder.latent_hop_frames));
+    const audioHop = Number(firstValue(decoder.audio_hop_samples, decoder.hop_samples));
+    const hopParts = [];
+    if (Number.isFinite(latentHop)) hopParts.push(`L${latentHop}`);
+    if (Number.isFinite(audioHop)) hopParts.push(`A${Math.round(audioHop)}`);
+    setText('info-decoder-hop', hopParts.length > 0 ? hopParts.join(' · ') : '--');
+
+    const timing = firstValue(
+        decoder.decode_timing,
+        decoder.decode_timing_ms,
+        decoder.last_decode_ms,
+        decoder.decode_ms
+    );
+    let timingText = '--';
+    if (typeof timing === 'number' && Number.isFinite(timing)) {
+        timingText = `${timing.toFixed(1)} ms`;
+    } else if (timing && typeof timing === 'object') {
+        const lastMs = Number(firstValue(timing.last_ms, timing.latest_ms, timing.decode_ms));
+        const p99Ms = Number(firstValue(timing.p99_ms, timing.p99));
+        const parts = [];
+        if (Number.isFinite(lastMs)) parts.push(`${lastMs.toFixed(1)} ms`);
+        if (Number.isFinite(p99Ms)) parts.push(`p99 ${p99Ms.toFixed(1)}`);
+        if (parts.length > 0) timingText = parts.join(' · ');
+    }
+    setText('info-decoder-timing', timingText);
+
+    const transition = firstValue(decoder.transition_status, decoder.transition);
+    let transitionText = 'idle';
+    if (typeof transition === 'string') {
+        transitionText = transition;
+    } else if (typeof transition === 'boolean') {
+        transitionText = transition ? 'staging' : 'idle';
+    } else if (transition && typeof transition === 'object') {
+        transitionText = String(firstValue(transition.status, transition.state, 'staging'));
+        const target = Number(firstValue(transition.target_window, transition.window));
+        if (Number.isInteger(target)) transitionText += ` T${target}`;
+    }
+    setText('info-decoder-transition', transitionText);
+
+    const underruns = Number(firstValue(decoder.underruns, 0));
+    setText('info-decoder-underruns', Number.isFinite(underruns) ? String(Math.round(underruns)) : '--');
+
+    const resourcePath = String(firstValue(
+        decoder.resource_path,
+        decoder.model_path,
+        ''
+    ));
+    const resourceName = resourcePath
+        ? (resourcePath.split(/[\\/]/).pop() || resourcePath)
+        : 'app-owned';
+    setText('info-decoder-resource', resourceName, resourcePath);
+
+    const decoderError = firstValue(decoder.error, decoder.runtime_error, '');
+    setText('info-decoder-error', decoderError ? String(decoderError) : '--');
+
+    // The unified presentation pipeline uses the manifest window globally;
+    // standalone perform.py keeps its legacy manual-window control.
+    const legacyManualWindow = document.getElementById('manual-window');
+    if (legacyManualWindow) {
+        const webOnnxMode = decoder.backend === 'onnxruntime' || Boolean(resourcePath);
+        legacyManualWindow.disabled = webOnnxMode;
+        legacyManualWindow.title = webOnnxMode
+            ? 'Managed by the ONNX decoder window selector'
+            : '';
+    }
 }
 
 function updateControlDisplays(prefix, values, displayPrefix = null) {
@@ -914,6 +1016,12 @@ function setupControls() {
     });
 
     document.getElementById('btn-start').addEventListener('click', () => {
+        if (
+            typeof pipelineCanStartTransport === 'function' &&
+            !pipelineCanStartTransport()
+        ) {
+            return;
+        }
         sendTransportAction('start');
     });
 

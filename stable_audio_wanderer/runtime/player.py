@@ -1646,7 +1646,9 @@ class LatentNavigationEngine:
 
     _BUFFER_TRUNCATE_MAX = 2
 
-    def _navigation_step(self) -> NavFrame:
+    def _navigation_step(
+        self, fixed_retrieval_window: Optional[int] = None
+    ) -> NavFrame:
         """
         Execute one navigation step.
 
@@ -1780,7 +1782,17 @@ class LatentNavigationEngine:
         )
         if self._phrase_anchor_idx is None:
             self._phrase_anchor_idx = int(seed_idx)
-        chunk_len = int(max(2, min(64, min(predicted_window, self._phrase_frames_remaining))))
+        # The unified ONNX transport supplies its manifest-selected T here so
+        # the policy's adaptive window head cannot change retrieval chunk size.
+        # Standalone Torch callers omit it and retain the original prediction.
+        retrieval_window = (
+            predicted_window
+            if fixed_retrieval_window is None
+            else int(np.clip(int(fixed_retrieval_window), 2, 64))
+        )
+        chunk_len = int(
+            max(2, min(64, min(retrieval_window, self._phrase_frames_remaining)))
+        )
         self._last_predicted_window = chunk_len
         recompose_active = bool(
             self.policy_recompose_enabled
@@ -1803,7 +1815,13 @@ class LatentNavigationEngine:
         frame_idx = int(self._retrieval_buffer.popleft())
         return self._emit_observed_frame(frame_idx, self._last_predicted_window)
 
-    def step(self) -> NavFrame:
+    def step(self, fixed_retrieval_window: Optional[int] = None) -> NavFrame:
+        """Advance navigation, optionally disabling adaptive retrieval sizing.
+
+        ``fixed_retrieval_window`` is used by the unified Web ONNX transport.
+        Reorganized unit navigation keeps its unit sequencing semantics; the
+        fixed manifest T is applied by that transport's decoder assembler.
+        """
         with self._lock:
             if (
                 self.policy_variant == "reorganized"
@@ -1811,7 +1829,7 @@ class LatentNavigationEngine:
                 and self._v2_ready
             ):
                 return self._navigation_step_v2()
-            return self._navigation_step()
+            return self._navigation_step(fixed_retrieval_window)
 
     def get_segment_info(self, segment_idx: int) -> dict:
         if self.meta is None or segment_idx < 0 or segment_idx >= len(self.meta):

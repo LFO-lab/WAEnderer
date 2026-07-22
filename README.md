@@ -9,7 +9,7 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 - **Random Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
 - **Reorganized Morphologies Mode** - Unit-graph sequencing with optional learned transition scorer
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
-- **Real-Time VAE Decoding** - Overlap-add synthesis with adaptive window sizing
+- **Real-Time Decoding** - Torch in standalone mode; CPU SAME-S ONNX with normalized full-output overlap-add in the unified Web performance path
 - **WebSocket Visualization** - p5.js interface showing trajectory, controls, and corpus structure
 - **Explicit Transport** - Choose mode, then Start/Stop decoding from the web UI
 - **OSC Control** - Full parameter control for integration with external controllers
@@ -28,7 +28,7 @@ pip install -r requirements.txt
 |----------|----------|
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
 | Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
-| Runtime | `sounddevice`, `python-osc`, `websockets` |
+| Runtime | `sounddevice`, `python-osc`, `websockets`, `onnxruntime` |
 | VAE (Stable Audio Open) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
 
 ### Using Other VAEs
@@ -198,7 +198,8 @@ This creates a checkpoint like `corpus/.../policy_v2_YYYYMMDD_HHMMSS.pt` that ca
 
 ### 3. Perform
 
-Real-time decoding with selectable manual/random/reorganized navigation, OSC control, and WebSocket visualization.
+The standalone command remains the original Torch workflow with selectable
+manual/random/reorganized navigation, OSC control, and WebSocket visualization:
 
 ```bash
 python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -239,6 +240,62 @@ Open `web/index.html` in a browser, choose a navigation tab, and press **Start D
 `perform.py` exits early if `manual_navigation.npz` is missing or invalid.
 If manual descriptor fields are unavailable, random timbre swap/recompose automatically falls back to baseline contiguous retrieval.
 If reorganized units are missing/invalid, reorganized mode is unavailable while manual/random continue to work.
+
+#### AIMC unified Web performance (SAME-S ONNX)
+
+The unified Web server uses an app-owned SAME-S ONNX model as its realtime
+decoder. SAME-S is the default encoder in the Web UI, while the other encoder
+choices remain available for non-realtime experiments.
+
+Prepare the untracked release resource once from local SAME-S weights:
+
+```bash
+uv run python bin/export_web_decoder.py
+SAW_RELEASE_BUILD=1 uv run python setup.py build_py
+```
+
+The exporter passes the registered model name `same-s` to `stable-audio-3`
+(a filesystem placeholder such as `/path/to/same-s` is not valid). It verifies
+T2/T4/T8/T16/T32 against Torch, then writes the dynamic
+model, lightweight metadata, and parity report into the package resource
+directory. Release builds fail when any of these inputs is absent.
+
+Start the unified server offline with:
+
+```bash
+python bin/serve.py
+```
+
+Open `http://localhost:8080` and select or create a corpus. After preprocessing
+or training, that corpus remains selected and **Start Perform** is immediately
+available. The decoder loads lazily on Start and checks the packaged model,
+CPU ONNX session, I/O contract, selected window, and corpus VAE geometry. A
+non-SAME-S corpus reports a visible compatibility error at Start.
+
+T2 is selected initially, with T4, T8, T16, and T32 also available. The window
+selector remains active during playback; a change is decoded
+into a generation-tagged staging buffer and handed off with a 256-sample
+crossfade only after its first complete hop is ready. Rapid changes are
+latest-wins.
+
+The Web runtime emits exactly one manifest-declared audio hop per decode using
+the JUCE reference sine-window normalized full-output overlap-add. ONNX and OLA
+run on the decode worker; the sounddevice callback only consumes prepared PCM,
+applies the transition/gain, and zero-fills an underrun. There is no Torch or
+CoreML fallback. A runtime ONNX failure is shown in Decoder state, fades the
+current audio to silence, and requires a new transport Start.
+
+Presentation startup never downloads or exports models. Corpora contain their
+latents, geometry, metadata, and trained navigation artifacts, but no decoder
+weights. `bin/perform.py` remains the standalone Torch path, and `.sawbundle`
+export remains available for the JUCE application.
+
+Before presentation use, validate a network-disabled cold start on the target
+Mac, then require the displayed p99 decode time to remain at least 20 ms below
+the selected audio-hop duration, with zero steady-state underruns and no audible
+window-transition gap. Soak the real output device for at least 30 minutes or
+twice the planned presentation duration, whichever is longer. T4 is an explicit
+operator-selected contingency when T2 does not meet that gate.
 
 ## Architecture
 
