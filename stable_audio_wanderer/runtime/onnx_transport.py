@@ -29,6 +29,7 @@ class _DecodeRequest:
     generation: int
     window: int
     raw_latents: np.ndarray
+    frame_indices: Tuple[int, ...]
 
 
 class OnnxTransportController:
@@ -345,6 +346,13 @@ class OnnxTransportController:
             self._wander_reset_serial += 1
 
         self.decoder.request_generation(generation)
+        hold_index = self._stationary_hold_index(mode)
+        hold_metadata = self.latent_decoder.metadata_for(window)
+        self.decoder.capture_presentation_hold(
+            hold_index,
+            generation=generation,
+            samples_per_frame=int(hold_metadata.samples_per_latent),
+        )
 
         with self._stats_lock:
             self._decode_times_ms.clear()
@@ -393,13 +401,23 @@ class OnnxTransportController:
                 str(self._active_mode),
             )
 
+    def _stationary_hold_index(self, mode: str) -> int:
+        """Capture the visible cursor before the producer advances navigation."""
+        if mode == "manual":
+            state = self.manual.get_state()
+            candidate = state.get("nearest_index", self._manual_last_index)
+        else:
+            state = self.nav.get_state()
+            candidate = state.get("policy_index", 0)
+        return int(np.clip(round(float(candidate)), 0, self.Z_concat.shape[0] - 1))
+
     def _manual_request(self, generation: int, window: int) -> _DecodeRequest:
         with self._lock:
             faders = self._manual_faders.copy()
         # Exactly one spatial query chooses the source-file anchor for a decode.
         frame = self.manual.step_with_faders(faders)
         anchor = int(np.clip(frame.nearest_index, 0, self.Z_concat.shape[0] - 1))
-        raw, _plan = build_file_bounded_latent_window(
+        raw, plan = build_file_bounded_latent_window(
             self.Z_concat,
             self.file_offsets,
             anchor,
@@ -410,7 +428,12 @@ class OnnxTransportController:
         with self._stats_lock:
             self._manual_last_index = anchor
             self._manual_last_distance = float(frame.distance)
-        return _DecodeRequest(generation, window, raw)
+        return _DecodeRequest(
+            generation,
+            window,
+            raw,
+            tuple(int(index) for index in plan.frame_indices),
+        )
 
     def _wander_request(
         self,
@@ -445,7 +468,15 @@ class OnnxTransportController:
             latent_colour=latent_colour,
             **controls,
         )
-        return _DecodeRequest(generation, window, planned.raw_latents), planner_reset_serial
+        return (
+            _DecodeRequest(
+                generation,
+                window,
+                planned.raw_latents,
+                tuple(int(index) for index in planned.input_frames),
+            ),
+            planner_reset_serial,
+        )
 
     def _producer_loop(self) -> None:
         previous_frames = []
@@ -492,7 +523,15 @@ class OnnxTransportController:
                         z_norm * self.Z_std[None, :] + self.Z_mean[None, :],
                         dtype=np.float32,
                     )
-                    request = _DecodeRequest(generation, window, raw)
+                    request = _DecodeRequest(
+                        generation,
+                        window,
+                        raw,
+                        tuple(
+                            int(getattr(frame, "nearest_idx", frame))
+                            for frame in frames
+                        ),
+                    )
                     previous_frames = frames
                     previous_generation = generation
 
@@ -534,6 +573,20 @@ class OnnxTransportController:
                 ):
                     continue
 
+                if len(request.frame_indices) != request.window:
+                    raise RuntimeError(
+                        "decode request provenance does not match its latent window: "
+                        f"{len(request.frame_indices)} != {request.window}"
+                    )
+                corpus_frames = int(self.Z_concat.shape[0])
+                if any(
+                    index < 0 or index >= corpus_frames
+                    for index in request.frame_indices
+                ):
+                    raise RuntimeError(
+                        "decode request provenance contains an out-of-range corpus index"
+                    )
+
                 decoded = self.latent_decoder.decode(request.raw_latents)
                 latest_generation, latest_window, _ = self._snapshot_request()
                 if (
@@ -552,6 +605,18 @@ class OnnxTransportController:
                     assemblers = {request.generation: assembler}
                 hop = assembler.push(decoded.audio.T)
 
+                latent_hop = int(decoded.metadata.latent_hop)
+                samples_per_frame = int(decoded.metadata.samples_per_latent)
+                hop_frame_indices = request.frame_indices[:latent_hop]
+                hop_samples = int(hop.shape[1])
+                represented_samples = len(hop_frame_indices) * samples_per_frame
+                if represented_samples != hop_samples:
+                    raise RuntimeError(
+                        "decode hop provenance does not match emitted PCM: "
+                        f"{len(hop_frame_indices)} frames * {samples_per_frame} samples "
+                        f"!= {hop_samples} hop samples"
+                    )
+
                 latest_generation, latest_window, _ = self._snapshot_request()
                 if (
                     request.generation != latest_generation
@@ -559,7 +624,12 @@ class OnnxTransportController:
                     or not self._running.is_set()
                 ):
                     continue
-                if not self.decoder.write_hop(hop, generation=request.generation):
+                if not self.decoder.write_hop(
+                    hop,
+                    generation=request.generation,
+                    frame_indices=hop_frame_indices,
+                    samples_per_frame=samples_per_frame,
+                ):
                     continue
 
                 with self._stats_lock:
@@ -671,7 +741,7 @@ class OnnxTransportController:
         with self._stats_lock:
             manual_index = int(self._manual_last_index)
             manual_distance = float(self._manual_last_distance)
-        return {
+        state = {
             "transport": {
                 "running": bool(self._running.is_set()),
                 "selected_mode": selected_mode,
@@ -705,6 +775,10 @@ class OnnxTransportController:
             },
             "decoder": self._decoder_state(),
         }
+        presentation = self.decoder.get_presentation_state()
+        if isinstance(presentation, dict):
+            state["presentation"] = dict(presentation)
+        return state
 
     def handle_ws_message(self, data: dict) -> bool:
         msg_type = data.get("type", "")

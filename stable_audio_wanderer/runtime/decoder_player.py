@@ -6,6 +6,8 @@ import os
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
 import numpy as np
 
 try:
@@ -20,6 +22,7 @@ from ..config import SR
 CROSSFADE_RATIO = 0.25  # 25% of incoming window as crossfade region
 MIN_CROSSFADE_SAMPLES = 64  # Minimum crossfade length
 GENERATION_TRANSITION_SAMPLES = 256
+PRESENTATION_HISTORY_SIZE = 128
 
 
 def log_fade_in(length: int) -> np.ndarray:
@@ -67,6 +70,117 @@ def _stereo_channel_last(audio: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(pcm, dtype=np.float32)
 
 
+def _validated_provenance(
+    pcm_samples: int,
+    frame_indices,
+    samples_per_frame,
+) -> Tuple[Optional[Tuple[int, ...]], Optional[int]]:
+    """Validate and normalize optional frame provenance for one PCM chunk."""
+    if frame_indices is None and samples_per_frame is None:
+        return None, None
+    if frame_indices is None or samples_per_frame is None:
+        raise ValueError(
+            "frame_indices and samples_per_frame must be provided together"
+        )
+
+    try:
+        raw_indices = tuple(frame_indices)
+        indices = tuple(int(index) for index in raw_indices)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("frame_indices must be an iterable of integers") from exc
+    if not indices:
+        raise ValueError("frame_indices must not be empty")
+    if any(index < 0 or index != raw for index, raw in zip(indices, raw_indices)):
+        raise ValueError("frame_indices must contain non-negative integers")
+
+    try:
+        frame_samples = int(samples_per_frame)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("samples_per_frame must be a positive integer") from exc
+    if frame_samples <= 0 or frame_samples != samples_per_frame:
+        raise ValueError("samples_per_frame must be a positive integer")
+    expected_samples = len(indices) * frame_samples
+    if expected_samples != int(pcm_samples):
+        raise ValueError(
+            "PCM/provenance length mismatch: "
+            f"{len(indices)} frame indices * {frame_samples} samples != "
+            f"{pcm_samples} PCM samples"
+        )
+    return indices, frame_samples
+
+
+@dataclass(frozen=True)
+class _PcmChunk:
+    pcm: np.ndarray
+    frame_indices: Optional[Tuple[int, ...]] = None
+    samples_per_frame: Optional[int] = None
+
+    def __len__(self) -> int:
+        return int(len(self.pcm))
+
+
+class _IndexRing:
+    """Fixed-capacity index history with no storage growth on append."""
+
+    __slots__ = ("_values", "_start", "_size", "_overflowed")
+
+    def __init__(self, capacity: int) -> None:
+        self._values = [0] * int(capacity)
+        self._start = 0
+        self._size = 0
+        self._overflowed = False
+
+    @property
+    def capacity(self) -> int:
+        return len(self._values)
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    @property
+    def overflowed(self) -> bool:
+        return self._overflowed
+
+    def append(self, value: int) -> None:
+        if self._size < self.capacity:
+            slot = (self._start + self._size) % self.capacity
+            self._size += 1
+        else:
+            slot = self._start
+            self._start = (self._start + 1) % self.capacity
+            self._overflowed = True
+        self._values[slot] = int(value)
+
+    def get(self, offset: int) -> int:
+        if not 0 <= int(offset) < self._size:
+            raise IndexError(offset)
+        return int(self._values[(self._start + int(offset)) % self.capacity])
+
+    def clear(self) -> None:
+        self._start = 0
+        self._size = 0
+        self._overflowed = False
+
+    def to_list(self) -> list[int]:
+        return [self.get(offset) for offset in range(self._size)]
+
+
+@dataclass
+class _PresentationCursor:
+    """Cursor for one generation; events stay private until it is presented."""
+
+    generation: int
+    index: Optional[int] = None
+    samples_into_frame: int = 0
+    samples_per_frame: Optional[int] = None
+    events: _IndexRing = field(
+        default_factory=lambda: _IndexRing(PRESENTATION_HISTORY_SIZE)
+    )
+    chunk: Optional[_PcmChunk] = None
+    chunk_pos: int = 0
+
+
 class GenerationPcmBuffer:
     """Prepared-PCM queue with a latest-wins generation handoff.
 
@@ -85,6 +199,7 @@ class GenerationPcmBuffer:
         self.channels = int(channels)
         self.transition_samples = int(transition_samples)
         self._empty = np.zeros((0, self.channels), dtype=np.float32)
+        self._empty_chunk = _PcmChunk(self._empty)
         self._transition_fade_in = np.linspace(
             0.0, 1.0, self.transition_samples, dtype=np.float32
         )
@@ -93,27 +208,38 @@ class GenerationPcmBuffer:
             (self.transition_samples, self.channels), dtype=np.float32
         )
         self._fade_curve = np.zeros((0,), dtype=np.float32)
+
+        # Presentation survives queue resets so Stop and the next prebuffer hold
+        # the last position that was actually heard.
+        self._presentation_index = None
+        self._presentation_recent = _IndexRing(PRESENTATION_HISTORY_SIZE)
+        self._presentation_generation = None
+        self._presentation_samples_into_frame = 0
+        self._presentation_samples_per_frame = None
         self.reset()
 
     def reset(self):
-        self._active = self._empty
+        self._active = self._empty_chunk
         self._active_pos = 0
         self._queue = deque()
         self._current_generation = None
+        self._current_cursor = None
 
-        self._pending_active = self._empty
+        self._pending_active = self._empty_chunk
         self._pending_pos = 0
         self._pending_queue = deque()
         self._pending_generation = None
+        self._pending_cursor = None
         self._transition_progress = 0
 
         # A successor requested during an in-progress crossfade waits here.
         # Finishing the audible ramp avoids jumping back to the prior stream;
         # only the newest successor is retained.
-        self._next_pending_active = self._empty
+        self._next_pending_active = self._empty_chunk
         self._next_pending_pos = 0
         self._next_pending_queue = deque()
         self._next_pending_generation = None
+        self._next_pending_cursor = None
 
         # A producer announces a requested generation before its PCM is ready.
         # This watermark lets the callback keep consuming the committed stream
@@ -124,6 +250,57 @@ class GenerationPcmBuffer:
         self._fade_progress = 0
         self._last_active_sample = np.zeros((self.channels,), dtype=np.float32)
         self._last_active_sample_valid = False
+
+    def capture_presentation_hold(
+        self,
+        index: int,
+        *,
+        generation=None,
+        samples_per_frame=None,
+    ) -> bool:
+        """Capture the first stationary UI position without moving an old cursor."""
+        if self._presentation_index is not None:
+            return False
+        try:
+            hold_index = int(index)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "presentation index must be a non-negative integer"
+            ) from exc
+        if hold_index < 0 or hold_index != index:
+            raise ValueError("presentation index must be a non-negative integer")
+        if samples_per_frame is not None:
+            try:
+                frame_samples = int(samples_per_frame)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    "samples_per_frame must be a positive integer"
+                ) from exc
+            if frame_samples <= 0 or frame_samples != samples_per_frame:
+                raise ValueError("samples_per_frame must be a positive integer")
+        else:
+            frame_samples = None
+
+        self._presentation_index = hold_index
+        self._presentation_recent.append(hold_index)
+        self._presentation_generation = (
+            None if generation is None else int(generation)
+        )
+        self._presentation_samples_into_frame = 0
+        self._presentation_samples_per_frame = frame_samples
+        return True
+
+    def get_presentation_state(self):
+        """Return the current audible cursor, or ``None`` before it is captured."""
+        if self._presentation_index is None:
+            return None
+        return {
+            "index": int(self._presentation_index),
+            "recent_indices": self._presentation_recent.to_list(),
+            "generation": self._presentation_generation,
+            "samples_into_frame": int(self._presentation_samples_into_frame),
+            "samples_per_frame": self._presentation_samples_per_frame,
+        }
 
     @property
     def current_generation(self):
@@ -162,10 +339,11 @@ class GenerationPcmBuffer:
         return 0
 
     def _clear_next_pending(self) -> None:
-        self._next_pending_active = self._empty
+        self._next_pending_active = self._empty_chunk
         self._next_pending_pos = 0
         self._next_pending_queue.clear()
         self._next_pending_generation = None
+        self._next_pending_cursor = None
 
     def request_generation(self, generation: int) -> bool:
         """Declare the newest requested generation without interrupting playback.
@@ -186,11 +364,13 @@ class GenerationPcmBuffer:
                 # ramp, then transition to the newest request.
                 self._clear_next_pending()
                 self._next_pending_generation = gen
+                self._next_pending_cursor = _PresentationCursor(gen)
             else:
-                self._pending_active = self._empty
+                self._pending_active = self._empty_chunk
                 self._pending_pos = 0
                 self._pending_queue.clear()
                 self._pending_generation = None
+                self._pending_cursor = None
                 self._transition_progress = 0
         elif (
             self._next_pending_generation is not None
@@ -198,12 +378,23 @@ class GenerationPcmBuffer:
         ):
             self._clear_next_pending()
             self._next_pending_generation = gen
+            self._next_pending_cursor = _PresentationCursor(gen)
         return True
 
-    def enqueue(self, audio: np.ndarray, generation: int = 0) -> bool:
+    def enqueue(
+        self,
+        audio: np.ndarray,
+        generation: int = 0,
+        frame_indices=None,
+        samples_per_frame=None,
+    ) -> bool:
         pcm = _stereo_channel_last(audio)
         if len(pcm) == 0:
             return False
+        indices, frame_samples = _validated_provenance(
+            len(pcm), frame_indices, samples_per_frame
+        )
+        chunk = _PcmChunk(pcm, indices, frame_samples)
         gen = int(generation)
 
         if self._requested_generation is not None and gen < self._requested_generation:
@@ -211,7 +402,8 @@ class GenerationPcmBuffer:
 
         if self._current_generation is None:
             self._current_generation = gen
-            self._queue.append(pcm)
+            self._current_cursor = _PresentationCursor(gen)
+            self._queue.append(chunk)
             return True
 
         if self._next_pending_generation is not None:
@@ -220,7 +412,8 @@ class GenerationPcmBuffer:
             if gen != self._next_pending_generation:
                 self._clear_next_pending()
                 self._next_pending_generation = gen
-            self._next_pending_queue.append(pcm)
+                self._next_pending_cursor = _PresentationCursor(gen)
+            self._next_pending_queue.append(chunk)
             return True
 
         if (
@@ -229,7 +422,8 @@ class GenerationPcmBuffer:
             and gen > self._pending_generation
         ):
             self._next_pending_generation = gen
-            self._next_pending_queue.append(pcm)
+            self._next_pending_cursor = _PresentationCursor(gen)
+            self._next_pending_queue.append(chunk)
             return True
 
         newest = (
@@ -241,23 +435,38 @@ class GenerationPcmBuffer:
             return False
 
         if gen == self._current_generation and self._pending_generation is None:
-            self._queue.append(pcm)
+            if self._current_cursor is None:
+                self._current_cursor = _PresentationCursor(gen)
+            self._queue.append(chunk)
             return True
 
         if gen != self._pending_generation:
             # A rapid change supersedes every staged sample from the prior request.
-            self._pending_active = self._empty
+            self._pending_active = self._empty_chunk
             self._pending_pos = 0
             self._pending_queue.clear()
             self._pending_generation = gen
+            self._pending_cursor = _PresentationCursor(gen)
             self._transition_progress = 0
-        self._pending_queue.append(pcm)
+        self._pending_queue.append(chunk)
         return True
 
-    @staticmethod
-    def _pull_into(output, active, pos, chunks, frames: int):
+    @classmethod
+    def _pull_into(
+        cls,
+        output,
+        active,
+        pos,
+        chunks,
+        frames: int,
+        *,
+        cursor: Optional[_PresentationCursor] = None,
+        audible_samples: int = 0,
+        activate_final_boundary: bool = True,
+    ):
         output[:frames].fill(0.0)
         written = 0
+        audible_remaining = max(0, int(audible_samples))
         while written < frames:
             remaining = len(active) - pos
             if remaining <= 0:
@@ -267,7 +476,19 @@ class GenerationPcmBuffer:
                 pos = 0
                 remaining = len(active)
             count = min(remaining, frames - written)
-            output[written : written + count] = active[pos : pos + count]
+            output[written : written + count] = active.pcm[pos : pos + count]
+            if audible_remaining > 0:
+                audible = min(count, audible_remaining)
+                cls._advance_cursor(
+                    cursor,
+                    active,
+                    pos,
+                    audible,
+                    activate_final_boundary=(
+                        activate_final_boundary or audible < audible_remaining
+                    ),
+                )
+                audible_remaining -= audible
             written += count
             pos += count
         return written, active, pos
@@ -278,6 +499,7 @@ class GenerationPcmBuffer:
         self._active_pos = self._pending_pos
         self._queue = self._pending_queue
         self._current_generation = self._pending_generation
+        self._current_cursor = self._pending_cursor
 
         old_queue.clear()
         if self._next_pending_generation is not None:
@@ -285,25 +507,32 @@ class GenerationPcmBuffer:
             self._pending_pos = self._next_pending_pos
             self._pending_queue = self._next_pending_queue
             self._pending_generation = self._next_pending_generation
-            self._next_pending_active = self._empty
+            self._pending_cursor = self._next_pending_cursor
+            self._next_pending_active = self._empty_chunk
             self._next_pending_pos = 0
             self._next_pending_queue = old_queue
             self._next_pending_generation = None
+            self._next_pending_cursor = None
         else:
-            self._pending_active = self._empty
+            self._pending_active = self._empty_chunk
             self._pending_pos = 0
             self._pending_queue = old_queue
             self._pending_generation = None
+            self._pending_cursor = None
         self._transition_progress = 0
 
     def _clear_after_fade(self):
-        self._active = self._empty
+        self._active = self._empty_chunk
         self._active_pos = 0
         self._queue.clear()
-        self._pending_active = self._empty
+        # The producer recreates this cursor if same-generation PCM resumes.
+        # Avoid constructing presentation storage on the audio callback.
+        self._current_cursor = None
+        self._pending_active = self._empty_chunk
         self._pending_pos = 0
         self._pending_queue.clear()
         self._pending_generation = None
+        self._pending_cursor = None
         self._transition_progress = 0
         self._clear_next_pending()
         self._fade_total = 0
@@ -316,8 +545,16 @@ class GenerationPcmBuffer:
             1.0, 0.0, self._fade_total, dtype=np.float32
         )
 
-    def _mix_pending_into(self, output, frames: int) -> int:
+    def _mix_pending_into(
+        self,
+        output,
+        frames: int,
+        *,
+        audible_samples: int = 0,
+        activate_final_boundary: bool = True,
+    ) -> int:
         written = 0
+        audible_remaining = max(0, int(audible_samples))
         while written < frames:
             remaining = len(self._pending_active) - self._pending_pos
             if remaining <= 0:
@@ -327,9 +564,21 @@ class GenerationPcmBuffer:
                 self._pending_pos = 0
                 remaining = len(self._pending_active)
             count = min(remaining, frames - written)
-            source = self._pending_active[
+            source = self._pending_active.pcm[
                 self._pending_pos : self._pending_pos + count
             ]
+            if audible_remaining > 0:
+                audible = min(count, audible_remaining)
+                self._advance_cursor(
+                    self._pending_cursor,
+                    self._pending_active,
+                    self._pending_pos,
+                    audible,
+                    activate_final_boundary=(
+                        activate_final_boundary or audible < audible_remaining
+                    ),
+                )
+                audible_remaining -= audible
             fade_remaining = self.transition_samples - self._transition_progress
             fade_count = min(count, max(0, fade_remaining))
             if fade_count > 0:
@@ -349,6 +598,121 @@ class GenerationPcmBuffer:
             self._pending_pos += count
         return written
 
+    @staticmethod
+    def _advance_cursor(
+        cursor: Optional[_PresentationCursor],
+        chunk: _PcmChunk,
+        start: int,
+        count: int,
+        *,
+        activate_final_boundary: bool = True,
+    ) -> None:
+        if cursor is None or count <= 0:
+            return
+        if chunk.frame_indices is None or chunk.samples_per_frame is None:
+            # Untagged legacy PCM holds the last authoritative position.  Break
+            # chunk continuity so the next tagged hop starts a fresh event.
+            cursor.chunk = None
+            cursor.chunk_pos = 0
+            return
+
+        indices = chunk.frame_indices
+        frame_samples = int(chunk.samples_per_frame)
+        position = int(start)
+        end = min(len(chunk), position + int(count))
+        if position >= end:
+            return
+
+        if cursor.chunk is not chunk or cursor.chunk_pos != position:
+            frame_offset = min(position // frame_samples, len(indices) - 1)
+            cursor.index = int(indices[frame_offset])
+            cursor.samples_per_frame = frame_samples
+            cursor.samples_into_frame = position - frame_offset * frame_samples
+            cursor.events.append(cursor.index)
+            cursor.chunk = chunk
+            cursor.chunk_pos = position
+
+        while position < end:
+            frame_offset = min(position // frame_samples, len(indices) - 1)
+            within_frame = position - frame_offset * frame_samples
+            step = min(frame_samples - within_frame, end - position)
+            cursor.index = int(indices[frame_offset])
+            cursor.samples_per_frame = frame_samples
+            cursor.samples_into_frame = within_frame + step
+            position += step
+
+            # At an exact boundary, the playback clock now points at the next
+            # represented frame even if the callback ends on that boundary.
+            if (
+                position < len(chunk)
+                and position % frame_samples == 0
+                and (position < end or activate_final_boundary)
+            ):
+                next_offset = position // frame_samples
+                cursor.index = int(indices[next_offset])
+                cursor.samples_into_frame = 0
+                cursor.events.append(cursor.index)
+
+        cursor.chunk = chunk
+        cursor.chunk_pos = position
+
+    @staticmethod
+    def _advance_to_queued_chunk(
+        cursor: Optional[_PresentationCursor],
+        active: _PcmChunk,
+        active_pos: int,
+        chunks,
+    ) -> None:
+        """Resolve an exact hop boundary to an already-buffered next frame."""
+        if (
+            cursor is None
+            or cursor.chunk is not active
+            or cursor.chunk_pos != int(active_pos)
+            or int(active_pos) != len(active)
+            or not chunks
+        ):
+            return
+        next_chunk = chunks[0]
+        if (
+            next_chunk.frame_indices is None
+            or next_chunk.samples_per_frame is None
+        ):
+            return
+        cursor.index = int(next_chunk.frame_indices[0])
+        cursor.samples_into_frame = 0
+        cursor.samples_per_frame = int(next_chunk.samples_per_frame)
+        cursor.events.append(cursor.index)
+        cursor.chunk = next_chunk
+        cursor.chunk_pos = 0
+
+    def _commit_cursor(self, cursor: Optional[_PresentationCursor]) -> None:
+        if cursor is None or cursor.index is None:
+            return
+
+        events = cursor.events
+        # A first-run hold already represents the first frame at time zero.
+        # Do not add that same point twice when its PCM begins, while preserving
+        # genuine repeated indices inside the provenance stream.
+        first_event = 0
+        if (
+            events.size > 0
+            and not events.overflowed
+            and self._presentation_index == events.get(0)
+            and self._presentation_generation == cursor.generation
+            and self._presentation_samples_into_frame == 0
+        ):
+            first_event = 1
+        event_offset = first_event
+        while event_offset < events.size:
+            self._presentation_recent.append(events.get(event_offset))
+            event_offset += 1
+        events.clear()
+
+        self._presentation_index = int(cursor.index)
+        self._presentation_generation = int(cursor.generation)
+        self._presentation_samples_into_frame = int(cursor.samples_into_frame)
+        self._presentation_samples_per_frame = cursor.samples_per_frame
+
     def render_into(self, output: np.ndarray) -> bool:
         """Render prepared PCM into a caller-owned buffer; return underrun state."""
         if output.ndim != 2 or output.shape[1] != self.channels:
@@ -359,8 +723,47 @@ class GenerationPcmBuffer:
         if frames == 0:
             return False
 
+        if self._fade_total > 0:
+            fade_remaining = max(0, self._fade_total - self._fade_progress)
+            presentation_limit = min(frames, fade_remaining)
+            fade_finishes = fade_remaining <= frames
+        else:
+            presentation_limit = frames
+            fade_finishes = False
+
+        transition_remaining = 0
+        transition_will_run = False
+        if self._pending_generation is not None:
+            pending_available = self.buffered_samples(self._pending_generation)
+            transition_remaining = max(
+                0, self.transition_samples - self._transition_progress
+            )
+            needed = max(frames, transition_remaining)
+            transition_will_run = pending_available >= needed
+
+        transition_finishes = (
+            transition_will_run and presentation_limit >= transition_remaining
+        )
+        current_continues = not fade_finishes and not transition_finishes
+        pending_continues = not fade_finishes
+        outgoing_audible = min(
+            frames,
+            transition_remaining if transition_will_run else frames,
+            presentation_limit,
+        )
+        replacement_audible = (
+            min(frames, presentation_limit) if transition_will_run else 0
+        )
+
         old_written, self._active, self._active_pos = self._pull_into(
-            output, self._active, self._active_pos, self._queue, frames
+            output,
+            self._active,
+            self._active_pos,
+            self._queue,
+            frames,
+            cursor=self._current_cursor,
+            audible_samples=outgoing_audible,
+            activate_final_boundary=current_continues,
         )
         if old_written > 0:
             self._last_active_sample[:] = output[old_written - 1]
@@ -368,27 +771,26 @@ class GenerationPcmBuffer:
         replacement_written = 0
         outgoing_shortfall = False
 
-        if self._pending_generation is not None:
-            pending_available = self.buffered_samples(self._pending_generation)
-            # Do not disturb old PCM until the replacement can cover this callback
-            # and the complete transition ramp.
-            needed = max(frames, self.transition_samples - self._transition_progress)
-            if pending_available >= needed:
-                if old_written < frames:
-                    # A late replacement can arrive after the outgoing queue has
-                    # fewer than 256 samples left.  Extend its terminal sample so
-                    # the fixed-length transition stays continuous, and still
-                    # report the source shortfall as an underrun.
-                    outgoing_shortfall = True
-                    if self._last_active_sample_valid:
-                        output[old_written:frames] = self._last_active_sample
-                replacement_written = self._mix_pending_into(output, frames)
-                if self._transition_progress >= self.transition_samples:
-                    self._promote_pending()
+        if transition_will_run:
+            if old_written < frames:
+                # A late replacement can arrive after the outgoing queue has
+                # fewer than 256 samples left.  Extend its terminal sample so
+                # the fixed-length transition stays continuous, and still
+                # report the source shortfall as an underrun.
+                outgoing_shortfall = True
+                if self._last_active_sample_valid:
+                    output[old_written:frames] = self._last_active_sample
+            replacement_written = self._mix_pending_into(
+                output,
+                frames,
+                audible_samples=replacement_audible,
+                activate_final_boundary=pending_continues,
+            )
 
         if self._fade_total > 0:
             remaining = self._fade_total - self._fade_progress
             fade_count = min(frames, max(0, remaining))
+            presentation_limit = fade_count
             if fade_count > 0:
                 fade_end = self._fade_progress + fade_count
                 output[:fade_count] *= self._fade_curve[
@@ -397,8 +799,31 @@ class GenerationPcmBuffer:
                 self._fade_progress += fade_count
             if fade_count < frames:
                 output[fade_count:] = 0.0
-            if self._fade_progress >= self._fade_total:
-                self._clear_after_fade()
+
+        if current_continues:
+            self._advance_to_queued_chunk(
+                self._current_cursor,
+                self._active,
+                self._active_pos,
+                self._queue,
+            )
+        if pending_continues:
+            self._advance_to_queued_chunk(
+                self._pending_cursor,
+                self._pending_active,
+                self._pending_pos,
+                self._pending_queue,
+            )
+
+        if transition_finishes:
+            self._commit_cursor(self._current_cursor)
+            self._promote_pending()
+            self._commit_cursor(self._current_cursor)
+        else:
+            self._commit_cursor(self._current_cursor)
+
+        if fade_finishes:
+            self._clear_after_fade()
 
         fully_covered = old_written >= frames or replacement_written >= frames
         return outgoing_shortfall or not fully_covered
@@ -541,13 +966,46 @@ class DecoderPlayer:
                 self.underruns += 1
                 time.sleep(0.01)
 
-    def write_hop(self, audio: np.ndarray, generation: int = 0) -> bool:
-        """Queue one fully assembled PCM hop for a transport generation."""
+    def write_hop(
+        self,
+        audio: np.ndarray,
+        generation: int = 0,
+        frame_indices=None,
+        samples_per_frame=None,
+    ) -> bool:
+        """Atomically queue one PCM hop and its optional frame provenance."""
         pcm = _stereo_channel_last(audio)
-        self.frame_samples = int(len(pcm))
-        self.frame_duration = self.frame_samples / float(self.sr)
         with self._queue_lock:
-            return self._pcm_buffer.enqueue(pcm, generation=int(generation))
+            accepted = self._pcm_buffer.enqueue(
+                pcm,
+                generation=int(generation),
+                frame_indices=frame_indices,
+                samples_per_frame=samples_per_frame,
+            )
+            if accepted:
+                self.frame_samples = int(len(pcm))
+                self.frame_duration = self.frame_samples / float(self.sr)
+            return accepted
+
+    def capture_presentation_hold(
+        self,
+        index: int,
+        *,
+        generation=None,
+        samples_per_frame=None,
+    ) -> bool:
+        """Capture a first-run stationary cursor before producer prebuffering."""
+        with self._queue_lock:
+            return self._pcm_buffer.capture_presentation_hold(
+                index,
+                generation=generation,
+                samples_per_frame=samples_per_frame,
+            )
+
+    def get_presentation_state(self):
+        """Return an atomic playback-clocked presentation snapshot."""
+        with self._queue_lock:
+            return self._pcm_buffer.get_presentation_state()
 
     def request_generation(self, generation: int) -> bool:
         """Invalidate staged PCM older than ``generation`` while current PCM plays."""

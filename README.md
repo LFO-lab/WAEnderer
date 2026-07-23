@@ -285,6 +285,12 @@ applies the transition/gain, and zero-fills an underrun. There is no Torch or
 CoreML fallback. A runtime ONNX failure is shown in Decoder state, fades the
 current audio to silence, and requires a new transport Start.
 
+The Web visualization follows the prepared-PCM playback clock rather than the
+ahead-of-playback decoder producer. It advances through the exact corpus frame
+indices attached to accepted hops once per 4,096 rendered samples (about
+10.77 Hz at 44.1 kHz), independently of decoder window T; the 30 fps WebSocket
+stream repeats each authoritative discrete position between advances.
+
 Presentation startup never downloads or exports models. Corpora contain their
 latents, geometry, metadata, and trained navigation artifacts, but no decoder
 weights. `bin/perform.py` remains the standalone Torch path, and `.sawbundle`

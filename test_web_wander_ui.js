@@ -112,6 +112,77 @@ assert.match(element("wander-render-status").textContent, /graph unavailable/);
 assert.equal(frameOrder.disabled, false, "Frame Order remains enabled at T2");
 assert.match(element("status-text").textContent, /Wander/);
 
+vm.runInContext(`handleMessage({
+    type: 'corpus',
+    point_indices: [0, 1, 2],
+    manual_positions_3d: [[0, 0, 0], [0.5, 0.5, 0.5], [1, 1, 1]],
+    manual_color_values: [0, 0.5, 1],
+    manual_file_ids: [0, 1, 1],
+    navigation_mode: 'random'
+});`, context);
+
+const randomPlaybackState = `{
+    type: 'state',
+    navigation: {
+        mode: 'random', clock: 'audio_render', generation: 4,
+        index: 2, velocity: 0.75, file_id: 1,
+        position_3d: [1, 1, 1],
+        trajectory_3d: [[0, 0, 0], [0, 0, 0], [1, 1, 1]]
+    },
+    transport: {running: false},
+    manual: {nearest_index: 1, distance: 0.9}
+}`;
+vm.runInContext(`handleMessage(${randomPlaybackState});`, context);
+vm.runInContext(`handleMessage(${randomPlaybackState});`, context);
+let playbackView = JSON.parse(vm.runInContext(`JSON.stringify({
+    currentIndex, currentFileId, manualPosition3D, manualTrajectory3D
+})`, context));
+assert.deepEqual(playbackView, {
+    currentIndex: 2,
+    currentFileId: 1,
+    manualPosition3D: [1, 1, 1],
+    manualTrajectory3D: [[0, 0, 0], [0, 0, 0], [1, 1, 1]],
+}, "repeated 30 fps messages retain the authoritative trail without fake steps");
+
+vm.runInContext(`handleMessage({
+    type: 'state',
+    navigation: {
+        mode: 'manual', clock: 'audio_render', generation: 5,
+        index: 0, velocity: 0.25, file_id: 0,
+        position_3d: [0, 0, 0],
+        trajectory_3d: [[1, 1, 1], [0, 0, 0]]
+    },
+    transport: {running: false},
+    manual: {
+        nearest_index: 0, current_file_id: 0, distance: 0.42,
+        control_dim: 4, faders: [0.1, 0.2, 0.3, 0.4]
+    }
+});`, context);
+playbackView = JSON.parse(vm.runInContext(`JSON.stringify({
+    currentIndex, currentFileId, manualPosition3D, manualTrajectory3D,
+    manualNearestDistance
+})`, context));
+assert.deepEqual(playbackView, {
+    currentIndex: 0,
+    currentFileId: 0,
+    manualPosition3D: [0, 0, 0],
+    manualTrajectory3D: [[1, 1, 1], [0, 0, 0]],
+    manualNearestDistance: 0.42,
+}, "Manual renders the playback cursor while retaining query distance");
+assert.equal(element("info-index").textContent, 0);
+assert.equal(element("info-velocity").textContent, "0.42");
+
+vm.runInContext("applyManualPointSelection(2);", context);
+assert.deepEqual(
+    JSON.parse(vm.runInContext("JSON.stringify(manualPosition3D)", context)),
+    [0, 0, 0],
+    "manual picking does not jump the audible cursor",
+);
+assert.deepEqual(sent.pop(), {
+    type: "manual_controls",
+    faders: [1, 1, 1, 1],
+});
+
 element("mode-random").listeners.click();
 assert.deepEqual(sent.pop(), {
     type: "transport",

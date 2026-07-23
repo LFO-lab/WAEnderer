@@ -78,6 +78,7 @@ class WSBroadcaster:
         self._message_handler = message_handler
         self._extra_state_provider = extra_state_provider
         self._pipeline_message_handler = pipeline_message_handler
+        self._manual_points = None
         self._manual_points_3d = None
         self._manual_points_3d_norm = None
         self._manual_points_3d_min = None
@@ -189,6 +190,7 @@ class WSBroadcaster:
             )
             return
 
+        self._manual_points = points.copy()
         points_xyz = points[:, :3].astype(np.float32)
         self._manual_points_3d = points_xyz
 
@@ -247,6 +249,22 @@ class WSBroadcaster:
         idx_i = int(np.clip(int(idx), 0, self._manual_points_3d_norm.shape[0] - 1))
         return self._manual_points_3d_norm[idx_i]
 
+    def _manual_point_raw_for_index(self, idx: int) -> Optional[np.ndarray]:
+        if self._manual_points is None or self._manual_points.shape[0] == 0:
+            return None
+        idx_i = int(np.clip(int(idx), 0, self._manual_points.shape[0] - 1))
+        return self._manual_points[idx_i]
+
+    def _file_id_for_index(self, idx: int) -> Optional[int]:
+        idx_i = int(idx)
+        for file_ids in (self._manual_file_ids, getattr(self.nav, "_file_ids", None)):
+            if file_ids is None:
+                continue
+            values = np.asarray(file_ids).reshape(-1)
+            if 0 <= idx_i < values.shape[0]:
+                return int(values[idx_i])
+        return None
+
     def _manual_point_norm_for_fractional(
         self,
         idx_lower: int,
@@ -270,6 +288,78 @@ class WSBroadcaster:
             pt = self._manual_points_3d_norm[idx_i]
             points.append([float(pt[0]), float(pt[1]), float(pt[2])])
         return points
+
+    @staticmethod
+    def _finite_frame_index(value) -> Optional[int]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(number):
+            return None
+        index = int(number)
+        if number != index:
+            return None
+        return index
+
+    def _apply_presentation_state(self, state: dict, presentation) -> None:
+        """Replace the producer cursor with an audio-render-clock snapshot."""
+        if not isinstance(presentation, dict):
+            return
+        presented_idx = self._finite_frame_index(presentation.get("index"))
+        if presented_idx is None:
+            return
+        corpus_size = int(self.nav.N)
+        if not 0 <= presented_idx < corpus_size:
+            return
+
+        recent = presentation.get("recent_indices")
+        if isinstance(recent, np.ndarray):
+            recent = recent.reshape(-1).tolist()
+        if not isinstance(recent, (list, tuple)):
+            recent = []
+        recent_indices = []
+        for value in recent:
+            idx = self._finite_frame_index(value)
+            if idx is not None and 0 <= idx < corpus_size:
+                recent_indices.append(idx)
+
+        navigation = state["navigation"]
+        navigation["index"] = presented_idx
+        navigation["index_normalized"] = presented_idx / max(1, int(self.nav.N) - 1)
+        navigation["fractional"] = None
+        navigation["clock"] = "audio_render"
+
+        generation = presentation.get("generation")
+        generation_idx = self._finite_frame_index(generation)
+        navigation["generation"] = generation_idx if generation_idx is not None else generation
+
+        file_id = self._file_id_for_index(presented_idx)
+        navigation["file_id"] = file_id
+
+        position_norm = self._manual_point_norm_for_index(presented_idx)
+        navigation.pop("position_3d", None)
+        if position_norm is not None:
+            navigation["position_3d"] = [float(value) for value in position_norm[:3]]
+        navigation["trajectory_3d"] = self._manual_trajectory_norm_for_indices(
+            recent_indices
+        )
+
+        # Older browser clients read the cursor from manual state in Manual mode.
+        # Keep its query controls and distance, but mirror the audible position.
+        manual = state.get("manual")
+        if not isinstance(manual, dict):
+            manual = {}
+        else:
+            manual = dict(manual)
+        manual["nearest_index"] = presented_idx
+        manual["current_file_id"] = file_id
+        position_raw = self._manual_point_raw_for_index(presented_idx)
+        if position_raw is not None:
+            manual["position"] = [float(value) for value in position_raw]
+        if position_norm is not None:
+            manual["position_3d"] = [float(value) for value in position_norm[:3]]
+        state["manual"] = manual
 
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
@@ -335,6 +425,7 @@ class WSBroadcaster:
         if self.decoder is not None:
             state["decoder"] = self.decoder.get_state()
 
+        presentation_state = None
         if self._extra_state_provider is not None:
             try:
                 extra = self._extra_state_provider()
@@ -342,6 +433,7 @@ class WSBroadcaster:
                 print(f"[ws] Error getting extra state: {e}")
                 extra = None
             if isinstance(extra, dict):
+                presentation_state = extra.get("presentation")
                 transport = extra.get("transport")
                 if isinstance(transport, dict):
                     state["transport"] = transport
@@ -384,6 +476,8 @@ class WSBroadcaster:
                     if not isinstance(existing_decoder, dict):
                         existing_decoder = {}
                     state["decoder"] = {**existing_decoder, **decoder_state}
+
+        self._apply_presentation_state(state, presentation_state)
 
         return json.dumps(state)
     

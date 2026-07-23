@@ -1,9 +1,11 @@
 from pathlib import Path
+import queue
 from types import SimpleNamespace
 import threading
 import time
 
 import numpy as np
+import pytest
 
 from stable_audio_wanderer.runtime.onnx_transport import OnnxTransportController
 from stable_audio_wanderer.vae.onnx_decoder import (
@@ -66,6 +68,12 @@ class FakeNavigation:
     def set_reorganized_controls(self, **_controls):
         pass
 
+    def get_state(self):
+        return {
+            "policy_index": float(self.counter),
+            "current_file_id": 0,
+        }
+
 
 class FakeManifold:
     def __init__(self):
@@ -97,7 +105,12 @@ class FakeWanderPlanner:
             np.float32(anchor_frame),
             dtype=np.float32,
         )
-        return SimpleNamespace(raw_latents=raw)
+        return SimpleNamespace(
+            raw_latents=raw,
+            input_frames=tuple(
+                int(anchor_frame) + offset for offset in range(int(window_size))
+            ),
+        )
 
 
 class FakeManual:
@@ -123,6 +136,7 @@ class FakeManual:
         return {
             "faders": self.faders.tolist(),
             "control_dim": 3,
+            "nearest_index": int(self.anchor),
             "position": [0.0, 0.0, 0.0],
             "wander_k": 1,
             "wander_speed": 0.0,
@@ -131,7 +145,7 @@ class FakeManual:
 
 class FakeDecoder:
     def __init__(self):
-        self.supported_windows = (2, 4)
+        self.supported_windows = (2, 4, 8, 16, 32)
         self.default_window = 2
         self.info = SimpleNamespace(
             bundle_path=Path("/tmp/test.sawbundle"),
@@ -143,6 +157,7 @@ class FakeDecoder:
         self._control_lock = threading.Lock()
         self._block_next = False
         self._fail_next = False
+        self.reported_samples_per_latent = 8
         self.decode_entered = threading.Event()
         self.decode_release = threading.Event()
 
@@ -154,7 +169,7 @@ class FakeDecoder:
             latent_dim=256,
             sample_rate=100,
             channels=2,
-            samples_per_latent=8,
+            samples_per_latent=self.reported_samples_per_latent,
             audio_window_samples=window * 8,
             latent_hop=hop,
             audio_hop_samples=hop * 8,
@@ -210,6 +225,9 @@ class FakePlayer:
         self.fade_count = 0
         self.underruns = 0
         self.requested_generation = None
+        self.provenance_writes = []
+        self.presentation_state = None
+        self.capture_calls = []
 
     def request_generation(self, generation):
         with self._lock:
@@ -225,7 +243,13 @@ class FakePlayer:
                 self.pending_generation = None
         return True
 
-    def write_hop(self, hop, generation=0):
+    def write_hop(
+        self,
+        hop,
+        generation=0,
+        frame_indices=None,
+        samples_per_frame=None,
+    ):
         with self._lock:
             generation = int(generation)
             if (
@@ -234,12 +258,55 @@ class FakePlayer:
             ):
                 return False
             self.writes.append((generation, np.asarray(hop).copy()))
+            self.provenance_writes.append(
+                {
+                    "generation": generation,
+                    "hop": np.asarray(hop).copy(),
+                    "frame_indices": tuple(int(index) for index in frame_indices),
+                    "samples_per_frame": int(samples_per_frame),
+                }
+            )
             self.buffers[generation] = self.buffers.get(generation, 0) + hop.shape[1]
             if self.current_generation is None:
                 self.current_generation = generation
             elif generation > self.current_generation:
                 self.pending_generation = generation
         return True
+
+    def capture_presentation_hold(
+        self,
+        index,
+        *,
+        generation=None,
+        samples_per_frame=None,
+    ):
+        with self._lock:
+            call = (
+                int(index),
+                None if generation is None else int(generation),
+                None if samples_per_frame is None else int(samples_per_frame),
+            )
+            self.capture_calls.append(call)
+            if self.presentation_state is not None:
+                return False
+            self.presentation_state = {
+                "index": int(index),
+                "recent_indices": [int(index)],
+                "generation": None if generation is None else int(generation),
+                "samples_into_frame": 0,
+                "samples_per_frame": (
+                    None if samples_per_frame is None else int(samples_per_frame)
+                ),
+            }
+        return True
+
+    def get_presentation_state(self):
+        with self._lock:
+            if self.presentation_state is None:
+                return None
+            state = dict(self.presentation_state)
+            state["recent_indices"] = list(state["recent_indices"])
+            return state
 
     def generation_buffer_duration(self, generation):
         with self._lock:
@@ -277,7 +344,7 @@ class FakePlayer:
         }
 
 
-def _controller():
+def _controller(*, initial_mode="random", initial_window=2):
     decoder = FakeDecoder()
     player = FakePlayer()
     controller = OnnxTransportController(
@@ -291,9 +358,123 @@ def _controller():
         frame_file_ids=np.asarray([0] * 6 + [1] * 6, dtype=np.int32),
         z_mean=np.zeros(256, dtype=np.float32),
         z_std=np.ones(256, dtype=np.float32),
-        initial_window=2,
+        initial_mode=initial_mode,
+        initial_window=initial_window,
     )
     return controller, decoder, player
+
+
+def test_start_captures_stationary_cursor_before_producer_prebuffer():
+    controller, _decoder, player = _controller()
+    controller.nav.counter = 3
+
+    ok, _ = controller.start()
+    assert ok
+    _wait_until(lambda: controller.nav.counter > 3)
+
+    assert player.capture_calls == [(3, 1, 8)]
+    assert controller.get_extra_state()["presentation"] == {
+        "index": 3,
+        "recent_indices": [3],
+        "generation": 1,
+        "samples_into_frame": 0,
+        "samples_per_frame": 8,
+    }
+    controller.stop()
+
+    controller.nav.counter = 9
+    ok, _ = controller.start()
+    assert ok
+    _wait_until(lambda: controller.nav.counter > 9)
+    assert player.capture_calls[-1] == (9, 2, 8)
+    assert controller.get_extra_state()["presentation"]["index"] == 3
+    assert controller.get_extra_state()["presentation"]["generation"] == 1
+    controller.stop()
+
+
+def test_extra_state_omits_missing_presentation_and_forwards_atomic_snapshot():
+    controller, _decoder, player = _controller()
+    assert "presentation" not in controller.get_extra_state()
+
+    player.presentation_state = {
+        "index": 7,
+        "recent_indices": [2, 7],
+        "generation": 4,
+        "samples_into_frame": 3,
+        "samples_per_frame": 8,
+    }
+    state = controller.get_extra_state()
+    assert state["presentation"] == player.presentation_state
+    assert state["presentation"] is not player.presentation_state
+
+
+@pytest.mark.parametrize(
+    ("window", "expected_indices"),
+    (
+        (2, (4,)),
+        (4, (2, 3)),
+        (8, (0, 1, 2, 3)),
+        (16, (0, 1, 2, 3, 4, 5, 5, 5)),
+        (32, (0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5)),
+    ),
+)
+def test_manual_accepted_hops_forward_leading_latent_indices(window, expected_indices):
+    controller, _decoder, player = _controller(
+        initial_mode="manual",
+        initial_window=window,
+    )
+    controller.manual.anchor = 5
+
+    ok, _ = controller.start()
+    assert ok
+    _wait_until(lambda: bool(player.provenance_writes))
+    _wait_until(lambda: player.started)
+
+    accepted = player.provenance_writes[0]
+    assert accepted["generation"] == 1
+    assert accepted["frame_indices"] == expected_indices
+    assert accepted["samples_per_frame"] == 8
+    assert accepted["hop"].shape == (2, len(expected_indices) * 8)
+    controller.stop()
+
+
+def test_decode_rejects_provenance_that_does_not_cover_the_pcm_hop():
+    controller, decoder, player = _controller(initial_mode="manual")
+    decoder.reported_samples_per_latent = 7
+
+    ok, _ = controller.start()
+    assert ok
+    _wait_until(lambda: controller.get_extra_state()["transport"]["error"] is not None)
+
+    error = controller.get_extra_state()["transport"]["error"]
+    assert "1 frames * 7 samples != 8 hop samples" in error
+    assert player.provenance_writes == []
+    controller.stop()
+
+
+def test_decode_rejects_out_of_range_provenance_before_player_acceptance():
+    controller, _decoder, player = _controller(initial_mode="manual")
+    original_request = controller._manual_request
+
+    def out_of_range_request(generation, window):
+        request = original_request(generation, window)
+        return SimpleNamespace(
+            generation=request.generation,
+            window=request.window,
+            raw_latents=request.raw_latents,
+            frame_indices=(controller.Z_concat.shape[0],) + request.frame_indices[1:],
+        )
+
+    controller._manual_request = out_of_range_request
+
+    ok, _ = controller.start()
+    assert ok
+    _wait_until(lambda: controller.get_extra_state()["transport"]["error"] is not None)
+
+    error = controller.get_extra_state()["transport"]["error"]
+    assert "out-of-range corpus index" in error
+    assert player.provenance_writes == []
+    controller.stop()
 
 
 def test_rapid_window_change_discards_in_flight_stale_decode_result():
@@ -316,6 +497,9 @@ def test_rapid_window_change_discards_in_flight_stale_decode_result():
         lambda: any(generation >= 3 for generation, _hop in player.writes)
     )
     assert not any(generation == 2 for generation, _hop in player.writes)
+    assert not any(
+        accepted["generation"] == 2 for accepted in player.provenance_writes
+    )
     assert controller.get_extra_state()["decoder"]["requested_window"] == 2
     controller.stop()
 
@@ -459,12 +643,39 @@ def test_wander_request_uses_navigation_cadence_and_final_anchor_without_tail_re
     assert np.all(second.raw_latents == 6.0)
     assert np.all(third.raw_latents == 8.0)
     assert second.raw_latents.shape == (4, 256)
+    assert first.frame_indices == (4, 5, 6, 7)
+    assert second.frame_indices == (6, 7, 8, 9)
+    assert third.frame_indices == (8, 9)
 
     controls = planner.calls[0][2]
     assert controls["frame_source"] == "k_nearest"
     assert controls["frame_order"] == 0.0
     assert controls["latent_colour"] == 0.0
     assert controls["jump_rate"] == 0.55
+
+
+def test_reorganized_request_provenance_preserves_tail_reuse_order():
+    controller, _decoder, _player = _controller()
+    latent_queue = queue.Queue(maxsize=controller.LATENT_QUEUE_SIZE)
+    with controller._lock:
+        controller._active_mode = "reorganized"
+        controller._requested_generation = 1
+        controller._requested_window = 4
+        controller._latent_queue = latent_queue
+        controller._running.set()
+
+    producer = threading.Thread(target=controller._producer_loop)
+    producer.start()
+    first = latent_queue.get(timeout=1.0)
+    second = latent_queue.get(timeout=1.0)
+    controller._running.clear()
+    producer.join(timeout=1.0)
+
+    assert not producer.is_alive()
+    assert first.frame_indices == (1, 2, 3, 4)
+    assert second.frame_indices == (3, 4, 5, 6)
+    assert first.raw_latents[:, 0].tolist() == [1.0, 2.0, 3.0, 4.0]
+    assert second.raw_latents[:, 0].tolist() == [3.0, 4.0, 5.0, 6.0]
 
 
 def test_reset_wander_resets_policy_stages_random_generation_and_resets_planner():
@@ -521,6 +732,8 @@ def test_manual_decode_request_queries_one_anchor_and_repeats_the_same_file_chun
     assert np.array_equal(first.raw_latents, second.raw_latents)
     assert first.raw_latents[:, 0].tolist() == [2.0, 3.0, 4.0, 5.0]
     assert np.all(first.raw_latents[:, 1:] == 0.0)
+    assert first.frame_indices == (2, 3, 4, 5)
+    assert second.frame_indices == (2, 3, 4, 5)
 
 
 def test_stop_waits_for_in_flight_decode_before_resetting_pcm():

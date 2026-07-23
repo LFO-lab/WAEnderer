@@ -123,6 +123,163 @@ def test_ws_broadcaster_normalizes_manual_position_from_extra_state():
     assert state["manual"]["position_3d"] == pytest.approx([0.5, 0.5, 0.25])
 
 
+@pytest.mark.parametrize("navigation_mode", ["random", "manual", "reorganized"])
+def test_ws_broadcaster_uses_audio_render_presentation_cursor(navigation_mode):
+    nav = FakeNav(_make_nav_state())
+    broadcaster = WSBroadcaster(
+        nav,
+        extra_state_provider=lambda: {
+            "navigation_mode": navigation_mode,
+            "transport": {"running": True, "selected_mode": navigation_mode},
+            "manual": {
+                "position": [0.5, 0.5, 0.5],
+                "nearest_index": 1,
+                "current_file_id": 1,
+                "distance": 0.375,
+                "faders": [0.2, 0.3, 0.4, 0.5],
+            },
+            "presentation": {
+                "index": 0,
+                "recent_indices": [2, 0, 2, 0],
+                "generation": 7,
+                "samples_into_frame": 2048,
+                "samples_per_frame": 4096,
+            },
+        },
+        manual_points_3d=np.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.5, 0.5],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        manual_file_ids=np.asarray([0, 1, 1], dtype=np.int32),
+        manual_fader_p01=np.zeros(3, dtype=np.float32),
+        manual_fader_p99=np.ones(3, dtype=np.float32),
+    )
+
+    state = json.loads(broadcaster._get_state_json())
+
+    assert state["navigation"] == {
+        "index": 0,
+        "index_normalized": 0.0,
+        "velocity": 0.25,
+        "file_id": 0,
+        "fractional": None,
+        "timbre_swap": {},
+        "recompose": {},
+        "policy_v2": {},
+        "reorganized": {},
+        "mode": navigation_mode,
+        "position_3d": [0.0, 0.0, 0.0],
+        "trajectory_3d": [
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ],
+        "clock": "audio_render",
+        "generation": 7,
+    }
+    assert state["controls"] == nav.get_state()["controls"]
+    assert state["manual"] == {
+        "position": [0.0, 0.0, 0.0],
+        "nearest_index": 0,
+        "current_file_id": 0,
+        "distance": 0.375,
+        "faders": [0.2, 0.3, 0.4, 0.5],
+        "position_3d": [0.0, 0.0, 0.0],
+    }
+
+
+def test_ws_broadcaster_ignores_non_finite_presentation_index():
+    nav = FakeNav(_make_nav_state())
+    broadcaster = WSBroadcaster(
+        nav,
+        extra_state_provider=lambda: {
+            "presentation": {
+                "index": float("nan"),
+                "recent_indices": [0],
+                "generation": 1,
+                "samples_into_frame": 0,
+                "samples_per_frame": 4096,
+            }
+        },
+        manual_points_3d=np.asarray(
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]],
+            dtype=np.float32,
+        ),
+    )
+
+    state = json.loads(broadcaster._get_state_json())
+
+    assert state["navigation"]["index"] == 1
+    assert state["navigation"]["fractional"]["frac"] == 0.25
+    assert "clock" not in state["navigation"]
+
+
+@pytest.mark.parametrize("presented_index", [99, -1, 1.5])
+def test_ws_broadcaster_ignores_invalid_presentation_index(presented_index):
+    nav = FakeNav(_make_nav_state())
+    broadcaster = WSBroadcaster(
+        nav,
+        extra_state_provider=lambda: {
+            "presentation": {
+                "index": presented_index,
+                "recent_indices": [0],
+                "generation": 1,
+                "samples_into_frame": 0,
+                "samples_per_frame": 4096,
+            }
+        },
+        manual_points_3d=np.asarray(
+            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.0, 1.0, 1.0]],
+            dtype=np.float32,
+        ),
+    )
+
+    state = json.loads(broadcaster._get_state_json())
+
+    assert state["navigation"]["index"] == 1
+    assert state["navigation"]["fractional"]["frac"] == 0.25
+    assert "clock" not in state["navigation"]
+
+
+def test_ws_broadcaster_preserves_full_manual_position_and_filters_bad_history():
+    nav = FakeNav(_make_nav_state())
+    broadcaster = WSBroadcaster(
+        nav,
+        extra_state_provider=lambda: {
+            "navigation_mode": "manual",
+            "presentation": {
+                "index": 1,
+                "recent_indices": [0, 99, -1, 1.25, 2],
+                "generation": 3,
+                "samples_into_frame": 0,
+                "samples_per_frame": 4096,
+            },
+        },
+        manual_points_3d=np.asarray(
+            [
+                [0.0, 0.0, 0.0, 0.25],
+                [0.5, 0.5, 0.5, 0.50],
+                [1.0, 1.0, 1.0, 0.75],
+            ],
+            dtype=np.float32,
+        ),
+        manual_file_ids=np.asarray([0, 1, 1], dtype=np.int32),
+    )
+
+    state = json.loads(broadcaster._get_state_json())
+
+    assert state["manual"]["position"] == pytest.approx([0.5, 0.5, 0.5, 0.5])
+    assert np.allclose(
+        np.asarray(state["navigation"]["trajectory_3d"], dtype=np.float32),
+        np.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32),
+    )
+
+
 def test_ws_broadcaster_uses_point_indices_and_cursor_index_messages():
     nav = FakeNav(_make_nav_state())
     broadcaster = WSBroadcaster(

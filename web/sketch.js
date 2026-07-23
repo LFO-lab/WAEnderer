@@ -396,7 +396,6 @@ function applyManualPointSelection(pointIdx) {
     }
 
     const selected = manualCorpusPoints3D[pointIdx];
-    manualPosition3D = selected.slice(0, 3);
     const nextFaders = new Array(manualControlDim).fill(0.5);
     for (let i = 0; i < Math.min(3, manualControlDim); i++) {
         nextFaders[i] = constrain(selected[i], 0, 1);
@@ -661,6 +660,46 @@ function connectWebSocket() {
     }
 }
 
+function applyNavigationCursor(nav, authoritativeTrajectory = false) {
+    const nextIndex = Number(nav.index);
+    currentIndex = Number.isFinite(nextIndex) ? nextIndex : 0;
+    const nextFileId = Number(nav.file_id);
+    currentFileId = Number.isFinite(nextFileId) ? nextFileId : 0;
+
+    const clampedIdx = constrain(
+        Math.round(currentIndex),
+        0,
+        Math.max(manualCorpusPoints3D.length - 1, 0)
+    );
+    if (Array.isArray(nav.position_3d) && nav.position_3d.length === 3) {
+        manualPosition3D = nav.position_3d.slice(0, 3);
+    } else if (manualCorpusPoints3D.length > 0) {
+        manualPosition3D = manualCorpusPoints3D[clampedIdx];
+    }
+
+    if (authoritativeTrajectory) {
+        const trajectory = Array.isArray(nav.trajectory_3d) ? nav.trajectory_3d : [];
+        manualTrajectory3D = trajectory
+            .filter(pt => Array.isArray(pt) && pt.length >= 3)
+            .map(pt => pt.slice(0, 3));
+    } else if (Array.isArray(nav.trajectory_3d) && nav.trajectory_3d.length > 0) {
+        manualTrajectory3D = nav.trajectory_3d
+            .filter(pt => Array.isArray(pt) && pt.length >= 3)
+            .map(pt => pt.slice(0, 3));
+    } else if (manualPosition3D) {
+        const last = manualTrajectory3D[manualTrajectory3D.length - 1];
+        const cursorChanged = !last || last.some(
+            (value, axis) => value !== manualPosition3D[axis]
+        );
+        if (cursorChanged) {
+            manualTrajectory3D.push(manualPosition3D.slice(0, 3));
+            if (manualTrajectory3D.length > trailLength) {
+                manualTrajectory3D = manualTrajectory3D.slice(-trailLength);
+            }
+        }
+    }
+}
+
 function handleMessage(data) {
     // Route pipeline messages to pipeline.js handler
     if (data.type && data.type.startsWith('pipeline_')) {
@@ -693,6 +732,7 @@ function handleMessage(data) {
         const nav = data.navigation || {};
         const transport = data.transport || {};
         const manual = data.manual || {};
+        const hasAudioRenderCursor = nav.clock === 'audio_render';
 
         if (typeof nav.mode === 'string') {
             selectedNavigationMode = nav.mode;
@@ -707,22 +747,32 @@ function handleMessage(data) {
             manualNearestIndex = manual.nearest_index || 0;
             manualNearestDistance = manual.distance || 0;
             manualControlDim = Number(manual.control_dim || 4);
-            const clampedIdx = constrain(
-                manualNearestIndex,
-                0,
-                Math.max(manualCorpusPoints3D.length - 1, 0)
-            );
-            currentIndex = clampedIdx;
-            if (manualCorpusPoints3D.length > 0) {
-                manualPosition3D = manualCorpusPoints3D[clampedIdx];
-            }
-            if (Array.isArray(manual.position_3d) && manual.position_3d.length === 3) {
-                manualPosition3D = manual.position_3d.slice(0, 3);
-            }
-            currentFileId = manual.current_file_id || manualCorpusFileIds[clampedIdx] || 0;
-            manualTrajectory3D.push(manualPosition3D);
-            if (manualTrajectory3D.length > trailLength) {
-                manualTrajectory3D = manualTrajectory3D.slice(-trailLength);
+            if (hasAudioRenderCursor) {
+                applyNavigationCursor(nav, true);
+            } else {
+                const clampedIdx = constrain(
+                    manualNearestIndex,
+                    0,
+                    Math.max(manualCorpusPoints3D.length - 1, 0)
+                );
+                currentIndex = clampedIdx;
+                if (manualCorpusPoints3D.length > 0) {
+                    manualPosition3D = manualCorpusPoints3D[clampedIdx];
+                }
+                if (Array.isArray(manual.position_3d) && manual.position_3d.length === 3) {
+                    manualPosition3D = manual.position_3d.slice(0, 3);
+                }
+                currentFileId = manual.current_file_id ?? manualCorpusFileIds[clampedIdx] ?? 0;
+                const last = manualTrajectory3D[manualTrajectory3D.length - 1];
+                const cursorChanged = !last || last.some(
+                    (value, axis) => value !== manualPosition3D[axis]
+                );
+                if (cursorChanged) {
+                    manualTrajectory3D.push(manualPosition3D.slice(0, 3));
+                    if (manualTrajectory3D.length > trailLength) {
+                        manualTrajectory3D = manualTrajectory3D.slice(-trailLength);
+                    }
+                }
             }
             if (Array.isArray(manual.faders) && manual.faders.length === manualControlDim) {
                 manualFaders = manual.faders.slice(0, manualControlDim);
@@ -779,28 +829,7 @@ function handleMessage(data) {
                 }
             }
         } else {
-            currentIndex = nav.index || 0;
-            currentFileId = nav.file_id || 0;
-            const clampedIdx = constrain(
-                currentIndex,
-                0,
-                Math.max(manualCorpusPoints3D.length - 1, 0)
-            );
-            if (Array.isArray(nav.position_3d) && nav.position_3d.length === 3) {
-                manualPosition3D = nav.position_3d.slice(0, 3);
-            } else if (manualCorpusPoints3D.length > 0) {
-                manualPosition3D = manualCorpusPoints3D[clampedIdx];
-            }
-            if (Array.isArray(nav.trajectory_3d) && nav.trajectory_3d.length > 0) {
-                manualTrajectory3D = nav.trajectory_3d
-                    .filter(pt => Array.isArray(pt) && pt.length >= 3)
-                    .map(pt => pt.slice(0, 3));
-            } else if (manualPosition3D) {
-                manualTrajectory3D.push(manualPosition3D);
-                if (manualTrajectory3D.length > trailLength) {
-                    manualTrajectory3D = manualTrajectory3D.slice(-trailLength);
-                }
-            }
+            applyNavigationCursor(nav, hasAudioRenderCursor);
         }
 
         updateInfoDisplay(data);
@@ -850,17 +879,23 @@ function updateConnectionStatus(connected) {
 }
 
 function updateInfoDisplay(data) {
+    const nav = data.navigation || {};
     if (selectedNavigationMode === 'manual') {
-        document.getElementById('info-index').textContent = manualNearestIndex || 0;
+        const audibleIndex = nav.clock === 'audio_render'
+            ? nav.index
+            : manualNearestIndex;
+        const audibleFileId = nav.clock === 'audio_render'
+            ? nav.file_id
+            : currentFileId;
+        document.getElementById('info-index').textContent = audibleIndex ?? 0;
         document.getElementById('info-velocity').textContent = Number(manualNearestDistance || 0).toFixed(2);
-        document.getElementById('info-file').textContent = currentFileId || 0;
+        document.getElementById('info-file').textContent = audibleFileId ?? 0;
         return;
     }
 
-    const nav = data.navigation || {};
-    document.getElementById('info-index').textContent = nav.index || 0;
+    document.getElementById('info-index').textContent = nav.index ?? 0;
     document.getElementById('info-velocity').textContent = (nav.velocity || 0).toFixed(2);
-    document.getElementById('info-file').textContent = nav.file_id || 0;
+    document.getElementById('info-file').textContent = nav.file_id ?? 0;
 }
 
 function updateDecoderRuntimeDisplay(decoder) {
