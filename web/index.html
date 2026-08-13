@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stable Audio Wanderer - Visualization</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="vendor/p5/p5.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -43,8 +43,24 @@
         h1 {
             font-size: 18px;
             font-weight: 600;
-            margin-bottom: 20px;
+            margin-bottom: 6px;
             color: #fff;
+        }
+
+        .model-attribution {
+            color: #9ca3af;
+            font-size: 10px;
+            line-height: 1.45;
+            margin-bottom: 20px;
+        }
+
+        .model-attribution strong {
+            color: #ff8d4a;
+            font-weight: 600;
+        }
+
+        .model-attribution a {
+            color: #9ec9ff;
         }
         
         h2 {
@@ -528,6 +544,12 @@
         <div id="canvas-container"></div>
         <div id="controls">
             <h1>Stable Audio Wanderer</h1>
+            <p class="model-attribution">
+                <strong>Powered by Stability AI.</strong>
+                SAME-S decoder ·
+                <a href="https://huggingface.co/stabilityai/SAME-S" target="_blank" rel="noreferrer">model</a> ·
+                <a href="https://github.com/LFO-lab/Stable-Audio-Wanderer/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noreferrer">licenses</a>
+            </p>
 
             <!-- Pipeline Phase Bar -->
             <div id="pipeline-phase-bar" class="phase-bar">

@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -341,6 +342,46 @@ def export_stable_audio_open_decoder_onnx(
     }
 
 
+def _load_pinned_same_s_autoencoder(source_revision: str):
+    """Load only the explicitly identified SAME-S checkpoint revision."""
+
+    source_revision = str(source_revision).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+        raise ValueError("SAME-S source_revision must be a full 40-character Git commit SHA")
+
+    try:
+        from huggingface_hub import hf_hub_download
+        from stable_audio_3.loading_utils import load_autoencoder
+    except Exception as exc:  # pragma: no cover - dependency error path
+        raise RuntimeError(
+            "Pinned SAME-S export requires huggingface_hub and stable_audio_3"
+        ) from exc
+
+    pinned_files = {
+        filename: Path(
+            hf_hub_download(
+                repo_id="stabilityai/SAME-S",
+                filename=filename,
+                revision=source_revision,
+            )
+        )
+        for filename in ("model_config.json", "model.safetensors")
+    }
+    for filename, path in pinned_files.items():
+        if not path.is_file():
+            raise RuntimeError(f"Pinned SAME-S {filename} is missing: {path}")
+        if source_revision not in path.parts:
+            raise RuntimeError(
+                f"Pinned SAME-S {filename} did not resolve through revision {source_revision}"
+            )
+    autoencoder = load_autoencoder(
+        pinned_files["model_config.json"],
+        pinned_files["model.safetensors"],
+        device="cpu",
+    )
+    return autoencoder.eval().requires_grad_(False)
+
+
 def export_same_s_decoder_onnx(
     *,
     models_dir: Path,
@@ -349,12 +390,21 @@ def export_same_s_decoder_onnx(
     samples_per_latent: int,
     repo_or_path: str,
     opset: int,
+    source_revision: str,
 ) -> Dict[str, Any]:
+    if repo_or_path != SAME_S_REPO:
+        raise ValueError(
+            "Pinned SAME-S export requires stable-audio-3's registered model name "
+            f"{SAME_S_REPO!r}; alternate repositories and local paths are not accepted"
+        )
+    source_revision = str(source_revision).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+        raise ValueError("SAME-S source_revision must be a full 40-character Git commit SHA")
+
     try:
         import onnx
         import onnxruntime as ort
         import torch
-        from stable_audio_3 import AutoencoderModel
     except Exception as exc:  # pragma: no cover - dependency error path
         raise RuntimeError(
             "SAME-S decoder ONNX export requires torch, stable_audio_3, onnx, "
@@ -362,9 +412,9 @@ def export_same_s_decoder_onnx(
         ) from exc
 
     class DecoderWrapper(torch.nn.Module):
-        def __init__(self, model):
+        def __init__(self, autoencoder):
             super().__init__()
-            self.autoencoder = model.autoencoder
+            self.autoencoder = autoencoder
 
         def forward(self, latents):  # noqa: ANN001 - torch export signature
             return self.autoencoder.decode_audio(latents, chunked=False)
@@ -372,8 +422,8 @@ def export_same_s_decoder_onnx(
     decoder_dir = models_dir / "decoder"
     decoder_dir.mkdir(parents=True, exist_ok=True)
 
-    model = AutoencoderModel.from_pretrained(repo_or_path, device="cpu")
-    wrapper = DecoderWrapper(model).eval()
+    autoencoder = _load_pinned_same_s_autoencoder(source_revision)
+    wrapper = DecoderWrapper(autoencoder).eval()
     validated_windows = tuple(sorted(int(window) for window in latent_samples.keys()))
 
     if not validated_windows:
@@ -397,6 +447,8 @@ def export_same_s_decoder_onnx(
         "backend": "onnxruntime",
         "provider": "CPUExecutionProvider",
         "repo_or_path": repo_or_path,
+        "source_model": "stabilityai/SAME-S",
+        "source_revision": source_revision,
         "opset": opset,
         "dynamic_latent_window": True,
         "validated_latent_windows": list(validated_windows),
@@ -672,6 +724,7 @@ def export_bundle(
     export_decoder_onnx: bool,
     decoder_windows: Sequence[int],
     decoder_repo: Optional[str],
+    decoder_revision: Optional[str],
     decoder_opset: int,
 ) -> Path:
     corpus_npz = _resolve_corpus_npz(corpus_arg)
@@ -720,6 +773,11 @@ def export_bundle(
                     opset=decoder_opset,
                 )
             elif vae_id == "same_s":
+                if decoder_revision is None:
+                    raise RuntimeError(
+                        "SAME-S decoder export requires --decoder-revision with a full "
+                        "Hugging Face commit SHA"
+                    )
                 decoder_manifest = export_same_s_decoder_onnx(
                     models_dir=models_dir,
                     reports_dir=reports_dir,
@@ -727,6 +785,7 @@ def export_bundle(
                     samples_per_latent=samples_per_latent,
                     repo_or_path=decoder_repo or SAME_S_REPO,
                     opset=decoder_opset,
+                    source_revision=decoder_revision,
                 )
             else:
                 raise RuntimeError(
@@ -801,6 +860,14 @@ def parse_args() -> argparse.Namespace:
         help="Export decoder ONNX model(s) and CPU parity report for supported VAEs.",
     )
     parser.add_argument(
+        "--decoder-revision",
+        default=None,
+        help=(
+            "Full Hugging Face Git revision for SAME-S decoder export. Required "
+            "when the corpus vae_id is same_s."
+        ),
+    )
+    parser.add_argument(
         "--decoder-windows",
         default=",".join(str(w) for w in DEFAULT_DECODER_WINDOWS),
         help="Comma-separated latent window sizes for decoder ONNX export.",
@@ -829,6 +896,7 @@ def main() -> int:
         export_decoder_onnx=args.export_decoder_onnx,
         decoder_windows=_parse_decoder_windows(args.decoder_windows),
         decoder_repo=args.decoder_repo,
+        decoder_revision=args.decoder_revision,
         decoder_opset=args.decoder_opset,
     )
     print(f"Exported {bundle}")

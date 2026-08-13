@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 
@@ -19,9 +21,30 @@ except ModuleNotFoundError:  # Direct execution puts bin/ on sys.path.
 
 WINDOWS = (2, 4, 8, 16, 32)
 SAMPLES_PER_LATENT = 4096
+SOURCE_MODEL = "stabilityai/SAME-S"
+SOURCE_URL = "https://huggingface.co/stabilityai/SAME-S"
+SOURCE_LICENSE = "Stability AI Community License"
+CONVERSION_DESCRIPTION = (
+    "Exported the SAME-S decoder to a dynamic-time ONNX graph; packaged the "
+    "decoder separately with WÆnderer metadata and Torch/ONNX parity evidence."
+)
 
 
-def export_web_decoder(output_dir: Path, repo_or_path: str = "same-s", opset: int = 20):
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def export_web_decoder(
+    output_dir: Path,
+    repo_or_path: str = "same-s",
+    opset: int = 20,
+    *,
+    source_revision: str,
+):
     """Export, parity-check, and stage the dynamic Web decoder resource."""
 
     if repo_or_path != "same-s":
@@ -30,6 +53,9 @@ def export_web_decoder(output_dir: Path, repo_or_path: str = "same-s", opset: in
             "name 'same-s'. Run without --model, or pass --model same-s; filesystem "
             "paths such as '/path/to/same-s' are not accepted by this loader."
         )
+    source_revision = source_revision.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+        raise ValueError("source_revision must be a full 40-character Git commit SHA")
     output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0x5A17)
@@ -48,6 +74,7 @@ def export_web_decoder(output_dir: Path, repo_or_path: str = "same-s", opset: in
             samples_per_latent=SAMPLES_PER_LATENT,
             repo_or_path=repo_or_path,
             opset=opset,
+            source_revision=source_revision,
         )
         model_name = "same_s_decoder_dynamic.onnx"
         shutil.copy2(temp / "models" / "decoder" / model_name, output_dir / model_name)
@@ -62,6 +89,12 @@ def export_web_decoder(output_dir: Path, repo_or_path: str = "same-s", opset: in
         "provider": "CPUExecutionProvider",
         "vae_id": "same_s",
         "model": model_name,
+        "model_sha256": _sha256(output_dir / model_name),
+        "source_model": SOURCE_MODEL,
+        "source_url": SOURCE_URL,
+        "source_revision": source_revision,
+        "source_license": SOURCE_LICENSE,
+        "conversion_description": CONVERSION_DESCRIPTION,
         "input_name": decoder["input_name"],
         "output_name": decoder["output_name"],
         "sample_rate": 44100,
@@ -92,8 +125,18 @@ def main() -> None:
         help="stable-audio-3 registered model name (must be 'same-s').",
     )
     parser.add_argument("--opset", type=int, default=20)
+    parser.add_argument(
+        "--source-revision",
+        required=True,
+        help="Full Hugging Face Git revision of stabilityai/SAME-S used for export.",
+    )
     args = parser.parse_args()
-    metadata = export_web_decoder(Path(args.output_dir), args.repo_or_path, args.opset)
+    metadata = export_web_decoder(
+        Path(args.output_dir),
+        args.repo_or_path,
+        args.opset,
+        source_revision=args.source_revision,
+    )
     print(
         f"Exported {metadata['model']} with windows "
         f"{metadata['supported_windows']} to {Path(args.output_dir).resolve()}"

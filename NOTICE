@@ -1,0 +1,22 @@
+WÆnderer
+
+Copyright 2025-2026 WÆnderer contributors.
+
+Except where otherwise noted, WÆnderer's original source code and
+documentation are licensed under the Apache License, Version 2.0.
+
+The optional release package contains a decoder derived from the SAME-S model.
+That decoder is not licensed under Apache-2.0.
+
+This Stability AI Model is licensed under the Stability AI Community License,
+Copyright © Stability AI Ltd. All Rights Reserved.
+
+Powered by Stability AI.
+
+WÆnderer changes the Stability AI Materials by exporting the SAME-S decoder to
+ONNX, packaging the decoder component separately from the upstream checkpoint,
+and adding application-specific metadata and runtime validation. The exact
+source revision and exported model digest are recorded in decoder.json.
+
+Gemma is provided under and subject to the Gemma Terms of Use found at
+ai.google.dev/gemma/terms.

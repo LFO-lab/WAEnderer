@@ -1,3 +1,6 @@
+# Compatibility requirements file. pyproject.toml is the authoritative package
+# metadata; uv.lock pins the reproducible resolver result used for releases.
+
 # Core audio model (offline encoding only)
 torch>=2.3
 torchaudio>=2.3

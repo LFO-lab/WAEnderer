@@ -1,28 +1,30 @@
+import importlib.util
 import os
 from pathlib import Path
 
-from setuptools import setup, find_packages
+from setuptools import setup
 from setuptools.command.build_py import build_py
+
+
+_COMPLIANCE_PATH = Path(__file__).parent / "stable_audio_wanderer" / "release_compliance.py"
+_COMPLIANCE_SPEC = importlib.util.spec_from_file_location(
+    "_saw_release_compliance", _COMPLIANCE_PATH
+)
+if _COMPLIANCE_SPEC is None or _COMPLIANCE_SPEC.loader is None:
+    raise RuntimeError(f"Could not load release compliance module: {_COMPLIANCE_PATH}")
+_COMPLIANCE_MODULE = importlib.util.module_from_spec(_COMPLIANCE_SPEC)
+_COMPLIANCE_SPEC.loader.exec_module(_COMPLIANCE_MODULE)
+validate_model_release = _COMPLIANCE_MODULE.validate_model_release
 
 
 class ReleaseBuildPy(build_py):
     """Require the untracked Web decoder when producing a release artifact."""
 
     def run(self):
-        resource_dir = Path(__file__).parent / "stable_audio_wanderer" / "resources" / "same_s"
-        required = ("same_s_decoder_dynamic.onnx", "decoder.json", "decoder_parity.json")
-        missing = [name for name in required if not (resource_dir / name).is_file()]
-        if os.environ.get("SAW_RELEASE_BUILD") == "1" and missing:
-            raise RuntimeError(
-                "Release build is missing SAME-S decoder resources: " + ", ".join(missing)
-            )
+        if os.environ.get("SAW_RELEASE_BUILD") == "1":
+            validate_model_release(Path(__file__).parent)
         super().run()
 
 setup(
-    name="stable_audio_wanderer",
-    version="0.1.0",
-    packages=find_packages(),
-    package_data={"stable_audio_wanderer.resources.same_s": ["*.onnx", "*.json", "README.md"]},
     cmdclass={"build_py": ReleaseBuildPy},
-    install_requires=[],
 )

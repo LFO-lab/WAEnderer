@@ -1,0 +1,87 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from stable_audio_wanderer.release_compliance import (
+    check_dependency_license_report,
+    check_public_tree,
+    validate_model_release,
+)
+
+
+PROJECT_ROOT = Path(__file__).parent
+
+
+def test_public_tree_has_required_license_evidence():
+    assert check_public_tree(PROJECT_ROOT) == []
+
+
+def test_model_release_validates_provenance_and_digest(tmp_path):
+    resource = tmp_path / "stable_audio_wanderer" / "resources" / "same_s"
+    resource.mkdir(parents=True)
+    model = resource / "same_s_decoder_dynamic.onnx"
+    model.write_bytes(b"model")
+    (resource / "decoder_parity.json").write_text("{}\n", encoding="utf-8")
+    (resource / "MODEL_NOTICE.md").write_text(
+        "This Stability AI Model is licensed under the Stability AI Community License\n"
+        "Powered by Stability AI\n"
+        "not licensed under the\nApache License 2.0\n",
+        encoding="utf-8",
+    )
+    (resource / "UPSTREAM_NOTICE.txt").write_text("upstream\n", encoding="utf-8")
+
+    for relative in (
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md",
+        "licenses/STABILITY_AI_COMMUNITY_LICENSE.md",
+        "licenses/GEMMA_TERMS_OF_USE.md",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("license\n", encoding="utf-8")
+
+    digest = hashlib.sha256(model.read_bytes()).hexdigest()
+    metadata = {
+        "source_model": "stabilityai/SAME-S",
+        "source_url": "https://huggingface.co/stabilityai/SAME-S",
+        "source_revision": "a" * 40,
+        "source_license": "Stability AI Community License",
+        "conversion_description": "Exported decoder to ONNX.",
+        "model_sha256": digest,
+    }
+    metadata_path = resource / "decoder.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    validate_model_release(tmp_path)
+
+    metadata["model_sha256"] = "0" * 64
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="model_sha256"):
+        validate_model_release(tmp_path)
+
+
+def test_dependency_license_policy_flags_unknown_and_strong_copyleft(tmp_path):
+    report = {
+        "packages": [
+            {"name": "permissive", "version": "1", "license": "MIT"},
+            {"name": "mystery", "version": "2", "license": "NOASSERTION"},
+            {"name": "server", "version": "3", "license": "AGPL-3.0-only"},
+            {"name": "weak", "version": "4", "license": "LGPL-2.1-or-later"},
+            {
+                "name": "runtime-exception",
+                "version": "5",
+                "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+            },
+        ]
+    }
+    path = tmp_path / "licenses.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    issues = check_dependency_license_report(path)
+    assert any("mystery==2" in issue for issue in issues)
+    assert any("server==3" in issue for issue in issues)
+    assert not any("weak==4" in issue for issue in issues)
+    assert not any("runtime-exception==5" in issue for issue in issues)

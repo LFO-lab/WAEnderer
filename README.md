@@ -16,10 +16,18 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 
 ## Installation
 
-Requires Python 3.9+.
+Requires Python 3.11+. The packaged Web decoder requires ONNX Runtime 1.26 or
+newer, whose supported Python range sets this project minimum.
 
 ```bash
 pip install -r requirements.txt
+```
+
+For a reproducible development environment, install from the project metadata
+and committed lockfile instead:
+
+```bash
+uv sync --all-extras
 ```
 
 ### Dependencies
@@ -30,6 +38,7 @@ pip install -r requirements.txt
 | Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
 | Runtime | `sounddevice`, `python-osc`, `websockets`, `onnxruntime` |
 | VAE (Stable Audio Open) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
+| ONNX export extra | `onnx`, `onnxscript` |
 
 ### Using Other VAEs
 
@@ -48,6 +57,11 @@ The pipeline supports pluggable VAE backends. The default is [Stable Audio Open]
    ```bash
    pip install descript-audio-codec
    ```
+
+   Install EAR VAE in a dedicated environment. Its current audio-tools chain
+   requires `protobuf<3.20`, while the ONNX export toolchain requires a modern
+   protobuf release, so it is intentionally not exposed as a co-installable
+   project extra.
 
 3. **Select in the GUI**: Choose "EAR VAE (48k)" or "EAR VAE (44.1k)" from the VAE dropdown in the Preprocess panel, then provide the path to the `.pyt` weight file (e.g. `/path/to/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt`).
 
@@ -250,7 +264,8 @@ choices remain available for non-realtime experiments.
 Prepare the untracked release resource once from local SAME-S weights:
 
 ```bash
-uv run python bin/export_web_decoder.py
+uv run python bin/export_web_decoder.py \
+  --source-revision fbeb3dcf53a326e5682f38e22e7f740202d44232
 SAW_RELEASE_BUILD=1 uv run python setup.py build_py
 ```
 
@@ -259,6 +274,12 @@ The exporter passes the registered model name `same-s` to `stable-audio-3`
 T2/T4/T8/T16/T32 against Torch, then writes the dynamic
 model, lightweight metadata, and parity report into the package resource
 directory. Release builds fail when any of these inputs is absent.
+The exporter downloads both SAME-S files from that exact revision and refuses
+an unpinned or cache-substituted checkpoint. The revision is written to
+`decoder.json` together with the exported ONNX SHA-256, upstream model URL,
+license, and conversion description.
+When updating SAME-S, verify the new Hugging Face commit and pass that full
+revision explicitly rather than using a branch name.
 
 Start the unified server offline with:
 
@@ -529,15 +550,46 @@ stable-audio-wanderer/
 │       └── ws_server.py       # WebSocket server
 ├── web/
 │   ├── index.html         # Visualization UI
-│   └── sketch.js          # p5.js rendering
+│   ├── sketch.js          # p5.js rendering
+│   └── vendor/p5/         # Unmodified p5.js 1.9.0 + LGPL license
 ├── docs/                   # Technical documentation
+├── licenses/               # Model and third-party license texts
+├── LICENSE                 # Apache-2.0 for original project code
+├── NOTICE                  # Model attribution and modification notice
+├── THIRD_PARTY_NOTICES.md  # Dependency and redistribution inventory
 ├── requirements.txt
-└── setup.py
+├── pyproject.toml
+└── setup.py                # Release-build compliance hook
 ```
+
+## License
+
+Except where otherwise noted, WÆnderer's original source code and documentation
+are licensed under the [Apache License 2.0](LICENSE).
+
+Model weights and derived model artifacts are not covered by that license.
+SAME-S, Stable Audio Open weights, and WÆnderer's derived SAME-S ONNX decoder
+are governed by the [Stability AI Community License](licenses/STABILITY_AI_COMMUNITY_LICENSE.md).
+The SAME-S upstream notice set also includes the
+[Gemma Terms of Use](licenses/GEMMA_TERMS_OF_USE.md). A model-bearing release
+must include those terms, [`NOTICE`](NOTICE), and the model-specific notice next
+to the decoder resource.
+
+**Powered by Stability AI.**
+
+See [Third-party notices](THIRD_PARTY_NOTICES.md) for dependency obligations and
+[`docs/media/RIGHTS.md`](docs/media/RIGHTS.md) for the separate clearance status
+of public demo recordings, video, images, and source audio. The ignored JUCE
+application is outside this repository's Apache-2.0 grant and requires a
+separate JUCE licensing decision before distribution.
+
+Maintainers should complete the [public release checklist](RELEASE_CHECKLIST.md)
+for every source or conference build.
 
 ## Acknowledgments
 
 - [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) VAE by Stability AI
+- [SAME-S](https://huggingface.co/stabilityai/SAME-S) by Stability AI
 - [EAR VAE](https://huggingface.co/earlab/EAR_VAE) by earlab
 - [FAISS](https://github.com/facebookresearch/faiss) for fast nearest neighbor search
 - [p5.js](https://p5js.org/) for web visualization

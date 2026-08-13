@@ -3,11 +3,150 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Stable Audio Wanderer</title>
+    <meta name="description" content="WÆnderer is a Python tool for exploring personal collections of sounds in real time.">
+    <meta name="theme-color" content="#0a0a0f">
+    <title>WÆnderer: Projecting and Navigating Personal Sound Corpora in Pre-Trained Audio Models</title>
     <link rel="stylesheet" href="assets/css/site.css">
   </head>
   <body>
-    <main id="app"></main>
-    <script src="assets/js/site.js"></script>
+    <header class="site-header">
+      <a class="wordmark" href="#top" aria-label="WÆnderer, back to top">W<span>Æ</span>nderer</a>
+      <nav aria-label="Primary navigation">
+        <a href="#overview">Overview</a>
+        <a href="#films">Video</a>
+        <a href="#sounds">Audio</a>
+        <a href="#credits">Credits</a>
+        <a href="https://github.com/LFO-lab/Stable-Audio-Wanderer">Repository ↗</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" id="overview" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">
+            <span class="title-name">WÆnderer</span>
+            <span class="title-subtitle">Projecting and Navigating Personal Sound Corpora in Pre-Trained Audio Models</span>
+          </h1>
+          <p class="lede">
+            WÆnderer is a Python tool for exploring personal collections of sounds
+            in real time. It maps a sound collection into a navigable space, allowing
+            musicians to move through, combine, and reorganize their own material
+            using a pre-trained audio model.
+          </p>
+        </div>
+
+        <div class="orbit" aria-hidden="true">
+          <div class="orbit-ring orbit-ring--outer"></div>
+          <div class="orbit-ring orbit-ring--inner"></div>
+          <div class="orbit-core"></div>
+          <div class="orbit-point orbit-point--one"></div>
+          <div class="orbit-point orbit-point--two"></div>
+          <p>abstract<br>timbre space</p>
+        </div>
+
+        <p class="hero-note">Personal sound corpus<br>Descriptor space<br>Latent reconstruction</p>
+      </section>
+
+      <section class="section films" id="films" aria-labelledby="films-title">
+        <div class="section-heading">
+          <p class="section-number">01</p>
+          <div>
+            <p class="eyebrow">System documentation</p>
+            <h2 id="films-title">Video demonstrations</h2>
+          </div>
+          <p class="section-intro">Demonstrations of corpus preparation, navigation modes, and real-time interaction will be added here.</p>
+        </div>
+
+        <div class="film-grid">
+          <article class="film-card film-card--feature">
+            <div class="media-placeholder" role="img" aria-label="Placeholder for the main WÆnderer demo film">
+              <span class="play-mark" aria-hidden="true">▶</span>
+              <p>Video / 01</p>
+            </div>
+            <div class="media-meta">
+              <h3>System overview</h3>
+              <p>Demonstration · Forthcoming</p>
+            </div>
+          </article>
+
+          <article class="film-card">
+            <div class="media-placeholder media-placeholder--secondary" role="img" aria-label="Placeholder for a WÆnderer performance film">
+              <span class="play-mark" aria-hidden="true">▶</span>
+              <p>Video / 02</p>
+            </div>
+            <div class="media-meta">
+              <h3>Navigation modes</h3>
+              <p>Demonstration · Forthcoming</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section sounds" id="sounds" aria-labelledby="sounds-title">
+        <div class="section-heading">
+          <p class="section-number">02</p>
+          <div>
+            <p class="eyebrow">Listening examples</p>
+            <h2 id="sounds-title">Audio examples</h2>
+          </div>
+          <p class="section-intro">Examples produced with different personal corpora and modes of navigation will be documented here.</p>
+        </div>
+
+        <ol class="track-list">
+          <li class="track">
+            <button class="track-button" type="button" aria-label="Manual navigation audio example, forthcoming" disabled>
+              <span class="track-play" aria-hidden="true">▶</span>
+              <span class="track-info"><strong>Manual navigation</strong><small>Example 01 · Forthcoming</small></span>
+              <span class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="track-time">—:—</span>
+            </button>
+          </li>
+          <li class="track">
+            <button class="track-button" type="button" aria-label="Exploration mode audio example, forthcoming" disabled>
+              <span class="track-play" aria-hidden="true">▶</span>
+              <span class="track-info"><strong>Exploration mode</strong><small>Example 02 · Forthcoming</small></span>
+              <span class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="track-time">—:—</span>
+            </button>
+          </li>
+          <li class="track">
+            <button class="track-button" type="button" aria-label="Reorganized morphologies audio example, forthcoming" disabled>
+              <span class="track-play" aria-hidden="true">▶</span>
+              <span class="track-info"><strong>Reorganized morphologies</strong><small>Example 03 · Forthcoming</small></span>
+              <span class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="track-time">—:—</span>
+            </button>
+          </li>
+        </ol>
+      </section>
+
+      <section class="section credits" id="credits" aria-labelledby="credits-title">
+        <div class="section-heading">
+          <p class="section-number">03</p>
+          <div>
+            <p class="eyebrow">Licensing and provenance</p>
+            <h2 id="credits-title">Credits</h2>
+          </div>
+          <p class="section-intro"><strong>Powered by Stability AI.</strong> WÆnderer uses SAME-S and Stable Audio Open model materials under the Stability AI Community License.</p>
+        </div>
+        <div class="credits-grid">
+          <p>
+            <a href="https://huggingface.co/stabilityai/SAME-S">SAME-S model ↗</a><br>
+            <a href="https://stability.ai/license">Stability AI license ↗</a><br>
+            <a href="https://github.com/LFO-lab/Stable-Audio-Wanderer/blob/main/LICENSE">WÆnderer Apache-2.0 license ↗</a>
+          </p>
+          <p>
+            <a href="https://github.com/LFO-lab/Stable-Audio-Wanderer/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md ↗</a><br>
+            Demo recordings and films are published only after the rights ledger records the necessary creator, performer, recording, and source-audio permissions.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>WÆnderer</p>
+      <p><strong>Powered by Stability AI.</strong><br>A research-creation project on corpus-based interaction with pre-trained audio models.</p>
+      <a href="#top">Back to top ↑</a>
+    </footer>
   </body>
 </html>
