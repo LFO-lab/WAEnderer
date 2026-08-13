@@ -266,6 +266,7 @@ h2 {
 .credits-grid p { margin: 0; }
 .credits-grid a { color: var(--violet); }
 .credits-grid a:hover { color: var(--acid); }
+.credits-grid .acknowledgement { grid-column: 1 / -1; max-width: 760px; }
 
 footer {
   align-items: end;
