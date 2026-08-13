@@ -47,8 +47,8 @@ dev = ["build>=1.2", "pytest>=8"]
 release = ["build>=1.2", "cyclonedx-bom", "pip-licenses"]
 
 [project.urls]
-Homepage = "https://lfo-lab.github.io/Stable-Audio-Wanderer/"
-Repository = "https://github.com/LFO-lab/Stable-Audio-Wanderer"
+Homepage = "https://lfo-lab.github.io/WAEnderer/"
+Repository = "https://github.com/LFO-lab/WAEnderer"
 
 [tool.setuptools.packages.find]
 include = ["stable_audio_wanderer*"]
