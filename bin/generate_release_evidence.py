@@ -12,6 +12,7 @@ import platform
 import re
 import sys
 import tomllib
+from typing import Any
 from urllib.parse import quote
 import uuid
 
@@ -42,7 +43,36 @@ def _locked_names(lock_file: Path | None) -> set[str] | None:
     return {_normalized_name(str(package["name"])) for package in lock.get("package", [])}
 
 
-def _packages(lock_file: Path | None = None) -> list[dict[str, str]]:
+def _license_overrides(path: Path | None) -> dict[str, dict[str, str]]:
+    if path is None or not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    overrides: dict[str, dict[str, str]] = {}
+    for item in payload.get("overrides", []):
+        name = _normalized_name(str(item["name"]))
+        version = str(item["version"])
+        key = f"{name}=={version}"
+        overrides[key] = {
+            "license": str(item["license"]),
+            "license_evidence": str(item["evidence_url"]),
+            "license_note": str(item["reason"]),
+        }
+    return overrides
+
+
+def _apply_license_overrides(
+    packages: dict[str, dict[str, str]], overrides: dict[str, dict[str, str]]
+) -> None:
+    for key, package in packages.items():
+        override = overrides.get(f"{key}=={package['version']}")
+        if package["license"] == "NOASSERTION" and override is not None:
+            package.update(override)
+
+
+def _packages(
+    lock_file: Path | None = None,
+    overrides_file: Path | None = Path("licenses/dependency-license-overrides.json"),
+) -> list[dict[str, str]]:
     locked = _locked_names(lock_file)
     packages: dict[str, dict[str, str]] = {}
     search_paths = list(sys.path)
@@ -64,25 +94,34 @@ def _packages(lock_file: Path | None = None) -> list[dict[str, str]]:
             and candidate["license"] != "NOASSERTION"
         ):
             packages[key] = candidate
+
+    _apply_license_overrides(packages, _license_overrides(overrides_file))
     return [packages[key] for key in sorted(packages)]
 
 
-def generate(output_dir: Path, lock_file: Path | None = Path("uv.lock")) -> tuple[Path, Path]:
+def generate(
+    output_dir: Path,
+    lock_file: Path | None = Path("uv.lock"),
+    overrides_file: Path | None = Path("licenses/dependency-license-overrides.json"),
+) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    packages = _packages(lock_file)
+    packages = _packages(lock_file, overrides_file)
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    components = []
+    components: list[dict[str, Any]] = []
     for package in packages:
         name = package["name"]
         version = package["version"]
+        license_entry = {"name": package["license"]}
+        if package.get("license_evidence"):
+            license_entry["url"] = package["license_evidence"]
         components.append(
             {
                 "type": "library",
                 "name": name,
                 "version": version,
                 "purl": f"pkg:pypi/{quote(name.lower())}@{quote(version)}",
-                "licenses": [{"license": {"name": package["license"]}}],
+                "licenses": [{"license": license_entry}],
             }
         )
 
@@ -137,8 +176,14 @@ def main() -> None:
         default=Path("uv.lock"),
         help="Restrict evidence to distributions present in this lockfile.",
     )
+    parser.add_argument(
+        "--license-overrides",
+        type=Path,
+        default=Path("licenses/dependency-license-overrides.json"),
+        help="Reviewed exact-version evidence for packages with incomplete metadata.",
+    )
     args = parser.parse_args()
-    sbom, licenses = generate(args.output_dir, args.lock_file)
+    sbom, licenses = generate(args.output_dir, args.lock_file, args.license_overrides)
     print(f"Wrote {sbom}")
     print(f"Wrote {licenses}")
 

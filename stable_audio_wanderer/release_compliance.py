@@ -33,6 +33,7 @@ REQUIRED_PUBLIC_FILES = (
     "NOTICE",
     "RELEASE_CHECKLIST.md",
     "THIRD_PARTY_NOTICES.md",
+    "licenses/dependency-license-overrides.json",
     "licenses/README.md",
     "stable_audio_wanderer/resources/same_s/MODEL_NOTICE.md",
     "docs/media/RIGHTS.md",

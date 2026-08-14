@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "overrides": [
+    {
+      "name": "cuda-toolkit",
+      "version": "13.0.3.0",
+      "license": "NVIDIA Software License Agreement and CUDA Supplement",
+      "evidence_url": "https://docs.nvidia.com/cuda/eula/index.html",
+      "reason": "NVIDIA's empty CUDA Toolkit metapackage omits license metadata; PyPI identifies it as the CUDA Toolkit installer metapackage, and NVIDIA states that the CUDA Toolkit is governed by these terms."
+    }
+  ]
+}

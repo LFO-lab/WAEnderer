@@ -68,6 +68,7 @@ Vendored SHA-256:
 | ONNX Runtime, ONNX Script | MIT | Retain notices. |
 | stable-audio-3, einops, einops-exts | MIT | Applies to code, not model weights. |
 | descript-audio-codec | MIT | Optional EAR VAE dependency. |
+| NVIDIA CUDA Toolkit packages (Linux, transitive through PyTorch) | [NVIDIA Software License Agreement and CUDA Supplement](https://docs.nvidia.com/cuda/eula/index.html) | The `cuda-toolkit==13.0.3.0` metapackage omits license metadata and is covered by the reviewed override. CUDA is not bundled in WÆnderer's wheel; review NVIDIA's redistribution terms before shipping an environment or container containing its libraries. |
 | certifi (transitive) | MPL-2.0 | Preserve MPL-covered files and notice if bundled. |
 | soxr (transitive) | LGPL-2.1-or-later | Preserve LGPL rights and notices if bundled. |
 

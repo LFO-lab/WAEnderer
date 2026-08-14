@@ -10,6 +10,7 @@ conference build do not have identical contents, so their scopes differ.
 | Gemma-derived material carried by SAME-S | Gemma Terms of Use (`GEMMA_TERMS_OF_USE.md`) |
 | Vendored p5.js 1.9.0 | GNU LGPL 2.1 (`p5.js-LGPL-2.1.txt`) |
 | Third-party Python packages and optional model backends | Their respective upstream licenses, summarized in `../THIRD_PARTY_NOTICES.md` |
+| Exact-version corrections for incomplete package metadata | Reviewed evidence in `dependency-license-overrides.json`; an override does not relicense the dependency |
 | Demo audio, video, images, and source recordings | The per-item rights record in `../docs/media/RIGHTS.md`; not covered by Apache-2.0 unless expressly stated |
 | JUCE application or plug-in | Not included in this repository or license grant; requires a separate JUCE licensing review before distribution |
 

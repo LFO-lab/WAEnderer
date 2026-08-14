@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from bin.generate_release_evidence import (
+    _apply_license_overrides,
+    _license_overrides,
+)
 from stable_audio_wanderer.release_compliance import (
     check_dependency_license_report,
     check_public_tree,
@@ -85,3 +89,41 @@ def test_dependency_license_policy_flags_unknown_and_strong_copyleft(tmp_path):
     assert any("server==3" in issue for issue in issues)
     assert not any("weak==4" in issue for issue in issues)
     assert not any("runtime-exception==5" in issue for issue in issues)
+
+
+def test_dependency_license_override_is_exact_version_and_evidence_backed():
+    overrides = _license_overrides(
+        PROJECT_ROOT / "licenses" / "dependency-license-overrides.json"
+    )
+    exact = {
+        "cuda-toolkit": {
+            "name": "cuda-toolkit",
+            "version": "13.0.3.0",
+            "license": "NOASSERTION",
+        }
+    }
+    future = {
+        "cuda-toolkit": {
+            "name": "cuda-toolkit",
+            "version": "13.0.4.0",
+            "license": "NOASSERTION",
+        }
+    }
+    asserted = {
+        "cuda-toolkit": {
+            "name": "cuda-toolkit",
+            "version": "13.0.3.0",
+            "license": "Upstream asserted license",
+        }
+    }
+
+    _apply_license_overrides(exact, overrides)
+    _apply_license_overrides(future, overrides)
+    _apply_license_overrides(asserted, overrides)
+
+    assert exact["cuda-toolkit"]["license"] == (
+        "NVIDIA Software License Agreement and CUDA Supplement"
+    )
+    assert exact["cuda-toolkit"]["license_evidence"].startswith("https://docs.nvidia.com/")
+    assert future["cuda-toolkit"]["license"] == "NOASSERTION"
+    assert asserted["cuda-toolkit"]["license"] == "Upstream asserted license"
