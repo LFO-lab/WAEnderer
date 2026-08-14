@@ -21,7 +21,7 @@ jobs:
       - name: Check licensing and attribution
         run: uv run python bin/check_release_compliance.py
       - name: Run release compliance tests
-        run: uv run python -m pytest test_release_compliance.py test_export_web_decoder.py
+        run: uv run python -m pytest tests/test_release_compliance.py tests/test_export_web_decoder.py
       - name: Build source and wheel distributions
         run: uv build
       - name: Generate environment evidence

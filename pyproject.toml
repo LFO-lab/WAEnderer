@@ -57,5 +57,5 @@ include = ["stable_audio_wanderer*"]
 "stable_audio_wanderer.resources.same_s" = ["*.onnx", "*.json", "*.md", "*.txt"]
 
 [tool.pytest.ini_options]
-testpaths = ["."]
+testpaths = ["tests"]
 python_files = ["test_*.py"]

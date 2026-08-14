@@ -361,4 +361,3 @@ def test_invalid_source_fails_at_pure_api_boundary_without_changing_diagnostics(
         planner.plan(0, 4, frame_source="not-a-source")
 
     assert planner.last_diagnostics is before
-

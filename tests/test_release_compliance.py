@@ -15,7 +15,7 @@ from stable_audio_wanderer.release_compliance import (
 )
 
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 
 
 def test_public_tree_has_required_license_evidence():
