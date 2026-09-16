@@ -129,6 +129,7 @@ class LatentNavigationEngine:
         if not disable_faiss:
             try:
                 import faiss
+                faiss.omp_set_num_threads(1)
                 self.faiss_index = faiss.IndexFlatIP(self.embeddings_l2.shape[1])
                 self.faiss_index.add(self.embeddings_l2)
                 self._has_faiss = True
@@ -730,6 +731,13 @@ class LatentNavigationEngine:
         q = query_embedding if query_embedding is not None else self._query_embedding(z_query)
 
         if self._has_faiss:
+            import faiss
+
+            # OpenMP limits belong to the calling thread. Perform queries can
+            # run on a different thread from preprocessing/index construction.
+            # Parallel FAISS searches can crash in libomp on macOS when other
+            # native runtimes are loaded; keep each retrieval single-threaded.
+            faiss.omp_set_num_threads(1)
             distances, indices = self.faiss_index.search(q.reshape(1, -1), k)
             return indices[0].astype(np.int32), (1.0 - distances[0]).astype(np.float32)
 
