@@ -1,6 +1,6 @@
 # Roadmap — Inférence SAME-S sélectionnable : ONNX CPU / PyTorch GPU
 
-Statut : **phases 0 et 1 terminées ; phase 2 implémentée et validée numériquement sur CPU/MPS le 1er octobre 2026**. Écoute et qualification CUDA encore à effectuer. ONNX CPU reste le seul moteur du pipeline Web en attendant les phases 3/4. Rapports : [phase 0](docs/DUAL_INFERENCE_PHASE0.md), [phase 2](docs/DUAL_INFERENCE_PHASE2.md).
+Statut : **phases 0 et 1 terminées ; phase 2 implémentée et validée numériquement sur CPU/MPS le 1er octobre 2026**. Écoute et qualification CUDA encore à effectuer. Phase 3 implémentée : sélection par configuration et cycle de vie intégrés au pipeline ; le sélecteur graphique reste en phase 4. Rapports : [phase 0](docs/DUAL_INFERENCE_PHASE0.md), [phase 2](docs/DUAL_INFERENCE_PHASE2.md), [phase 3](docs/DUAL_INFERENCE_PHASE3.md).
 
 ## Objectif et périmètre
 
@@ -116,21 +116,23 @@ Les noms exacts des classes et champs restent à fixer. Configuration envisagée
 
 **Critère de sortie :** décodage natif conforme au contrat sur chaque périphérique annoncé comme pris en charge, avec comparaison numérique et écoute sur les mêmes entrées que l’ONNX.
 
-**Implémentation et preuves :** [SameSTorchDecoder](stable_audio_wanderer/vae/torch_decoder.py), [chargeur strict](stable_audio_wanderer/vae/same_s_weights.py), [tests](tests/test_torch_decoder.py), [rapport et installation](docs/DUAL_INFERENCE_PHASE2.md). Installation propre avec Torch/Torchaudio 2.7.1, 71 dépendances compatibles ; 182 tests Python réussis, 1 optionnel ignoré, trois suites Web réussies. La qualification perceptuelle et CUDA n’est pas déclarée terminée. Le cycle de vie configurable du pipeline reste en phase 3.
+**Implémentation et preuves :** [SameSTorchDecoder](stable_audio_wanderer/vae/torch_decoder.py), [chargeur strict](stable_audio_wanderer/vae/same_s_weights.py), [tests](tests/test_torch_decoder.py), [rapport et installation](docs/DUAL_INFERENCE_PHASE2.md). Installation propre avec Torch/Torchaudio 2.7.1, 71 dépendances compatibles ; 182 tests Python réussis, 1 optionnel ignoré, trois suites Web réussies. La qualification perceptuelle et CUDA n’est pas déclarée terminée. Le cycle de vie configurable est intégré en phase 3.
 
 ## Phase 3 — Intégrer le cycle de vie et la concurrence
 
-- [ ] Remplacer le chargement ONNX imposé par une fabrique de décodeurs basée sur la configuration validée.
-- [ ] Valider le corpus pour chaque démarrage, y compris lorsqu’une instance est réutilisée.
-- [ ] Définir la réutilisation selon moteur, périphérique et identité des poids ; ne jamais réutiliser une instance incompatible.
-- [ ] Auditer la libération du VAE de prétraitement et les références conservées afin d’éviter la double occupation mémoire involontaire.
-- [ ] Commencer avec une politique GPU sérialisée, puis n’autoriser davantage de concurrence que sur preuve de correction et de bénéfice mesuré.
-- [ ] Préserver la préparation des générations active et candidate pendant les transitions, sans tâches obsolètes publiées ni file de calcul non bornée.
-- [ ] Définir la séquence de changement : arrêt audio, fin des tâches, remise à zéro du transport, libération de l’ancien moteur, chargement et échauffement du nouveau.
-- [ ] En cas d’échec, rester dans un état arrêté cohérent avec une erreur visible et une possibilité de réessayer ; ne pas annoncer le nouveau moteur comme actif.
-- [ ] Distinguer l’arrêt du transport de la sortie de la phase `perform` : ajouter le chemin de reconfiguration nécessaire si la machine d’états actuelle ne le permet pas.
+- [x] Remplacer le chargement ONNX imposé par une fabrique de décodeurs basée sur la configuration validée.
+- [x] Valider le corpus pour chaque démarrage, y compris lorsqu’une instance est réutilisée.
+- [x] Définir la réutilisation selon moteur, périphérique et identité des poids ; ne jamais réutiliser une instance incompatible.
+- [x] Auditer la libération du VAE de prétraitement et les références conservées afin d’éviter la double occupation mémoire involontaire.
+- [x] Commencer avec une politique GPU sérialisée, puis n’autoriser davantage de concurrence que sur preuve de correction et de bénéfice mesuré.
+- [x] Préserver la préparation des générations active et candidate pendant les transitions, sans tâches obsolètes publiées ni file de calcul non bornée.
+- [x] Définir la séquence de changement : arrêt audio, fin des tâches, remise à zéro du transport, libération de l’ancien moteur, chargement et échauffement du nouveau.
+- [x] En cas d’échec, rester dans un état arrêté cohérent avec une erreur visible et une possibilité de réessayer ; ne pas annoncer le nouveau moteur comme actif.
+- [x] Distinguer l’arrêt du transport de la sortie de la phase `perform` : ajouter le chemin de reconfiguration nécessaire si la machine d’états actuelle ne le permet pas.
 
 **Critère de sortie :** démarrages, arrêts, échecs et changements répétés ne laissent ni audio obsolète, ni worker actif après libération, ni accumulation de mémoire attribuable aux instances conservées.
+
+**Résultat : implémenté et vérifié le 1er octobre 2026.** 203 tests Python réussis, 1 ignoré ; trois suites Web réussies. Cycles réels ONNX/natif CPU et MPS : une seule instance conservée, aucune après fermeture ; allocations MPS revenues à zéro après remplacement et fermeture. Voir le [rapport de phase 3](docs/DUAL_INFERENCE_PHASE3.md). Ces essais ne remplacent ni l’écoute ni la campagne temps réel de phase 5.
 
 ## Phase 4 — Exposer la sélection dans le Web
 

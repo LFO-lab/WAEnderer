@@ -207,30 +207,31 @@ def main():
     # Start HTTP server
     _start_http_server(web_dir, args.http_port)
 
-    # Mutable container for the controller reference
-    _controller_ref = [None]
-    _setup_lock = threading.RLock()
     shutdown_requested = threading.Event()
 
     def on_perform_setup(corpus_dir, decoder, config):
-        with _setup_lock:
-            if shutdown_requested.is_set():
-                raise RuntimeError("application is shutting down")
-            if erae_osc is not None:
-                erae_osc.bind(None)
-                broadcaster.bind_visual()
-            previous, _controller_ref[0] = _controller_ref[0], None
-            if previous is not None:
-                previous.close()
-            controller = _setup_perform_phase(
-                corpus_dir, decoder, config, broadcaster, args.port
-            )
-            _controller_ref[0] = controller
+        if shutdown_requested.is_set():
+            raise RuntimeError("application is shutting down")
+        controller = _setup_perform_phase(corpus_dir, decoder, config, broadcaster, args.port)
+        try:
             if erae_osc is not None:
                 erae_osc.bind(controller)
                 broadcaster.bind_visual(erae_osc.session, erae_osc.revision)
+            return controller
+        except Exception:
+            try:
+                on_perform_teardown()
+            finally:
+                controller.close()
+            raise
+
+    def on_perform_teardown():
+        if erae_osc is not None:
+            erae_osc.bind(None)
+        broadcaster.unbind_nav_decoder()
 
     pipeline.set_perform_setup_callback(on_perform_setup)
+    pipeline.set_perform_teardown_callback(on_perform_teardown)
 
     def request_shutdown(reason="web"):
         if shutdown_requested.is_set():
@@ -269,12 +270,12 @@ def main():
     finally:
         print("\n[serve] Shutting down...")
         shutdown_requested.set()
-        with _setup_lock:
+        try:
+            pipeline.close()
+        finally:
             if erae_osc is not None:
                 erae_osc.close()
-            if _controller_ref[0] is not None:
-                _controller_ref[0].close()
-        broadcaster.shutdown()
+            broadcaster.shutdown()
 
     print("[serve] Done.")
 

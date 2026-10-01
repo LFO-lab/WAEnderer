@@ -95,6 +95,14 @@ class LatentDecoder(Protocol):
 
     def decode(self, raw_latents: np.ndarray) -> DecodedAudioWindow: ...
 
+    def close(self) -> None:
+        """Release backend resources after producers are drained; idempotent.
+
+        A closed decoder cannot be reused. The pipeline owns this operation;
+        transport Stop only drains audio and keeps the decoder prepared.
+        """
+        ...
+
 
 __all__ = [
     "DecodedAudioWindow",

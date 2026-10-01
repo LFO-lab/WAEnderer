@@ -23,7 +23,7 @@ class PipelineManager:
     Phases: idle -> preprocess -> train -> perform
     """
 
-    PHASES = ("idle", "preprocess", "train", "perform")
+    PHASES = ("idle", "preprocess", "train", "preparing", "perform", "stopping", "error", "closed")
 
     def __init__(self, pretrained: str = "stabilityai/stable-audio-open-1.0",
                  decoder_resource_dir=None):
@@ -37,6 +37,12 @@ class PipelineManager:
         self._perform_setup_callback = None  # called when perform phase starts
         self._decoder_resource_dir = decoder_resource_dir
         self._app_decoder: Optional["LatentDecoder"] = None
+        self._decoder_selection = None
+        self._perform_controller = None
+        self._perform_teardown_callback = None
+        self._perform_error = None
+        self._lifecycle_lock = threading.RLock()
+        self._closed = False
 
         # Preprocess result for passing VAE + corpus to train/perform
         self._preprocess_result: Optional[dict] = None
@@ -47,16 +53,27 @@ class PipelineManager:
 
     def set_perform_setup_callback(self, callback):
         """Set callback invoked when entering perform phase.
-        Signature: callback(corpus_dir: str, decoder: LatentDecoder, config: dict) -> None
+        Signature: callback(corpus_dir: str, decoder: LatentDecoder, config: dict)
+        Return the controller owned and closed by this manager. If construction
+        fails, the callback must close any partially constructed controller.
         """
         self._perform_setup_callback = callback
 
+    def set_perform_teardown_callback(self, callback):
+        """Detach external command/state bindings; this manager closes the controller."""
+        self._perform_teardown_callback = callback
+
     def _emit(self, data: dict):
         """Push a message to all connected WebSocket clients."""
-        if self._broadcaster is not None:
+        if self._broadcaster is not None and not self._closed:
             self._broadcaster.broadcast_pipeline_message(data)
 
     def handle_message(self, data: dict):
+        with self._lifecycle_lock:
+            if not self._closed:
+                self._dispatch_message(data)
+
+    def _dispatch_message(self, data: dict):
         """Route incoming pipeline_* WebSocket messages."""
         msg_type = data.get("type", "")
 
@@ -72,6 +89,8 @@ class PipelineManager:
             self._handle_start_train(data)
         elif msg_type == "pipeline_start_perform":
             self._handle_start_perform(data)
+        elif msg_type == "pipeline_stop_perform":
+            self._handle_stop_perform()
         elif msg_type == "pipeline_cancel":
             self._handle_cancel()
         elif msg_type == "pipeline_get_state":
@@ -82,6 +101,8 @@ class PipelineManager:
             "type": "pipeline_state",
             "phase": self.phase,
             "corpus_dir": self._corpus_dir,
+            "decoder": self._active_decoder_state(),
+            "error": self._perform_error,
         })
 
     # ------------------------------------------------------------------
@@ -173,6 +194,7 @@ class PipelineManager:
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Invalid audio_dir"})
             return
 
+        self._release_app_decoder()
         self.phase = "preprocess"
         self._cancel.clear()
         self._emit({"type": "pipeline_phase_change", "phase": "preprocess"})
@@ -259,6 +281,7 @@ class PipelineManager:
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": "No corpus_dir"})
             return
 
+        self._release_app_decoder()
         self.phase = "train"
         self._cancel.clear()
         self._corpus_dir = corpus_dir
@@ -323,7 +346,7 @@ class PipelineManager:
     # ------------------------------------------------------------------
 
     def _release_preprocessing_vae(self):
-        """Release the encode-side model only after ONNX handoff succeeds."""
+        """Release the encode-side model before preparing a performance decoder."""
         retained_vae = self._vae
         device_types = set()
         candidates = [
@@ -331,6 +354,7 @@ class PipelineManager:
             getattr(retained_vae, "raw_model", None),
             getattr(retained_vae, "_model", None),
         ]
+        candidates.extend(getattr(item, "autoencoder", None) for item in tuple(candidates))
         for candidate in candidates:
             parameters = getattr(candidate, "parameters", None)
             if not callable(parameters):
@@ -382,57 +406,116 @@ class PipelineManager:
 
     def _handle_start_perform(self, data: dict):
         if self.phase not in ("idle",):
-            self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Cannot start perform now"})
+            self._emit({"type": "pipeline_state", "phase": self.phase,
+                        "error": "Cannot start perform now; use pipeline_stop_perform before reconfiguration"})
             return
-
-        config = data.get("config", {})
-        corpus_dir = config.get("corpus_dir") or self._corpus_dir
-        if not corpus_dir or not os.path.isdir(corpus_dir):
-            self._emit({"type": "pipeline_state", "phase": self.phase, "error": "No corpus_dir"})
+        if self._perform_setup_callback is None:
+            self._emit({"type": "pipeline_state", "phase": self.phase,
+                        "error": "Perform setup callback is unavailable"})
             return
-
         try:
-            decoder_window = int(config.get("decoder_window", 2))
-        except (TypeError, ValueError):
-            self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Invalid decoder_window"})
-            return
-        self._corpus_dir = corpus_dir
+            from ..vae.decoder_factory import select_decoder, create_decoder
+            from ..vae.onnx_decoder import validate_same_s_corpus
+            config = data.get("config", {})
+            if not isinstance(config, dict):
+                raise ValueError("Perform config must be an object")
+            corpus_dir = config.get("corpus_dir") or self._corpus_dir
+            if not corpus_dir or not os.path.isdir(corpus_dir):
+                raise ValueError("No corpus_dir")
+            window = config.get("decoder_window", 2)
+            if isinstance(window, bool) or int(window) != float(window):
+                raise ValueError("Invalid decoder_window")
+            decoder_window = int(window)
+            # Corpus checks are mandatory even when an instance is cached.
+            validate_same_s_corpus(corpus_dir)
+            selection = select_decoder(config, resource_dir=self._decoder_resource_dir)
+            self._perform_error = None
+            self.phase = "preparing"
+            self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
+            self._teardown_perform()
+            if selection != self._decoder_selection:
+                self._release_app_decoder()
+            self._release_preprocessing_vae()
+            if self._app_decoder is None:
+                self._app_decoder = create_decoder(selection)
+                self._decoder_selection = selection
+            decoder = self._app_decoder
+            if decoder_window not in decoder.supported_windows:
+                raise RuntimeError(f"Decoder window T{decoder_window} is unavailable; supported: {decoder.supported_windows}")
+            self._perform_controller = self._perform_setup_callback(corpus_dir, decoder, dict(config))
+            self._corpus_dir = corpus_dir
+            self.phase = "perform"
+            self._emit({"type": "pipeline_phase_change", "phase": self.phase,
+                        "corpus_dir": corpus_dir, "decoder": self._active_decoder_state()})
+        except Exception as exc:
+            self._perform_failed(exc)
 
-        if self._perform_setup_callback is not None:
-            try:
-                if self._app_decoder is None:
-                    from stable_audio_wanderer.vae.onnx_decoder import load_same_s_app_decoder
-                    self._app_decoder = load_same_s_app_decoder(
-                        corpus_path=corpus_dir,
-                        resource_dir=self._decoder_resource_dir,
-                    )
-                else:
-                    from stable_audio_wanderer.vae.onnx_decoder import validate_same_s_corpus
-                    validate_same_s_corpus(corpus_dir)
-                decoder = self._app_decoder
-                if decoder_window not in decoder.supported_windows:
-                    raise RuntimeError(
-                        f"Decoder window T{decoder_window} is unavailable; supported: "
-                        f"{decoder.supported_windows}"
-                    )
-                self._perform_setup_callback(corpus_dir, decoder, dict(config))
-                self.phase = "perform"
-                self._emit({
-                    "type": "pipeline_phase_change",
-                    "phase": "perform",
-                    "corpus_dir": corpus_dir,
-                })
-            except Exception as e:
-                self.phase = "idle"
-                self._emit({"type": "pipeline_phase_change", "phase": "idle", "error": str(e)})
-                import traceback
-                traceback.print_exc()
-        else:
-            self._emit({
-                "type": "pipeline_state",
-                "phase": self.phase,
-                "error": "Perform setup callback is unavailable",
-            })
+    def _active_decoder_state(self):
+        if self.phase != "perform" or self._app_decoder is None:
+            return None
+        info = self._app_decoder.info
+        return {"backend": info.backend, "provider": info.provider,
+                "device": getattr(info, "device", "cpu"), "vae_id": info.vae_id}
+
+    def _teardown_perform(self):
+        # Close even if detach fails, so a stale external controller cannot Start.
+        try:
+            if self._perform_teardown_callback is not None:
+                self._perform_teardown_callback()
+        finally:
+            if self._perform_controller is not None:
+                self._perform_controller.close()
+                self._perform_controller = None
+
+    def _release_app_decoder(self):
+        if self._perform_controller is not None:
+            raise RuntimeError("Cannot release decoder before transport has drained")
+        self._decoder_selection = None
+        if self._app_decoder is not None:
+            self._app_decoder.close()
+            self._app_decoder = None
+
+    def _perform_failed(self, exc):
+        self._perform_error = str(exc)
+        try:
+            self._teardown_perform()
+            self._release_app_decoder()
+            self.phase = "idle"
+        except Exception as cleanup_error:
+            # Retain ownership if draining/release failed; never free under a worker.
+            self.phase = "error"
+            self._perform_error += f"; cleanup failed: {cleanup_error}"
+        self._emit({"type": "pipeline_phase_change", "phase": self.phase,
+                    "decoder": None, "error": self._perform_error})
+
+    def _handle_stop_perform(self):
+        if self.phase not in ("perform", "error", "idle"):
+            self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Cannot leave perform now"})
+            return
+        self.phase = "stopping"
+        self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
+        try:
+            self._teardown_perform()
+            self.phase = "idle"
+            self._perform_error = None
+            # Keep one prepared decoder for an identical restart. A changed
+            # selection releases it before allocating the replacement.
+            self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
+        except Exception as exc:
+            self._perform_failed(exc)
+
+    def close(self):
+        """Shut down producers before releasing their model resources."""
+        with self._lifecycle_lock:
+            self._closed = True
+            self._cancel.set()
+            if self._worker is not None and self._worker is not threading.current_thread():
+                self._worker.join()
+                self._worker = None
+            self._teardown_perform()
+            self._release_app_decoder()
+            self._release_preprocessing_vae()
+            self.phase = "closed"
 
     # ------------------------------------------------------------------
     # Cancel

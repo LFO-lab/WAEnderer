@@ -200,6 +200,31 @@ def test_unavailable_gpu_is_not_replaced_by_cpu(monkeypatch):
             native.SameSTorchDecoder(device=device)
 
 
+def test_close_waits_for_inflight_native_decode_and_is_idempotent(fake_loader):
+    decoder = native.SameSTorchDecoder(device="cpu")
+    entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+    original = fake_loader.decode_audio
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(2)
+        return original(*args, **kwargs)
+    fake_loader.decode_audio = blocked
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        result = pool.submit(decoder.decode, np.zeros((2,256),dtype=np.float32))
+        assert entered.wait(2)
+        done = pool.submit(lambda: (decoder.close(), closed.set()))
+        try:
+            assert not closed.wait(.05)
+        finally:
+            release.set()
+        assert result.result().audio.shape == (8192,2)
+        done.result()
+    decoder.close()
+    assert decoder._model is None
+    with pytest.raises(DecoderRuntimeError, match="not prepared"):
+        decoder.decode(np.zeros((2,256),dtype=np.float32))
+
+
 @pytest.mark.parametrize("corruption", [None, "missing", "extra", "shape"])
 def test_native_checkpoint_is_loaded_strictly_before_encoder_removal(tmp_path, monkeypatch, corruption):
     model = SmallModel()

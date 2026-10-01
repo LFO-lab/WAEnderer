@@ -32,10 +32,12 @@ uv sync --all-extras
 
 ### Dependencies
 
-The native SAME-S decoder API (phase 2; not yet selectable in the Web pipeline)
+The native SAME-S decoder (selectable through pipeline configuration; Web selector pending)
 has a separately validated installation profile. See
 [native decoder setup and validation](docs/DUAL_INFERENCE_PHASE2.md) for the
 pinned weights, PyTorch environment, supported API and hardware test status.
+See [pipeline selection and lifecycle](docs/DUAL_INFERENCE_PHASE3.md) for the
+configuration fields and stop/reconfigure sequence.
 
 | Category | Packages |
 |----------|----------|
@@ -262,8 +264,10 @@ If reorganized units are missing/invalid, reorganized mode is unavailable while 
 
 #### AIMC unified Web performance (SAME-S ONNX)
 
-The unified Web server uses an app-owned SAME-S ONNX model as its realtime
-decoder. SAME-S is the default encoder in the Web UI, while the other encoder
+The unified Web server defaults to an app-owned SAME-S ONNX realtime decoder.
+Pipeline configuration also supports the native decoder; see the
+[selection and lifecycle protocol](docs/DUAL_INFERENCE_PHASE3.md).
+SAME-S is the default encoder in the Web UI, while the other encoder
 choices remain available for non-realtime experiments.
 
 Prepare the untracked release resource once from local SAME-S weights:

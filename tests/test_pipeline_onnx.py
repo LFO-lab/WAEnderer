@@ -5,6 +5,7 @@ import threading
 import time
 
 from stable_audio_wanderer.runtime.pipeline_server import PipelineManager
+from test_app_decoder_resource import _write_resource
 
 
 class CapturingBroadcaster:
@@ -28,6 +29,9 @@ class CapturingBroadcaster:
 
 
 class FakeAppDecoder:
+    def close(self):
+        pass
+
     supported_windows = (2, 4, 8, 16, 32)
     default_window = 2
     info = SimpleNamespace(
@@ -58,7 +62,8 @@ def test_start_lazily_loads_and_reuses_app_decoder(tmp_path, monkeypatch):
     monkeypatch.setattr(decoder_module, "load_same_s_app_decoder", fake_load)
     monkeypatch.setattr(decoder_module, "validate_same_s_corpus", fake_validate)
 
-    pipeline = PipelineManager(decoder_resource_dir="/release/decoder")
+    resource = _write_resource(tmp_path)
+    pipeline = PipelineManager(decoder_resource_dir=resource)
     broadcaster = CapturingBroadcaster()
     pipeline.set_broadcaster(broadcaster)
     setup_calls = []
@@ -71,13 +76,10 @@ def test_start_lazily_loads_and_reuses_app_decoder(tmp_path, monkeypatch):
     first_config = {"corpus_dir": str(corpus_a), "decoder_window": 4}
     pipeline.handle_message({"type": "pipeline_start_perform", "config": first_config})
     assert pipeline.phase == "perform"
-    assert calls == [("load", {
-        "corpus_path": str(corpus_a),
-        "resource_dir": "/release/decoder",
-    })]
+    assert calls == [("validate", str(corpus_a)), ("load", {"resource_dir": resource})]
     assert setup_calls == [(str(corpus_a), decoder, first_config)]
 
-    pipeline.phase = "idle"
+    pipeline.handle_message({"type": "pipeline_stop_perform"})
     second_config = {"corpus_dir": str(corpus_b), "decoder_window": 2}
     pipeline.handle_message({"type": "pipeline_start_perform", "config": second_config})
     assert calls[-1] == ("validate", str(corpus_b))
@@ -91,8 +93,8 @@ def test_start_surfaces_resource_or_corpus_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         decoder_module,
-        "load_same_s_app_decoder",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("not a SAME-S corpus")),
+        "validate_same_s_corpus",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("not a SAME-S corpus")),
     )
     pipeline = PipelineManager()
     broadcaster = CapturingBroadcaster()
@@ -116,7 +118,8 @@ def test_start_rejects_unsupported_window(tmp_path, monkeypatch):
     monkeypatch.setattr(
         decoder_module, "load_same_s_app_decoder", lambda **_kwargs: FakeAppDecoder()
     )
-    pipeline = PipelineManager()
+    monkeypatch.setattr(decoder_module, "validate_same_s_corpus", lambda *_: None)
+    pipeline = PipelineManager(decoder_resource_dir=_write_resource(tmp_path))
     broadcaster = CapturingBroadcaster()
     pipeline.set_broadcaster(broadcaster)
     pipeline.set_perform_setup_callback(lambda *_args: None)

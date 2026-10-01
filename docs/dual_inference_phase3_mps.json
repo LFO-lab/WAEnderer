@@ -1,0 +1,32 @@
+{
+  "device": "mps",
+  "torch": "2.7.1",
+  "cycles": [
+    {
+      "backend": "onnxruntime",
+      "prepare_and_decode_seconds": 0.4249013329972513,
+      "live_decoder_instances": 1,
+      "mps_allocated_bytes": 0
+    },
+    {
+      "backend": "pytorch",
+      "prepare_and_decode_seconds": 4.622170750051737,
+      "live_decoder_instances": 1,
+      "mps_allocated_bytes": 222789376
+    },
+    {
+      "backend": "onnxruntime",
+      "prepare_and_decode_seconds": 0.46278641698881984,
+      "live_decoder_instances": 1,
+      "mps_allocated_bytes": 0
+    },
+    {
+      "backend": "pytorch",
+      "prepare_and_decode_seconds": 1.4898152500391006,
+      "live_decoder_instances": 1,
+      "mps_allocated_bytes": 222789376
+    }
+  ],
+  "live_instances_after_shutdown": 0,
+  "mps_allocated_bytes_after_shutdown": 0
+}

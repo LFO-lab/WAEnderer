@@ -84,3 +84,13 @@ def test_non_same_s_corpus_fails_before_resource_load(tmp_path):
 def test_missing_resource_is_visible(tmp_path):
     with pytest.raises(DecoderBundleError, match="metadata is missing"):
         SameSAppOnnxDecoder(tmp_path / "absent", ort_module=FakeOrt())
+
+
+def test_close_releases_onnx_session_and_rejects_future_decodes(tmp_path):
+    from stable_audio_wanderer.vae.decoder_contract import DecoderRuntimeError
+    decoder = SameSAppOnnxDecoder(_write_resource(tmp_path), ort_module=FakeOrt())
+    decoder.close()
+    decoder.close()
+    assert decoder._session is None
+    with pytest.raises(DecoderRuntimeError, match="closed"):
+        decoder.decode(np.zeros((2,256),dtype=np.float32))

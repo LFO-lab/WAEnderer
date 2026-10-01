@@ -598,9 +598,12 @@ class SameSOnnxDecoder:
         *,
         preflight: bool,
     ) -> tuple[np.ndarray, float]:
+        session = self._session
+        if session is None:
+            raise DecoderRuntimeError("ONNX decoder is closed")
         start = time.perf_counter()
         try:
-            result = self._session.run(
+            result = session.run(
                 [self._output_name],
                 {self._input_name: model_input},
             )
@@ -657,6 +660,10 @@ class SameSOnnxDecoder:
             metadata=metadata,
             decode_time_ms=elapsed_ms,
         )
+
+    def close(self) -> None:
+        """Release the session after the pipeline drains transport producers."""
+        self._session = None
 
 
 class SameSAppOnnxDecoder(SameSOnnxDecoder):

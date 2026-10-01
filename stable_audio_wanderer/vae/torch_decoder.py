@@ -78,7 +78,7 @@ class SameSTorchDecoder:
     windows. CPU is available explicitly for diagnostics, never as a fallback.
     Calls are serialized per instance, including warm-up. RNG state is not
     reset and inference remains stochastic like the original SAME-S model.
-    Pipeline ownership and Web selection are implemented in later phases.
+    The pipeline owns release; Web selection is implemented separately.
     """
 
     def __init__(self, *, device: str, local_files_only: bool = True):
@@ -182,3 +182,17 @@ class SameSTorchDecoder:
             except Exception as exc:
                 raise DecoderRuntimeError(f"Native SAME-S decode failed on {self._device} for T{metadata.latent_window}: {exc}") from exc
         return DecodedAudioWindow(audio, metadata, (time.perf_counter() - start) * 1000)
+
+    def close(self) -> None:
+        """Wait for an in-flight native call, then drop the dedicated model."""
+        with self._lock:
+            if self._model is None:
+                return
+            self._model = None
+            # Decode copies PCM back synchronously; no outstanding GPU work
+            # belongs to this instance. Release only the selected device cache.
+            if self._device.type == "mps":
+                self._torch.mps.empty_cache()
+            elif self._device.type == "cuda":
+                with self._torch.cuda.device(self._device):
+                    self._torch.cuda.empty_cache()

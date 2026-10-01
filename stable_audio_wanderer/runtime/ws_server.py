@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 import json
 import threading
+from functools import wraps
 import time
 from typing import Callable, Optional, Set, Tuple
 import numpy as np
@@ -19,6 +20,15 @@ try:
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
+
+
+def _binding_locked(method):
+    """Keep snapshots coherent while pipeline setup runs off the event loop."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._binding_lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class WSBroadcaster:
@@ -66,6 +76,7 @@ class WSBroadcaster:
             raise ImportError("websockets package required. Install with: pip install websockets")
 
         self.nav = nav
+        self._binding_lock = threading.RLock()
         self.decoder = decoder
         self.fps = fps
         self.interval = 1.0 / fps
@@ -121,6 +132,7 @@ class WSBroadcaster:
         self._ZZ_2d_range = np.maximum(self._ZZ_2d_range, 1e-6)
         self._ZZ_2d_norm = (self._ZZ_2d - self._ZZ_2d_min) / self._ZZ_2d_range
 
+    @_binding_locked
     def bind_nav_decoder(
         self,
         nav,
@@ -151,6 +163,7 @@ class WSBroadcaster:
         # the manual point cloud and file ids.
         self.broadcast_corpus()
 
+    @_binding_locked
     def bind_visual(self, session=None, revision=None):
         """Publish the same binding identity as OSC, after geometry is ready."""
         identity, packets = None, ()
@@ -163,6 +176,22 @@ class WSBroadcaster:
             self._loop.call_soon_threadsafe(self.visual.bind, identity, packets)
         else:
             self.visual.bind(identity, packets)
+
+    @_binding_locked
+    def unbind_nav_decoder(self):
+        """Detach all strong references and callbacks before controller release."""
+        self._message_handler = None
+        self._extra_state_provider = None
+        self.nav = None
+        self.decoder = None
+        self._manual_points = self._manual_points_3d = self._manual_points_3d_norm = None
+        self._manual_points_3d_min = self._manual_points_3d_range = None
+        self._manual_color_values_norm = self._manual_file_ids = None
+        self._is_latent_nav = False
+        self._ZZ_2d = self._ZZ_2d_norm = None
+        self._ZZ_2d_min = self._ZZ_2d_range = self._projection_matrix = None
+        self.bind_visual()
+        self.broadcast_corpus()
 
     def broadcast_corpus(self):
         """Push the currently bound corpus to every connected client."""
@@ -378,6 +407,7 @@ class WSBroadcaster:
             manual["position_3d"] = [float(value) for value in position_norm[:3]]
         state["manual"] = manual
 
+    @_binding_locked
     def _get_state_json(self) -> str:
         """Get current state as JSON string."""
         if self.nav is None:
@@ -498,6 +528,7 @@ class WSBroadcaster:
 
         return json.dumps(state)
     
+    @_binding_locked
     def _get_corpus_json(self) -> str:
         """Get corpus data for initial visualization setup."""
         if self.nav is None:
@@ -582,7 +613,7 @@ class WSBroadcaster:
             if msg_type.startswith("pipeline_"):
                 if self._pipeline_message_handler is not None:
                     try:
-                        self._pipeline_message_handler(data)
+                        await asyncio.to_thread(self._pipeline_message_handler, data)
                     except Exception as e:
                         print(f"[ws] Error in pipeline message handler: {e}")
                 return

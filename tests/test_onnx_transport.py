@@ -143,6 +143,9 @@ class FakeManual:
 
 
 class FakeDecoder:
+    def close(self):
+        pass
+
     def __init__(self):
         self.supported_windows = (2, 4, 8, 16, 32)
         self.default_window = 2

@@ -1,5 +1,6 @@
 import json
 import asyncio
+import threading
 
 import numpy as np
 import pytest
@@ -7,6 +8,44 @@ import pytest
 pytest.importorskip("websockets")
 
 from stable_audio_wanderer.runtime.ws_server import WSBroadcaster
+
+
+def test_pipeline_preparation_does_not_block_websocket_event_loop():
+    entered, release = threading.Event(), threading.Event()
+    def prepare(_):
+        entered.set()
+        assert release.wait(3)
+    broadcaster = WSBroadcaster(pipeline_message_handler=prepare)
+    async def run():
+        task = asyncio.create_task(broadcaster._handle_message(
+            None, json.dumps({"type": "pipeline_start_perform"})))
+        try:
+            for _ in range(100):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(.01)
+            assert entered.is_set() and not task.done()
+            assert json.loads(broadcaster._get_state_json())["type"] == "state"
+        finally:
+            release.set()
+            await task
+    asyncio.run(run())
+
+
+def test_unbind_removes_old_corpus_and_control_references():
+    broadcaster = WSBroadcaster()
+    pushed = []
+    broadcaster.broadcast_pipeline_message = pushed.append
+    broadcaster.bind_nav_decoder(FakeNav(_make_nav_state()), FakeDecoder(),
+                                 message_handler=lambda _: True,
+                                 extra_state_provider=lambda: {"old": True},
+                                 manual_points_3d=np.ones((3, 3), dtype=np.float32))
+    broadcaster.unbind_nav_decoder()
+    assert broadcaster.nav is None and broadcaster.decoder is None
+    assert broadcaster._message_handler is None and broadcaster._extra_state_provider is None
+    assert broadcaster._manual_points is None
+    assert pushed[-1]["total_points"] == 0
+    assert "old" not in json.loads(broadcaster._get_state_json())
 
 
 class FakeNav:

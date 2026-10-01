@@ -84,6 +84,9 @@ class DecoderTransportController:
         self.manifold = manifold
         self.decoder = player
         self.latent_decoder = latent_decoder
+        self._lifecycle_lock = threading.RLock()
+        self._closed = False
+        self._resources_closed = False
 
         self.Z_concat = np.ascontiguousarray(z_concat, dtype=np.float32)
         self.file_offsets = np.asarray(file_offsets, dtype=np.int64).reshape(-1)
@@ -380,16 +383,25 @@ class DecoderTransportController:
         return True, "Wander reset"
 
     def _cleanup_previous_run(self) -> None:
-        self._running.clear()
+        # Serialize against the producer's publication/start critical section.
+        # Stop playback immediately, then drain computations before resetting PCM.
+        with self._lock:
+            self._running.clear()
+            if self._decoder_started:
+                self.decoder.stop()
+                self._decoder_started = False
         if self._decode_thread is not None:
             self._decode_thread.join()
             self._decode_thread = None
-        if self._decoder_started:
-            self.decoder.stop()
-            self._decoder_started = False
         self.decoder.reset_buffers()
 
     def start(self) -> Tuple[bool, str]:
+        with self._lifecycle_lock:
+            if self._closed:
+                return False, "transport is closed"
+            return self._start()
+
+    def _start(self) -> Tuple[bool, str]:
         with self._lock:
             if self._running.is_set():
                 return False, "transport already running"
@@ -444,6 +456,10 @@ class DecoderTransportController:
         return True, f"transport prebuffering ({mode}, T{window})"
 
     def stop(self) -> Tuple[bool, str]:
+        with self._lifecycle_lock:
+            return self._stop()
+
+    def _stop(self) -> Tuple[bool, str]:
         had_resources = any(
             (
                 self._running.is_set(),
@@ -457,8 +473,13 @@ class DecoderTransportController:
         return True, "transport stopped" if had_resources else "already stopped"
 
     def close(self) -> None:
-        self.stop()
-        self.decoder.close()
+        with self._lifecycle_lock:
+            if self._resources_closed:
+                return
+            self._closed = True
+            self._stop()
+            self.decoder.close()
+            self._resources_closed = True
 
     def _snapshot_request(self) -> tuple[int, int, str]:
         with self._lock:
