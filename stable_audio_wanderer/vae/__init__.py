@@ -1,12 +1,16 @@
 """VAE adapter subsystem — pluggable encode/decode backends."""
 from .base import VAEAdapter, VAEInfo
+from .decoder_contract import (
+    DecodedAudioWindow,
+    DecoderInfo,
+    DecoderRuntimeError,
+    DecoderWindowMetadata,
+    LatentDecoder,
+)
 from .onnx_decoder import (
     DecoderBundleError,
     DecoderBundleInfo,
     DecoderResourceInfo,
-    DecodedAudioWindow,
-    DecoderRuntimeError,
-    DecoderWindowMetadata,
     SameSOnnxDecoder,
     SameSAppOnnxDecoder,
     load_same_s_app_decoder,
@@ -24,9 +28,11 @@ __all__ = [
     "DecoderBundleError",
     "DecoderBundleInfo",
     "DecoderResourceInfo",
+    "DecoderInfo",
     "DecodedAudioWindow",
     "DecoderRuntimeError",
     "DecoderWindowMetadata",
+    "LatentDecoder",
     "SameSOnnxDecoder",
     "SameSAppOnnxDecoder",
     "list_vaes",

@@ -35,7 +35,7 @@ def _start_http_server(web_dir: str, port: int) -> threading.Thread:
 
 
 def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_port):
-    """Set up the fail-closed SAME-S ONNX Web performance phase."""
+    """Set up the fail-closed SAME-S Web performance phase."""
     from bin.perform import (
         load_manual_artifact,
         load_navigation_engine,
@@ -49,7 +49,7 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
     from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
     from stable_audio_wanderer.runtime.manifold import ManifoldConfig, ManifoldConstrainedGenerator
     from stable_audio_wanderer.runtime.manual_player import ManualNavigationEngine
-    from stable_audio_wanderer.runtime.onnx_transport import OnnxTransportController
+    from stable_audio_wanderer.runtime.decoder_transport import DecoderTransportController
     from stable_audio_wanderer.io.corpus_io import read_scalar
 
     corpus_npz = os.path.join(corpus_dir, "corpus.npz")
@@ -121,12 +121,12 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
             f"Unified Web performance requires a SAME-S corpus, got {corpus_vae_id!r}"
         )
     if latent_decoder is None:
-        raise RuntimeError("App-owned SAME-S ONNX decoder is required")
+        raise RuntimeError("A prepared SAME-S decoder is required")
     selected_window = int(config.get("decoder_window", latent_decoder.default_window))
     audio_player = DecoderPlayer(gain=1.0, sr=corpus_sr)
 
     try:
-        controller = OnnxTransportController(
+        controller = DecoderTransportController(
             nav=nav,
             manual_engine=manual_engine,
             manifold=manifold,

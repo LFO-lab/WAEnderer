@@ -22,6 +22,12 @@ from typing import Any, Mapping, Optional, Union
 
 import numpy as np
 
+from .decoder_contract import (
+    DecodedAudioWindow,
+    DecoderRuntimeError,
+    DecoderWindowMetadata,
+)
+
 
 BUNDLE_FORMAT_VERSION = "sawbundle.v0.mvp"
 BACKEND = "onnxruntime"
@@ -41,34 +47,6 @@ _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 class DecoderBundleError(RuntimeError):
     """Raised when a bundle or corpus fails decoder preflight."""
-
-
-class DecoderRuntimeError(RuntimeError):
-    """Raised when ONNX Runtime fails after successful preflight."""
-
-
-@dataclass(frozen=True)
-class DecoderWindowMetadata:
-    """Validated timing and shape metadata for one latent window."""
-
-    latent_window: int
-    latent_dim: int
-    sample_rate: int
-    channels: int
-    samples_per_latent: int
-    audio_window_samples: int
-    latent_hop: int
-    audio_hop_samples: int
-    ola_mode: str
-
-
-@dataclass(frozen=True)
-class DecodedAudioWindow:
-    """One full decoder output and the metadata needed by streaming OLA."""
-
-    audio: np.ndarray
-    metadata: DecoderWindowMetadata
-    decode_time_ms: float
 
 
 @dataclass(frozen=True)
@@ -490,7 +468,13 @@ def _is_dynamic_dimension(value: Any) -> bool:
 
 
 class SameSOnnxDecoder:
-    """Preflighted, CPU-only decoder for one dynamic SAME-S ONNX model."""
+    """CPU-only implementation of the structural LatentDecoder contract.
+
+    Loading, validation and warm-up remain specific to this backend. Decode is
+    read-only with respect to wrapper metadata; ORT accepts concurrent inputs.
+    """
+
+    info: Union[DecoderBundleInfo, DecoderResourceInfo]
 
     def __init__(
         self,

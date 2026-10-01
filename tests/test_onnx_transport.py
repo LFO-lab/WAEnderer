@@ -886,7 +886,7 @@ def test_long_candidate_decode_keeps_rendering_and_latest_target_eventually_play
         assert len(controller._generation_windows) <= 4
         assert decoder.calls.count(2) > calls + 3
         assert peak == 2
-        assert nav_threads == {'saw-onnx-decode'}
+        assert nav_threads == {'saw-decoder-transport'}
         controller.set_decoder_window(8)
         release.set()
         seen = set()

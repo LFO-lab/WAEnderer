@@ -1,6 +1,6 @@
 """JUCE-parity full-output overlap-add helpers for decoded audio windows.
 
-The ONNX decoder produces a complete audio window for every latent window.  A
+The latent decoder produces a complete audio window for every latent window.  A
 stream is assembled by placing those decoded windows one audio hop apart,
 applying the same sine synthesis envelope used by the JUCE renderer, and
 normalizing by the accumulated envelope.  Exactly one hop becomes available

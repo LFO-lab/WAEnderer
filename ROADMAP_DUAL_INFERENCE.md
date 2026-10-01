@@ -1,6 +1,6 @@
 # Roadmap — Inférence SAME-S sélectionnable : ONNX CPU / PyTorch GPU
 
-Statut : planification uniquement. Aucune implémentation du double moteur à ce stade.
+Statut : **phases 0 et 1 terminées le 1er octobre 2026 ; phase 2 non commencée**. Le transport utilise désormais un contrat commun ; ONNX CPU reste le seul moteur du pipeline Web. Audit initial : [rapport de phase 0](docs/DUAL_INFERENCE_PHASE0.md).
 
 ## Objectif et périmètre
 
@@ -19,7 +19,7 @@ Hors périmètre initial : bascule sans interruption pendant la lecture, décoda
 
 ## État de départ vérifié
 
-Le commit `177b0f4` a introduit le décodeur SAME-S ONNX pour le Web. Le code local contient également des évolutions non commitées ; cette roadmap s’appuie sur cet état de travail et devra être rapprochée de la branche retenue avant implémentation.
+Le commit `177b0f4` a introduit le décodeur SAME-S ONNX pour le Web. Les évolutions locales présentes lors de la rédaction initiale sont maintenant intégrées au commit `d5c758a70cf14f8924dab2668e607d43da5e6a9d`, référence propre de l’audit de phase 0.
 
 | Élément | Situation actuelle | Conséquence |
 | --- | --- | --- |
@@ -58,28 +58,52 @@ Les noms exacts des classes et champs restent à fixer. Configuration envisagée
 
 ## Phase 0 — Établir la référence et lever les incertitudes
 
-- [ ] Relever les comportements et tests de référence du transport actuel, y compris les modifications locales à conserver.
-- [ ] Identifier précisément les poids et la révision utilisés par l’ONNX livré ; choisir une résolution identique des poids natifs.
-- [ ] Comparer les chemins `decode` et `decode_audio(..., chunked=False)` : normalisation, découpage, padding et forme de sortie.
-- [ ] Déterminer si le décodeur natif peut être chargé seul. Sinon, documenter la mémoire de l’autoencodeur complet et le compromis pour la première version.
-- [ ] Inventorier les fenêtres annoncées et les preuves de validation disponibles. Ne pas assimiler plage déclarée et couverture des rapports de parité existants.
-- [ ] Définir les machines CUDA/MPS de validation et les versions de dépendances reproductibles.
+- [x] Relever les comportements et tests de référence : 150 tests Python réussis, 1 optionnel ignoré ; trois suites Web réussies.
+- [x] Identifier les poids, la révision et les empreintes ; retenir une résolution native explicitement épinglée.
+- [x] Comparer les chemins `decode` et `decode_audio(..., chunked=False)` : équivalence du chemin confirmée dans la bibliothèque installée et égalité expérimentale T2 à graine fixée.
+- [x] Déterminer la stratégie mémoire : chargement CPU complet, retrait de l’encodeur de l’instance dédiée, puis transfert GPU ; environ 208 Mio de paramètres conservés contre 413 Mio initialement.
+- [x] Inventorier les preuves et essayer les 16 fenêtres paires T2 à T32 sur CPU et MPS avec les poids réels.
+- [x] Identifier le matériel et enregistrer les versions : M1 Max/MPS disponible ; CUDA absent, machine à provisionner avant qualification. Écart aux dépendances amont documenté ; installation propre à vérifier ultérieurement.
 
 **Critère de sortie :** chemin natif choisi, provenance des poids identifiée, matrice de fenêtres et protocole de comparaison documentés. Aucun gain de performance présumé.
 
+**Résultat : atteint.** Voir le [rapport](docs/DUAL_INFERENCE_PHASE0.md), le [probe reproductible](eval_scripts/audit_dual_inference_phase0.py) et les mesures [CPU](docs/dual_inference_phase0_cpu.json)/[MPS](docs/dual_inference_phase0_mps.json). La lecture intégrée et l’écoute ne sont pas encore validées.
+
+**Découverte à préserver :** le décodage SAME-S et son graphe ONNX sont stochastiques même en évaluation. Les écarts entre moteurs doivent être comparés à la variabilité de chaque moteur ; aucune identité bit à bit n’est attendue. Conserver le bruit natif et le seuil synthétique historique (SNR > 20 dB, RMSE < 0,005) comme détecteur initial de régression, sans en faire un seuil universel de qualité audio.
+
 ## Phase 1 — Généraliser la frontière de décodage
 
-- [ ] Extraire les types et métadonnées communs des éléments spécifiques aux bundles et sessions ONNX.
-- [ ] Adapter le décodeur ONNX au contrat sans modifier ses validations de modèle, corpus, dtype, dimensions et valeurs finies.
-- [ ] Faire dépendre le transport du contrat partagé ; généraliser les noms et messages liés au moteur lorsque nécessaire.
-- [ ] Conserver les comportements de navigation, provenance des frames, overlap-add, fenêtres adaptatives et transitions.
-- [ ] Préserver les imports et points d’entrée existants si leur renommage risque de casser les scripts ou tests.
+- [x] Extraire les types et métadonnées communs des éléments spécifiques aux bundles et sessions ONNX.
+- [x] Adapter le décodeur ONNX au contrat sans modifier ses validations de modèle, corpus, dtype, dimensions et valeurs finies.
+- [x] Faire dépendre le transport du contrat partagé ; généraliser les noms et messages liés au moteur lorsque nécessaire.
+- [x] Conserver les comportements de navigation, provenance des frames, overlap-add, fenêtres adaptatives et transitions.
+- [x] Préserver les imports et points d’entrée existants si leur renommage risque de casser les scripts ou tests.
 
 **Critère de sortie :** ONNX CPU fonctionne seul à travers la nouvelle interface, avec les tests existants pertinents toujours satisfaits et sans changement utilisateur.
+
+**Implémentation :**
+
+- [Contrat commun](stable_audio_wanderer/vae/decoder_contract.py) : protocoles structurels `LatentDecoder` et `DecoderInfo`, types `DecoderWindowMetadata`/`DecodedAudioWindow` et exception `DecoderRuntimeError`. Les protocoles décrivent des objets déjà préparés ; les chargeurs et la propriété des instances restent inchangés. Leur cycle de vie configurable demeure en phase 3.
+- [Transport commun](stable_audio_wanderer/runtime/decoder_transport.py) : `DecoderTransportController`, utilisé par `bin/serve.py`, sans import du décodeur ONNX concret ni obligation de métadonnées de bundle. Les chemins de provenance ONNX exposés au Web restent inchangés.
+- Compatibilité : `runtime.onnx_transport.OnnxTransportController` est un alias de la même classe ; les anciens imports des types et de l’exception depuis `vae.onnx_decoder` et `vae` conservent leur identité. Les signatures des métadonnées ONNX restent inchangées.
+- Les fonctions de chargement, validation et décodage ONNX n’ont pas été modifiées, vérifié également par comparaison de leurs AST. Aucun changement du graphe, des poids, de l’aléatoire, des paramètres ORT, des calculs OLA ou de l’ordonnancement à deux workers.
+- Les noms internes des threads et messages de transport deviennent neutres. Aucune option GPU ni modification du parcours de sélection dans l’interface n’est introduite.
+
+**Validation :**
+
+- 146 tests réussis et 1 optionnel ignoré dans la suite décodeur/contrat/pipeline/transport/lecteur/OLA/fenêtres/WebSocket/export ; 11 tests OSC/Erae supplémentaires réussis avec accès aux sockets locales, soit **157 réussites et 1 ignoré**.
+- Trois suites JavaScript Web réussies (`test_web_onnx_ui.js`, `test_web_wander_ui.js`, `test_web_erae_ui.js`).
+- [Nouveaux tests du contrat](tests/test_decoder_contract.py) : compatibilité des imports, import sans ONNX Runtime ni `stable_audio_3`, conformité des deux chargeurs ONNX, transport avec décodeur simulé indépendant d’ONNX, transition, erreur et préservation des champs de provenance.
+- Essai du graphe ONNX applicatif réel : 16 fenêtres paires T2 à T32, deux décodages concurrents par fenêtre (32 sorties), formes/dtype/valeurs finies et assemblage overlap-add conformes. Pas de lecture sur le périphérique audio ni d’écoute pendant cette phase.
+- Un test existant de transition avec délai court a échoué lors d’un passage avec des essais concurrents, puis réussi seul et dans la suite complète sans charge concurrente. Sa logique temporelle et celle du runtime n’ont pas été modifiées ; cette sensibilité reste à surveiller lors de la qualification temps réel.
+
+**Résultat : atteint pour la frontière logicielle et les vérifications automatisées.** L’écoute et les sessions prolongées restent prévues dans la campagne de phase 5.
 
 ## Phase 2 — Ajouter le moteur PyTorch SAME-S
 
 - [ ] Charger les poids correspondant à la référence ONNX ; tracer leur identité dans les diagnostics.
+- [ ] Utiliser la résolution épinglée décidée en phase 0 et vérifier les tenseurs attendus ; valider un environnement installable malgré l’écart actuel aux versions déclarées par `stable-audio-3`.
+- [ ] Charger sur CPU puis retirer l’encodeur de l’instance dédiée avant transfert GPU ; conserver bottleneck, décodeur et prétransform ainsi que l’appel `decode_audio(..., chunked=False)`.
 - [ ] Passer explicitement le périphérique au chargeur de décodage sans modifier le `DEVICE` global des autres composants.
 - [ ] Utiliser le mode évaluation et le mode inférence, avec `float32` comme référence initiale ; différer les optimisations de précision.
 - [ ] Effectuer les conversions de disposition et transferts nécessaires, puis retourner un PCM CPU conforme au contrat.
@@ -133,6 +157,7 @@ Utiliser les mêmes poids, corpus, séquences de latents, graines, fenêtres et 
 Mesurer :
 
 - Erreurs absolues/RMS et métrique relative pertinente entre PCM natif et ONNX, avant overlap-add, puis contrôle du flux assemblé.
+- Variabilité des répétitions d’un même moteur, comparée aux écarts entre moteurs ; essais synthétiques sur plusieurs graines selon le protocole de phase 0.
 - Écoute des attaques, queues et raccords ; absence de clics ou de modification systématique du niveau.
 - Latences médiane, p95 et p99 du décodage complet, temps de préparation et latence de réaction aux commandes.
 - Interruptions audio (`underruns`), charge CPU, mémoire GPU et comportement pendant les transitions.
@@ -162,12 +187,12 @@ Pour SAME-S, un hop de `H` latents donne un budget audio de `H × 4096 / 44100` 
 
 Ordre recommandé : référence → abstraction avec ONNX seul → moteur natif → cycle de vie → interface → campagne comparative → livraison.
 
-Décisions à trancher pendant la phase 0 :
+Décisions de phase 0 et suites nécessaires :
 
-1. Chargement du décodeur seul ou de l’autoencodeur complet pour la première version.
-2. Distribution/résolution des poids natifs et vérification de leur correspondance avec l’ONNX livré.
-3. Périphériques effectivement disponibles pour valider CUDA et MPS ; ne pas annoncer ceux qui n’ont pas été vérifiés.
-4. Liste commune de fenêtres validées et seuils de parité numérique.
+1. Charger l’autoencodeur complet sur CPU puis retirer l’encodeur avant transfert ; différer le chargement sélectif des tenseurs.
+2. Résoudre config et checkpoint SAME-S à la révision `fbeb3dcf53a326e5682f38e22e7f740202d44232` ; implémenter ensuite les contrôles d’identité et le parcours d’obtention des poids.
+3. Valider l’intégration d’abord sur le M1 Max disponible ; qualifier CUDA sur une machine dédiée avant annonce de support.
+4. Conserver les 16 fenêtres paires T2 à T32 et le seuil synthétique historique ; compléter par plusieurs graines, corpus réels, écoute et essais temps réel.
 
 Estimation qualitative : effort modéré pour SAME-S avec sélection à l’arrêt. Les incertitudes principales portent sur le chargement natif, la mémoire et les garanties temporelles pendant les transitions. Le chiffrage en jours doit suivre la phase 0.
 

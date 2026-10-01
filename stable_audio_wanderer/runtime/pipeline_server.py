@@ -7,9 +7,12 @@ import os
 import sys
 import threading
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..vae.decoder_contract import LatentDecoder
 
 
 class PipelineManager:
@@ -33,7 +36,7 @@ class PipelineManager:
         self._broadcaster = None  # set by serve.py after WS server starts
         self._perform_setup_callback = None  # called when perform phase starts
         self._decoder_resource_dir = decoder_resource_dir
-        self._app_decoder = None
+        self._app_decoder: Optional["LatentDecoder"] = None
 
         # Preprocess result for passing VAE + corpus to train/perform
         self._preprocess_result: Optional[dict] = None
@@ -44,7 +47,7 @@ class PipelineManager:
 
     def set_perform_setup_callback(self, callback):
         """Set callback invoked when entering perform phase.
-        Signature: callback(corpus_dir: str, decoder, config: dict) -> None
+        Signature: callback(corpus_dir: str, decoder: LatentDecoder, config: dict) -> None
         """
         self._perform_setup_callback = callback
 

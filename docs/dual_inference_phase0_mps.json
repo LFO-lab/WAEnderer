@@ -1,0 +1,675 @@
+{
+  "recorded_at_utc": "2026-10-01T04:08:50.722826+00:00",
+  "git_head": "d5c758a70cf14f8924dab2668e607d43da5e6a9d",
+  "device": "mps",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.13",
+  "versions": {
+    "torch": "2.13.0",
+    "torchaudio": "2.11.0",
+    "numpy": "2.5.2",
+    "onnx": "1.22.0",
+    "onnxruntime": "1.28.0",
+    "stable-audio-3": "0.1.0",
+    "huggingface-hub": "1.27.0",
+    "safetensors": "0.8.0"
+  },
+  "stable_audio_3_install": {
+    "url": "https://github.com/Stability-AI/stable-audio-3.git",
+    "vcs_info": {
+      "vcs": "git",
+      "commit_id": "779434a908193105335fd8d833418603625b2859"
+    }
+  },
+  "model_sha256": "333dc948f52fa59e9a80a066ffd2ca801d3a54b2fb07c93aa87cac845c547872",
+  "source_revision": "fbeb3dcf53a326e5682f38e22e7f740202d44232",
+  "cached_sources": {
+    "model_config.json": {
+      "sha256": "c329dd0a6f61d0b3ea4f23930059a6c00437005692fed4310924eb286253303a",
+      "bytes": 2040
+    },
+    "model.safetensors": {
+      "sha256": "c19698ce3a0b462acb967ee495e9eb7945221f236968c50206cce8cf22b3d305",
+      "bytes": 433007588
+    }
+  },
+  "mps_fallback_env": null,
+  "protocol": "one seeded normal input std=.05 per even T; one warmup, three timed calls; CPU PCM conversion included; not a real-time qualification",
+  "threads": 1,
+  "windows": [
+    {
+      "window": 2,
+      "shape": [
+        1,
+        2,
+        8192
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.007915699854493141,
+        "rmse": 0.00216120334974012,
+        "snr_db": 23.48388150998249,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009003028273582458,
+        "rmse": 0.002051681724192866,
+        "snr_db": 23.93559435204017,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.008039191365242004,
+        "rmse": 0.001950299909227376,
+        "snr_db": 24.375690246906174,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        19.094125018455088,
+        9.80433402583003,
+        13.009583984967321
+      ],
+      "audio_hop_ms": 92.87981859410431
+    },
+    {
+      "window": 4,
+      "shape": [
+        1,
+        2,
+        16384
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.008461082819849253,
+        "rmse": 0.0019776630443681317,
+        "snr_db": 24.524390870058316,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009584599174559116,
+        "rmse": 0.001992787094037656,
+        "snr_db": 24.45821879530942,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009608305990695953,
+        "rmse": 0.002116823022461773,
+        "snr_db": 23.96697883855388,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        27.037666994147003,
+        16.530124994460493,
+        16.04074996430427
+      ],
+      "audio_hop_ms": 185.75963718820861
+    },
+    {
+      "window": 6,
+      "shape": [
+        1,
+        2,
+        24576
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009053453803062439,
+        "rmse": 0.0020684473310560248,
+        "snr_db": 24.151100334887403,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.00962282926775515,
+        "rmse": 0.0020997855493685123,
+        "snr_db": 24.020490821237715,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.008178282529115677,
+        "rmse": 0.0019417189641100592,
+        "snr_db": 24.78695599103185,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        31.96391701931134,
+        15.206707990728319,
+        16.030416009016335
+      ],
+      "audio_hop_ms": 278.6394557823129
+    },
+    {
+      "window": 8,
+      "shape": [
+        1,
+        2,
+        32768
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.012559473514556885,
+        "rmse": 0.002086639599312088,
+        "snr_db": 24.246577405591655,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009487757459282875,
+        "rmse": 0.0020817266017645075,
+        "snr_db": 24.267052465695542,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.010082535445690155,
+        "rmse": 0.0019976717892035657,
+        "snr_db": 24.646278146023217,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        29.660416999831796,
+        17.44445803342387,
+        16.776208009105176
+      ],
+      "audio_hop_ms": 371.51927437641723
+    },
+    {
+      "window": 10,
+      "shape": [
+        1,
+        2,
+        40960
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.008688446134328842,
+        "rmse": 0.002074971287273641,
+        "snr_db": 24.15242162046477,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.00920744240283966,
+        "rmse": 0.002048473172587391,
+        "snr_db": 24.264057836418537,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.008514244109392166,
+        "rmse": 0.0020760201803851183,
+        "snr_db": 24.192310042403058,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        35.86666699266061,
+        21.220750000793487,
+        19.522499991580844
+      ],
+      "audio_hop_ms": 464.39909297052156
+    },
+    {
+      "window": 12,
+      "shape": [
+        1,
+        2,
+        49152
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009394674096256495,
+        "rmse": 0.0020509521238712526,
+        "snr_db": 24.097973766260715,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.010312655940651894,
+        "rmse": 0.00209159367485842,
+        "snr_db": 23.92753782169457,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.010067801922559738,
+        "rmse": 0.002018029835229803,
+        "snr_db": 24.243015448028196,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        32.20795898232609,
+        18.65129201905802,
+        18.8145840074867
+      ],
+      "audio_hop_ms": 557.2789115646258
+    },
+    {
+      "window": 14,
+      "shape": [
+        1,
+        2,
+        57344
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009479381144046783,
+        "rmse": 0.0020306999546215914,
+        "snr_db": 24.306598743014646,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.010703548789024353,
+        "rmse": 0.002068103775256256,
+        "snr_db": 24.14806737714363,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.008169414475560188,
+        "rmse": 0.001991222174161757,
+        "snr_db": 24.448365529480544,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        30.768249998800457,
+        20.86183294886723,
+        21.919541992247105
+      ],
+      "audio_hop_ms": 650.1587301587301
+    },
+    {
+      "window": 16,
+      "shape": [
+        1,
+        2,
+        65536
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009567869827151299,
+        "rmse": 0.002003533677014335,
+        "snr_db": 24.431602428855193,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009375255554914474,
+        "rmse": 0.0020119462701019587,
+        "snr_db": 24.395207794590263,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.01300346851348877,
+        "rmse": 0.0020194679333782697,
+        "snr_db": 24.386780970164402,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        34.800207999069244,
+        22.557959018740803,
+        22.202708991244435
+      ],
+      "audio_hop_ms": 743.0385487528345
+    },
+    {
+      "window": 18,
+      "shape": [
+        1,
+        2,
+        73728
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.008921917527914047,
+        "rmse": 0.002071454990771379,
+        "snr_db": 24.10926664419261,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.008586645126342773,
+        "rmse": 0.0020793407625575014,
+        "snr_db": 24.076263321493702,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009147681295871735,
+        "rmse": 0.002029219094839832,
+        "snr_db": 24.30687870941003,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        35.77091603074223,
+        23.28483300516382,
+        23.544958035927266
+      ],
+      "audio_hop_ms": 835.9183673469388
+    },
+    {
+      "window": 20,
+      "shape": [
+        1,
+        2,
+        81920
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009797979146242142,
+        "rmse": 0.0019929013499950586,
+        "snr_db": 24.45266676396734,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.008916813880205154,
+        "rmse": 0.002030885806175485,
+        "snr_db": 24.28867270444297,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009915011003613472,
+        "rmse": 0.002031625883361458,
+        "snr_db": 24.267236407316958,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        36.31354199023917,
+        24.670500017236918,
+        25.663790991529822
+      ],
+      "audio_hop_ms": 928.7981859410431
+    },
+    {
+      "window": 22,
+      "shape": [
+        1,
+        2,
+        90112
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.00929377879947424,
+        "rmse": 0.0020304218026058513,
+        "snr_db": 24.32049062867766,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.008958365768194199,
+        "rmse": 0.0020483794052574347,
+        "snr_db": 24.244007978675562,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009699638932943344,
+        "rmse": 0.00202218934271166,
+        "snr_db": 24.35821659428788,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        39.326999976765364,
+        26.8625839962624,
+        27.191874978598207
+      ],
+      "audio_hop_ms": 1021.6780045351475
+    },
+    {
+      "window": 24,
+      "shape": [
+        1,
+        2,
+        98304
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.008980701677501202,
+        "rmse": 0.0020630219379772336,
+        "snr_db": 24.13544287566047,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.00918140634894371,
+        "rmse": 0.002034192711848838,
+        "snr_db": 24.25767792094995,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009537063539028168,
+        "rmse": 0.0020037680788872777,
+        "snr_db": 24.402273663400734,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        41.81462503038347,
+        28.946082980837673,
+        29.21150001930073
+      ],
+      "audio_hop_ms": 1114.5578231292516
+    },
+    {
+      "window": 26,
+      "shape": [
+        1,
+        2,
+        106496
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.009101197123527527,
+        "rmse": 0.0020556773208533505,
+        "snr_db": 24.154002375604286,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009906928986310959,
+        "rmse": 0.0020393890673819043,
+        "snr_db": 24.223099530443758,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.01050768792629242,
+        "rmse": 0.002048176464055689,
+        "snr_db": 24.1908787753713,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        39.57512503257021,
+        30.012791976332664,
+        29.86200002487749
+      ],
+      "audio_hop_ms": 1207.4376417233561
+    },
+    {
+      "window": 28,
+      "shape": [
+        1,
+        2,
+        114688
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.010089995339512825,
+        "rmse": 0.00203020662341445,
+        "snr_db": 24.258605179327077,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.0096505805850029,
+        "rmse": 0.0020194396168244514,
+        "snr_db": 24.304792547700306,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.009714249521493912,
+        "rmse": 0.002039826272951184,
+        "snr_db": 24.21649967965411,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        40.19220802001655,
+        31.050999998115003,
+        31.13512502750382
+      ],
+      "audio_hop_ms": 1300.3174603174602
+    },
+    {
+      "window": 30,
+      "shape": [
+        1,
+        2,
+        122880
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.010429268702864647,
+        "rmse": 0.0020259521334911623,
+        "snr_db": 24.424539169497855,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009391352534294128,
+        "rmse": 0.0020310248479098497,
+        "snr_db": 24.40281804030726,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.010238820686936378,
+        "rmse": 0.002081483594338893,
+        "snr_db": 24.190637514867134,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        43.66374999517575,
+        33.74883398646489,
+        33.79316598875448
+      ],
+      "audio_hop_ms": 1393.1972789115646
+    },
+    {
+      "window": 32,
+      "shape": [
+        1,
+        2,
+        131072
+      ],
+      "native_vs_onnx": {
+        "max_abs_error": 0.010363006964325905,
+        "rmse": 0.002014446555555392,
+        "snr_db": 24.403060847156837,
+        "exact_equal": false
+      },
+      "native_reseeded": {
+        "max_abs_error": 0.0,
+        "rmse": 0.0,
+        "snr_db": null,
+        "exact_equal": true
+      },
+      "native_repeat": {
+        "max_abs_error": 0.009361680131405592,
+        "rmse": 0.0019867434595940603,
+        "snr_db": 24.52334000329856,
+        "exact_equal": false
+      },
+      "onnx_repeat": {
+        "max_abs_error": 0.010110341012477875,
+        "rmse": 0.002023093404163452,
+        "snr_db": 24.357189433699567,
+        "exact_equal": false
+      },
+      "native_ms_three_calls": [
+        47.50670900102705,
+        35.99449998000637,
+        35.27099994244054
+      ],
+      "audio_hop_ms": 1486.077097505669
+    }
+  ],
+  "onnx_random_ops_top_level": {
+    "RandomNormalLike": 2
+  },
+  "parameter_bytes_by_component": {
+    "bottleneck": 2052,
+    "encoder": 214915168,
+    "decoder": 218060896,
+    "pretransform": 0
+  },
+  "noise_regularize": true,
+  "public_vs_export_path_same_seed_cpu": {
+    "max_abs_error": 0.0,
+    "rmse": 0.0,
+    "snr_db": null,
+    "exact_equal": true
+  },
+  "without_encoder_same_seed_cpu": {
+    "max_abs_error": 0.0,
+    "rmse": 0.0,
+    "snr_db": null,
+    "exact_equal": true
+  },
+  "resident_parameter_bytes": 218062948,
+  "mps_allocated_before_decode": 218070784,
+  "mps_allocated_after_decode": 222789376,
+  "mps_driver_allocated_after_decode": 1183481856
+}
