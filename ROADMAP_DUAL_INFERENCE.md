@@ -1,6 +1,6 @@
 # Roadmap — Inférence SAME-S sélectionnable : ONNX CPU / PyTorch GPU
 
-Statut : **phases 0 et 1 terminées le 1er octobre 2026 ; phase 2 non commencée**. Le transport utilise désormais un contrat commun ; ONNX CPU reste le seul moteur du pipeline Web. Audit initial : [rapport de phase 0](docs/DUAL_INFERENCE_PHASE0.md).
+Statut : **phases 0 et 1 terminées ; phase 2 implémentée et validée numériquement sur CPU/MPS le 1er octobre 2026**. Écoute et qualification CUDA encore à effectuer. ONNX CPU reste le seul moteur du pipeline Web en attendant les phases 3/4. Rapports : [phase 0](docs/DUAL_INFERENCE_PHASE0.md), [phase 2](docs/DUAL_INFERENCE_PHASE2.md).
 
 ## Objectif et périmètre
 
@@ -101,17 +101,22 @@ Les noms exacts des classes et champs restent à fixer. Configuration envisagée
 
 ## Phase 2 — Ajouter le moteur PyTorch SAME-S
 
-- [ ] Charger les poids correspondant à la référence ONNX ; tracer leur identité dans les diagnostics.
-- [ ] Utiliser la résolution épinglée décidée en phase 0 et vérifier les tenseurs attendus ; valider un environnement installable malgré l’écart actuel aux versions déclarées par `stable-audio-3`.
-- [ ] Charger sur CPU puis retirer l’encodeur de l’instance dédiée avant transfert GPU ; conserver bottleneck, décodeur et prétransform ainsi que l’appel `decode_audio(..., chunked=False)`.
-- [ ] Passer explicitement le périphérique au chargeur de décodage sans modifier le `DEVICE` global des autres composants.
-- [ ] Utiliser le mode évaluation et le mode inférence, avec `float32` comme référence initiale ; différer les optimisations de précision.
-- [ ] Effectuer les conversions de disposition et transferts nécessaires, puis retourner un PCM CPU conforme au contrat.
-- [ ] Valider les sorties et échauffer les fenêtres annoncées avant d’autoriser la lecture.
-- [ ] Mesurer le temps jusqu’à disponibilité réelle du PCM sur CPU, transferts et synchronisation GPU compris.
-- [ ] Vérifier séparément CUDA et MPS ; produire une erreur explicite en cas de périphérique, dépendance, poids ou opération indisponibles.
+- [x] Charger les poids correspondant à la référence ONNX ; tracer leur identité dans les diagnostics.
+- [x] Utiliser la résolution épinglée décidée en phase 0 et vérifier les tenseurs attendus ; valider un environnement installable malgré l’écart actuel aux versions déclarées par `stable-audio-3`.
+- [x] Charger sur CPU puis retirer l’encodeur de l’instance dédiée avant transfert GPU ; conserver bottleneck, décodeur et prétransform ainsi que l’appel `decode_audio(..., chunked=False)`.
+- [x] Passer explicitement le périphérique au chargeur de décodage sans modifier le `DEVICE` global des autres composants.
+- [x] Utiliser le mode évaluation et le mode inférence, avec `float32` comme référence initiale ; différer les optimisations de précision.
+- [x] Effectuer les conversions de disposition et transferts nécessaires, puis retourner un PCM CPU conforme au contrat.
+- [x] Valider les sorties et échauffer les fenêtres annoncées avant d’autoriser la lecture.
+- [x] Mesurer le temps jusqu’à disponibilité réelle du PCM sur CPU, transferts et synchronisation GPU compris.
+- [x] Implémenter les chemins CUDA/MPS et les erreurs explicites de périphérique, dépendance, poids ou opération indisponibles ; aucun fallback.
+- [x] Vérifier le décodage réel sur MPS et CPU : 128 comparaisons par périphérique, toutes réussies.
+- [ ] Qualifier CUDA sur une machine NVIDIA (matériel absent de l’environnement actuel).
+- [ ] Valider l’écoute des rendus ONNX/natif générés à partir des mêmes latents.
 
 **Critère de sortie :** décodage natif conforme au contrat sur chaque périphérique annoncé comme pris en charge, avec comparaison numérique et écoute sur les mêmes entrées que l’ONNX.
+
+**Implémentation et preuves :** [SameSTorchDecoder](stable_audio_wanderer/vae/torch_decoder.py), [chargeur strict](stable_audio_wanderer/vae/same_s_weights.py), [tests](tests/test_torch_decoder.py), [rapport et installation](docs/DUAL_INFERENCE_PHASE2.md). Installation propre avec Torch/Torchaudio 2.7.1, 71 dépendances compatibles ; 182 tests Python réussis, 1 optionnel ignoré, trois suites Web réussies. La qualification perceptuelle et CUDA n’est pas déclarée terminée. Le cycle de vie configurable du pipeline reste en phase 3.
 
 ## Phase 3 — Intégrer le cycle de vie et la concurrence
 

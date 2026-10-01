@@ -18,6 +18,8 @@ from .onnx_decoder import (
     validate_same_s_corpus,
 )
 from .registry import list_vaes, load_vae_adapter, register_vae
+from .torch_decoder import NativeDecoderInfo, SameSTorchDecoder
+from .same_s_weights import NativeDecoderLoadError
 
 # Import adapters subpackage to trigger registration of all known VAEs.
 from . import adapters  # noqa: F401
@@ -33,6 +35,9 @@ __all__ = [
     "DecoderRuntimeError",
     "DecoderWindowMetadata",
     "LatentDecoder",
+    "NativeDecoderInfo",
+    "NativeDecoderLoadError",
+    "SameSTorchDecoder",
     "SameSOnnxDecoder",
     "SameSAppOnnxDecoder",
     "list_vaes",

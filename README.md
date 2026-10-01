@@ -32,6 +32,11 @@ uv sync --all-extras
 
 ### Dependencies
 
+The native SAME-S decoder API (phase 2; not yet selectable in the Web pipeline)
+has a separately validated installation profile. See
+[native decoder setup and validation](docs/DUAL_INFERENCE_PHASE2.md) for the
+pinned weights, PyTorch environment, supported API and hardware test status.
+
 | Category | Packages |
 |----------|----------|
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
