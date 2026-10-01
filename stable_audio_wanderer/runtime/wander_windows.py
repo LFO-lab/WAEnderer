@@ -14,6 +14,7 @@ pure so the exact JUCE PRNG and hash behaviour can be tested independently.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import copy
 import math
 from typing import Optional, Sequence, Tuple
 
@@ -420,6 +421,13 @@ class WanderWindowPlanner:
             return True, None
         except (TypeError, ValueError, OverflowError) as exc:
             return False, str(exc)
+
+    def fork(self):
+        """Copy traversal state for a staged stream while sharing corpus arrays."""
+        result = copy.copy(self)
+        result._recent_units = list(self._recent_units)
+        result._planned_units = list(self._planned_units)
+        return result
 
     def reset(self) -> None:
         """Clear decode counters and all retained morphology traversal state."""

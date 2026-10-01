@@ -1,0 +1,300 @@
+{
+  "model_sha256": "333dc948f52fa59e9a80a066ffd2ca801d3a54b2fb07c93aa87cac845c547872",
+  "source_revision": "fbeb3dcf53a326e5682f38e22e7f740202d44232",
+  "validation": {
+    "minimum_snr_db": 20,
+    "maximum_rmse": 0.005,
+    "input": "seeded normal, std=0.05",
+    "torch_seed": 0
+  },
+  "results": [
+    {
+      "window": 2,
+      "decode_ms": 78.27970900689252,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        8192
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        8192
+      ],
+      "max_abs_error": 0.006968840956687927,
+      "rmse": 0.002011464951137047,
+      "snr_db": 24.149966674246947
+    },
+    {
+      "window": 4,
+      "decode_ms": 116.55004200292751,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        16384
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        16384
+      ],
+      "max_abs_error": 0.009739212691783905,
+      "rmse": 0.0021301933427310556,
+      "snr_db": 23.89963020823769
+    },
+    {
+      "window": 6,
+      "decode_ms": 161.8015839922009,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        24576
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        24576
+      ],
+      "max_abs_error": 0.008604360744357109,
+      "rmse": 0.002115232310786967,
+      "snr_db": 24.01868241267087
+    },
+    {
+      "window": 8,
+      "decode_ms": 209.51233399682678,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        32768
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        32768
+      ],
+      "max_abs_error": 0.010029329918324947,
+      "rmse": 0.002009436977477967,
+      "snr_db": 24.55668790365217
+    },
+    {
+      "window": 10,
+      "decode_ms": 258.9800410059979,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        40960
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        40960
+      ],
+      "max_abs_error": 0.009106211364269257,
+      "rmse": 0.00204016537406568,
+      "snr_db": 24.296905209036545
+    },
+    {
+      "window": 12,
+      "decode_ms": 314.17316700390074,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        49152
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        49152
+      ],
+      "max_abs_error": 0.010163640603423119,
+      "rmse": 0.0020044109094964364,
+      "snr_db": 24.291959336656923
+    },
+    {
+      "window": 14,
+      "decode_ms": 351.8288329942152,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        57344
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        57344
+      ],
+      "max_abs_error": 0.008097648620605469,
+      "rmse": 0.002018927818396518,
+      "snr_db": 24.31977740220979
+    },
+    {
+      "window": 16,
+      "decode_ms": 390.5874999909429,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        65536
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        65536
+      ],
+      "max_abs_error": 0.010168551467359066,
+      "rmse": 0.0020248180550425294,
+      "snr_db": 24.375389147683748
+    },
+    {
+      "window": 18,
+      "decode_ms": 438.1414169911295,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        73728
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        73728
+      ],
+      "max_abs_error": 0.008745811879634857,
+      "rmse": 0.001993438778533734,
+      "snr_db": 24.45213322284433
+    },
+    {
+      "window": 20,
+      "decode_ms": 490.7132910011569,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        81920
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        81920
+      ],
+      "max_abs_error": 0.009681854397058487,
+      "rmse": 0.0020160457570535606,
+      "snr_db": 24.344757914521974
+    },
+    {
+      "window": 22,
+      "decode_ms": 533.8566669961438,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        90112
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        90112
+      ],
+      "max_abs_error": 0.008900344371795654,
+      "rmse": 0.0020294150798027886,
+      "snr_db": 24.313476603759128
+    },
+    {
+      "window": 24,
+      "decode_ms": 581.4180419984041,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        98304
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        98304
+      ],
+      "max_abs_error": 0.010450487956404686,
+      "rmse": 0.002018680355749186,
+      "snr_db": 24.33337253045845
+    },
+    {
+      "window": 26,
+      "decode_ms": 680.4312499880325,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        106496
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        106496
+      ],
+      "max_abs_error": 0.010188722051680088,
+      "rmse": 0.0020034039006618844,
+      "snr_db": 24.412137700555974
+    },
+    {
+      "window": 28,
+      "decode_ms": 680.4208750108955,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        114688
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        114688
+      ],
+      "max_abs_error": 0.009460646659135818,
+      "rmse": 0.002016097635760934,
+      "snr_db": 24.30528540991308
+    },
+    {
+      "window": 30,
+      "decode_ms": 727.9047089978121,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        122880
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        122880
+      ],
+      "max_abs_error": 0.011087216436862946,
+      "rmse": 0.0020748928877569327,
+      "snr_db": 24.215091035151517
+    },
+    {
+      "window": 32,
+      "decode_ms": 780.0664169917582,
+      "shape_match": true,
+      "torch_shape": [
+        1,
+        2,
+        131072
+      ],
+      "onnx_shape": [
+        1,
+        2,
+        131072
+      ],
+      "max_abs_error": 0.00934496521949768,
+      "rmse": 0.002087324077540878,
+      "snr_db": 24.101125963307112
+    }
+  ]
+}

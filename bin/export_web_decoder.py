@@ -19,7 +19,7 @@ except ModuleNotFoundError:  # Direct execution puts bin/ on sys.path.
     from export_vst_bundle import export_same_s_decoder_onnx
 
 
-WINDOWS = (2, 4, 8, 16, 32)
+WINDOWS = tuple(range(2, 33, 2))
 SAMPLES_PER_LATENT = 4096
 SOURCE_MODEL = "stabilityai/SAME-S"
 SOURCE_URL = "https://huggingface.co/stabilityai/SAME-S"

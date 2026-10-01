@@ -15,3 +15,9 @@ upstream license, the conversion description, and the generated ONNX SHA-256 in
 complete Stability AI Community License and Gemma Terms of Use are stored in the
 repository-level `licenses/` directory and are included in built distributions.
 The derived ONNX decoder is not covered by WÆnderer's Apache-2.0 license.
+
+The web exporter now validates every even window from T2 to T32. For an existing
+packaged graph, `bin/validate_decoder_windows.py` validates the additional sizes
+against the pinned Torch checkpoint and updates local metadata without replacing
+the graph. `even_window_validation.json` records numerical parity and CPU timing;
+these checks do not replace listening or output-device soak tests.

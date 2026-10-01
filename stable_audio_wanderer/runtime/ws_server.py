@@ -10,6 +10,8 @@ import time
 from typing import Callable, Optional, Set, Tuple
 import numpy as np
 
+from .erae_visual import VisualRelay, geometry_packets
+
 
 try:
     import websockets
@@ -69,6 +71,8 @@ class WSBroadcaster:
         self.interval = 1.0 / fps
 
         self._clients: Set = set()
+        self.visual = VisualRelay()
+        self.visual_select = None
         self._running = False
         self._server = None
         self._loop = None
@@ -146,6 +150,19 @@ class WSBroadcaster:
         # the empty pre-bind corpus immediately so it need not reconnect to see
         # the manual point cloud and file ids.
         self.broadcast_corpus()
+
+    def bind_visual(self, session=None, revision=None):
+        """Publish the same binding identity as OSC, after geometry is ready."""
+        identity, packets = None, ()
+        if session and revision and self._manual_points_3d_norm is not None:
+            identity = (session, revision)
+            ids = self._manual_file_ids if self._manual_file_ids is not None else self.nav._file_ids
+            packets = geometry_packets(session, revision, self._manual_points_3d_norm,
+                                       self._manual_color_values_norm, ids)
+        if self._loop:
+            self._loop.call_soon_threadsafe(self.visual.bind, identity, packets)
+        else:
+            self.visual.bind(identity, packets)
 
     def broadcast_corpus(self):
         """Push the currently bound corpus to every connected client."""
@@ -545,6 +562,7 @@ class WSBroadcaster:
             pass
         finally:
             self._clients.discard(websocket)
+            self.visual.remove(websocket)
             print(f"[ws] Client disconnected ({len(self._clients)} total)")
     
     async def _handle_message(self, websocket, message: str):
@@ -552,6 +570,13 @@ class WSBroadcaster:
         try:
             data = json.loads(message)
             msg_type = data.get("type", "")
+            if await self.visual.handle(websocket, data):
+                return
+
+            if msg_type == 'cursor_index' and ('visual_session' in data or 'visual_corpus' in data):
+                if self.visual_select:
+                    self.visual_select(data.get('visual_session'), data.get('visual_corpus'), data.get('index'))
+                return
 
             # Route pipeline_* messages to the pipeline handler
             if msg_type.startswith("pipeline_"):

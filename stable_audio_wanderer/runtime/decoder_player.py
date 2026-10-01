@@ -245,6 +245,7 @@ class GenerationPcmBuffer:
         # This watermark lets the callback keep consuming the committed stream
         # while immediately invalidating a superseded staged stream.
         self._requested_generation = None
+        self._continuation_generation = None
 
         self._fade_total = 0
         self._fade_progress = 0
@@ -345,7 +346,7 @@ class GenerationPcmBuffer:
         self._next_pending_generation = None
         self._next_pending_cursor = None
 
-    def request_generation(self, generation: int) -> bool:
+    def request_generation(self, generation: int, *, continue_current: bool = False) -> bool:
         """Declare the newest requested generation without interrupting playback.
 
         Older staged PCM is discarded immediately unless it is already audible
@@ -353,11 +354,15 @@ class GenerationPcmBuffer:
         successor takes over.  The committed generation remains available
         until replacement PCM can complete a transition.  Enqueue rejects
         results below this watermark, closing the decode-result/write race.
+        With continue_current=True, only the currently committed generation may
+        keep receiving PCM until promotion. A later hard request revokes that
+        exception; an obsolete or retired generation can never use it.
         """
         gen = int(generation)
         if self._requested_generation is not None and gen < self._requested_generation:
             return False
         self._requested_generation = gen
+        self._continuation_generation = self._current_generation if continue_current else None
         if self._pending_generation is not None and self._pending_generation < gen:
             if self._transition_progress > 0:
                 # This generation is already audible.  Finish only its current
@@ -397,6 +402,13 @@ class GenerationPcmBuffer:
         chunk = _PcmChunk(pcm, indices, frame_samples)
         gen = int(generation)
 
+        # Only an explicitly authorized, still-audible stream may be refilled
+        # below the watermark. Hard resets revoke this permission atomically.
+        if gen == self._current_generation == self._continuation_generation:
+            if self._current_cursor is None:
+                self._current_cursor = _PresentationCursor(gen)
+            self._queue.append(chunk)
+            return True
         if self._requested_generation is not None and gen < self._requested_generation:
             return False
 
@@ -1007,10 +1019,10 @@ class DecoderPlayer:
         with self._queue_lock:
             return self._pcm_buffer.get_presentation_state()
 
-    def request_generation(self, generation: int) -> bool:
+    def request_generation(self, generation: int, *, continue_current: bool = False) -> bool:
         """Invalidate staged PCM older than ``generation`` while current PCM plays."""
         with self._queue_lock:
-            return self._pcm_buffer.request_generation(int(generation))
+            return self._pcm_buffer.request_generation(int(generation), continue_current=continue_current)
 
     def fade_to_silence(self, samples: int = GENERATION_TRANSITION_SAMPLES):
         """Request a callback-side fade, used after a latched runtime failure."""

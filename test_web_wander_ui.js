@@ -55,6 +55,7 @@ const context = vm.createContext({
     capture(payload) { sent.push(JSON.parse(payload)); },
 });
 
+vm.runInContext(fs.readFileSync("web/erae_math.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("web/sketch.js", "utf8"), context, {
     filename: "web/sketch.js",
 });

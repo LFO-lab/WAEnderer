@@ -114,6 +114,7 @@ function currentModeUsesShared3DView() {
 }
 
 function draw() {
+    if (typeof eraePublishView === "function") eraePublishView();
     background(...COLORS.background);
 
     if (drawMode === 'training') {
@@ -289,101 +290,26 @@ function drawTrainingCurves() {
     }
 }
 
+function manualCameraSnapshot() {
+    return {yaw: manualViewYawDeg, pitch: manualViewPitchDeg, distance: manualViewDistance,
+        width, height, colour_a: manualColorA.slice(), colour_b: manualColorB.slice(), files: COLORS.files};
+}
+
 function projectManualPoint3D(point) {
-    const p = point || [0.5, 0.5, 0.5];
-    const x = (p[0] - 0.5) * 2.0;
-    const y = (p[1] - 0.5) * 2.0;
-    const z = (p[2] - 0.5) * 2.0;
-
-    const yaw = radians(manualViewYawDeg);
-    const pitch = radians(manualViewPitchDeg);
-    const cy = cos(yaw);
-    const sy = sin(yaw);
-    const cp = cos(pitch);
-    const sp = sin(pitch);
-
-    const x1 = x * cy + z * sy;
-    const z1 = -x * sy + z * cy;
-
-    const y2 = y * cp - z1 * sp;
-    const z2 = y * sp + z1 * cp;
-
-    const depth = z2 + manualViewDistance;
-    const perspective = 1.0 / max(0.25, depth);
-
-    const screenX = width * 0.5 + x1 * perspective * width * 0.9;
-    const screenY = height * 0.5 - y2 * perspective * height * 0.9;
-
-    return {
-        x: screenX,
-        y: screenY,
-        depth,
-        perspective,
-    };
+    return EraeMath.project(point || [.5,.5,.5], manualCameraSnapshot());
 }
 
 function cameraToWorldVector(vx, vy, vz) {
-    const yaw = radians(manualViewYawDeg);
-    const pitch = radians(manualViewPitchDeg);
-    const cy = cos(yaw);
-    const sy = sin(yaw);
-    const cp = cos(pitch);
-    const sp = sin(pitch);
-
-    const y1 = vy * cp + vz * sp;
-    const z1 = -vy * sp + vz * cp;
-
-    const xw = vx * cy - z1 * sy;
-    const zw = vx * sy + z1 * cy;
-    return [xw, y1, zw];
+    return EraeMath.world([vx,vy,vz], manualCameraSnapshot());
 }
 
 function getManualRayFromScreen(mx, my) {
-    const u = (mx - width * 0.5) / (width * 0.9);
-    const v = -(my - height * 0.5) / (height * 0.9);
-
-    const origin = cameraToWorldVector(0, 0, -manualViewDistance);
-    const dirRaw = cameraToWorldVector(u, v, 1.0);
-    const mag = sqrt(dirRaw[0] * dirRaw[0] + dirRaw[1] * dirRaw[1] + dirRaw[2] * dirRaw[2]);
-    const dir = mag > 1e-6 ? [dirRaw[0] / mag, dirRaw[1] / mag, dirRaw[2] / mag] : [0, 0, 1];
-    return { origin, dir };
+    return EraeMath.ray(mx, my, manualCameraSnapshot());
 }
 
 function findClosestManualPointIndex(mx, my) {
-    if (!manualCorpusPoints3D || manualCorpusPoints3D.length === 0) {
-        return -1;
-    }
-    const ray = getManualRayFromScreen(mx, my);
-
-    let bestIdx = -1;
-    let bestScore = Infinity;
-    for (let i = 0; i < manualCorpusPoints3D.length; i++) {
-        const pt = manualCorpusPoints3D[i];
-        const px = (pt[0] - 0.5) * 2.0;
-        const py = (pt[1] - 0.5) * 2.0;
-        const pz = (pt[2] - 0.5) * 2.0;
-
-        const dx = px - ray.origin[0];
-        const dy = py - ray.origin[1];
-        const dz = pz - ray.origin[2];
-        const t = dx * ray.dir[0] + dy * ray.dir[1] + dz * ray.dir[2];
-        if (t <= 0.0) continue;
-
-        const cx = ray.origin[0] + t * ray.dir[0];
-        const cy = ray.origin[1] + t * ray.dir[1];
-        const cz = ray.origin[2] + t * ray.dir[2];
-        const ex = px - cx;
-        const ey = py - cy;
-        const ez = pz - cz;
-        const score = ex * ex + ey * ey + ez * ez;
-
-        if (score < bestScore) {
-            bestScore = score;
-            bestIdx = i;
-        }
-    }
-
-    return bestIdx;
+    if (typeof eraePickingReady === "function" && !eraePickingReady()) return -1;
+    return EraeMath.pick(manualCorpusPoints3D, mx, my, manualCameraSnapshot());
 }
 
 function applyManualPointSelection(pointIdx) {
@@ -431,6 +357,7 @@ function sendCursorFor3DPoint(pointIdx) {
     ws.send(JSON.stringify({
         type: 'cursor_index',
         index: corpusIndex,
+        ...(typeof eraeSelectionIdentity === 'function' ? eraeSelectionIdentity() : {}),
     }));
 }
 
@@ -529,7 +456,7 @@ function drawManual3DScene() {
     if (manualCorpusPoints3D.length > 0) {
         const hasColorAxis = manualCorpusColorValues.length === manualCorpusPoints3D.length;
         const projected = [];
-        for (let i = 0; i < manualCorpusPoints3D.length; i++) {
+        for (let i = 0; i < manualCorpusPoints3D.length; i += Math.max(1, Math.ceil(manualCorpusPoints3D.length/2000))) {
             projected.push({
                 i,
                 p: projectManualPoint3D(manualCorpusPoints3D[i]),
@@ -627,6 +554,7 @@ function connectWebSocket() {
             wsConnected = true;
             updateConnectionStatus(true);
             console.log('WebSocket connected');
+            if (typeof eraeSubscribe === 'function') eraeSubscribe();
             sendTransportSetMode(selectedNavigationMode);
             sendManualControls();
             // Request pipeline state if running via serve.py
@@ -639,6 +567,7 @@ function connectWebSocket() {
             wsConnected = false;
             updateConnectionStatus(false);
             console.log('WebSocket disconnected');
+            if (typeof eraeDisconnected === 'function') eraeDisconnected();
             setTimeout(connectWebSocket, 3000);
         };
         
@@ -701,6 +630,7 @@ function applyNavigationCursor(nav, authoritativeTrajectory = false) {
 }
 
 function handleMessage(data) {
+    if (typeof eraeHandleMessage === "function" && eraeHandleMessage(data)) return;
     // Route pipeline messages to pipeline.js handler
     if (data.type && data.type.startsWith('pipeline_')) {
         if (typeof handlePipelineMessage === 'function') {

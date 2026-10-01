@@ -271,7 +271,7 @@ SAW_RELEASE_BUILD=1 uv run python setup.py build_py
 
 The exporter passes the registered model name `same-s` to `stable-audio-3`
 (a filesystem placeholder such as `/path/to/same-s` is not valid). It verifies
-T2/T4/T8/T16/T32 against Torch, then writes the dynamic
+every even T from T2 through T32 against Torch, then writes the dynamic
 model, lightweight metadata, and parity report into the package resource
 directory. Release builds fail when any of these inputs is absent.
 The exporter downloads both SAME-S files from that exact revision and refuses
@@ -293,15 +293,20 @@ available. The decoder loads lazily on Start and checks the packaged model,
 CPU ONNX session, I/O contract, selected window, and corpus VAE geometry. A
 non-SAME-S corpus reports a visible compatibility error at Start.
 
-T2 is selected initially, with T4, T8, T16, and T32 also available. The window
-selector remains active during playback; a change is decoded
-into a generation-tagged staging buffer and handed off with a 256-sample
-crossfade only after its first complete hop is ready. Rapid changes are
-latest-wins.
+T2 is selected initially. Newly exported decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window
+selector remains active during playback. The current T keeps generating audio
+while one replacement stream is prepared. After the replacement has enough
+buffered audio, playback crossfades over 256 samples. Rapid changes update a
+single latest target: an in-flight replacement is allowed to finish and become
+audible, then the engine pursues the newest target. Intermediate sizes that have
+not started decoding are skipped. Requested T and audible T remain separate in
+WebUI/OSC feedback.
 
 The Web runtime emits exactly one manifest-declared audio hop per decode using
-the JUCE reference sine-window normalized full-output overlap-add. ONNX and OLA
-run on the decode worker; the sounddevice callback only consumes prepared PCM,
+the JUCE reference sine-window normalized full-output overlap-add. One coordinator
+owns navigation and separate per-stream overlap-add/planner state. At most two
+CPU ONNX calls run concurrently, sharing the loaded model; there is no decode-job
+backlog. The sounddevice callback only consumes prepared PCM,
 applies the transition/gain, and zero-fills an underrun. There is no Torch or
 CoreML fallback. A runtime ONNX failure is shown in Decoder state, fades the
 current audio to silence, and requires a new transport Start.
@@ -562,6 +567,23 @@ stable-audio-wanderer/
 └── setup.py                # Release-build compliance hook
 ```
 
+## Citation
+
+If you use or adapt WÆnderer (WAEnderer) in research, software, performances,
+or other creative work, please cite the project in the associated publication,
+documentation, or credits using this DOI:
+
+**[10.5281/zenodo.22275276](https://doi.org/10.5281/zenodo.22275276)**
+
+Use the author list, title, year, and version provided by the Zenodo record
+when preparing a full bibliographic reference.
+
+This citation is requested as scholarly and creative credit; it is not an
+additional condition of the Apache License 2.0. When redistributing the code
+or derivative works, you must comply with the license's redistribution
+conditions, including preserving applicable copyright and attribution notices
+and the relevant attribution notices in [`NOTICE`](NOTICE).
+
 ## License
 
 Except where otherwise noted, WÆnderer's original source code and documentation
@@ -593,3 +615,54 @@ for every source or conference build.
 - [EAR VAE](https://huggingface.co/earlab/EAR_VAE) by earlab
 - [FAISS](https://github.com/facebookresearch/faiss) for fast nearest neighbor search
 - [p5.js](https://p5js.org/) for web visualization
+
+### Adaptive windows and Manual textures (Web ONNX)
+
+After loading Perform, select **Fixed** or **Adaptive** window length. Adaptive
+mode offers minimum and maximum T from the loaded decoder's supported sizes.
+It shortens windows during movement and grows them gradually during stability.
+Transitions retain navigation state and use the existing staged audio crossfade;
+large windows still take longer to decode. The standalone Torch performer keeps
+its existing controls.
+
+Only Manual mode offers **Window content**:
+
+- **Source sequence** (default): retain the original consecutive source-file loop.
+- **Held latent**: sustain the selected latent, smoothing changes of centre.
+- **Local variation**: smoothly interpolate nearby corpus latents, with adjustable
+  variation amount. Zero variation behaves like Held latent. Variation continues
+  across decode windows and does not itself trigger adaptive shortening.
+
+For synthesized textures the map shows the timbral centre, not exact source
+frames. Wander's source/order controls and Reorganized construction are unchanged.
+
+Existing local decoder resources can be validated and expanded without exporting
+another graph using `PYTHONPATH=. HF_HUB_OFFLINE=1 python bin/validate_decoder_windows.py`
+when the pinned Torch checkpoint is cached. This writes a separate parity/timing
+report and updates decoder metadata only after every size passes. The packaged
+conversion has approximate Torch parity; the report records its numerical error.
+
+
+### Continuous decoder-window handoff validation
+
+The transport regression suite deliberately blocks a replacement decode while
+consuming more than the current audio reserve and issuing rapid T requests. It
+checks continued old-T decoding, zero buffer underruns in that scenario, audible
+intermediate handoff followed by the latest target, one navigation owner, and at
+most two concurrent inference calls. Hard resets still reject stale results;
+stop joins in-flight calls before resetting PCM. This fixes transition starvation,
+not CPU overload: the active decoder must still sustain real-time throughput.
+
+ONNX Runtime documents concurrent `Run` support in its
+[session API](https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/session/inference_session.h).
+This path uses the existing CPU execution provider with one internal thread per
+call. Actual Erae/Live playback and a sustained hardware soak remain acceptance
+checks; offline decoding and a simulated PCM consumer do not exercise the audio
+device driver.
+
+A local offline smoke check on 2026-09-17 used the installed dynamic ONNX model:
+concurrent T2 decodes took about 70.5–71.5 ms (92.9 ms of audio per hop), while T32
+took about 817 ms. A four-second simulated real-time PCM consumer observed
+T2 → T32 → T8 with zero underrun callbacks after rapid requests for T32/T16/T8.
+These are short measurements with synthetic latents, not a hardware soak or a
+performance guarantee under other system loads.

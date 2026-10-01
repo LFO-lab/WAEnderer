@@ -1,5 +1,4 @@
 from pathlib import Path
-import queue
 from types import SimpleNamespace
 import threading
 import time
@@ -225,11 +224,12 @@ class FakePlayer:
         self.fade_count = 0
         self.underruns = 0
         self.requested_generation = None
+        self.continuation_generation = None
         self.provenance_writes = []
         self.presentation_state = None
         self.capture_calls = []
 
-    def request_generation(self, generation):
+    def request_generation(self, generation, *, continue_current=False):
         with self._lock:
             generation = int(generation)
             if (
@@ -238,6 +238,7 @@ class FakePlayer:
             ):
                 return False
             self.requested_generation = generation
+            self.continuation_generation = self.current_generation if continue_current else None
             if self.pending_generation is not None and self.pending_generation < generation:
                 self.buffers.pop(self.pending_generation, None)
                 self.pending_generation = None
@@ -255,6 +256,7 @@ class FakePlayer:
             if (
                 self.requested_generation is not None
                 and generation < self.requested_generation
+                and generation != self.continuation_generation
             ):
                 return False
             self.writes.append((generation, np.asarray(hop).copy()))
@@ -477,31 +479,28 @@ def test_decode_rejects_out_of_range_provenance_before_player_acceptance():
     controller.stop()
 
 
-def test_rapid_window_change_discards_in_flight_stale_decode_result():
+def test_rapid_window_change_finishes_candidate_then_pursues_latest_target():
     controller, decoder, player = _controller()
-    ok, _ = controller.start()
-    assert ok
-    _wait_until(lambda: player.started)
-    assert all(hop.shape == (2, 8) for generation, hop in player.writes if generation == 1)
-    assert player.generation_buffer_duration(1) >= 0.120
-
-    decoder.block_once()
-    ok, _ = controller.set_decoder_window(4)
-    assert ok
-    assert decoder.decode_entered.wait(timeout=2.0)
-    ok, _ = controller.set_decoder_window(2)
-    assert ok
-    decoder.decode_release.set()
-
-    _wait_until(
-        lambda: any(generation >= 3 for generation, _hop in player.writes)
-    )
-    assert not any(generation == 2 for generation, _hop in player.writes)
-    assert not any(
-        accepted["generation"] == 2 for accepted in player.provenance_writes
-    )
-    assert controller.get_extra_state()["decoder"]["requested_window"] == 2
-    controller.stop()
+    controller.start()
+    try:
+        _wait_until(lambda: player.started)
+        decoder.block_once()
+        assert controller.set_decoder_window(4)[0]
+        assert decoder.decode_entered.wait(timeout=2.0)
+        assert controller.set_decoder_window(8)[0]
+        assert controller.set_decoder_window(2)[0]
+        decoder.decode_release.set()
+        _wait_until(lambda: player.pending_generation == 2)
+        assert any(generation == 2 for generation, _ in player.writes)
+        assert not any(generation == 3 for generation, _ in player.writes)
+        # FakePlayer has no audio callback; explicitly complete its handoff.
+        player.current_generation, player.pending_generation = 2, None
+        _wait_until(lambda: player.pending_generation == 4)
+        assert controller.get_extra_state()["decoder"]["requested_window"] == 2
+        assert not any(generation == 3 for generation, _ in player.writes)
+    finally:
+        decoder.decode_release.set()
+        controller.stop()
 
 
 def test_web_onnx_navigation_uses_the_global_manifest_window():
@@ -515,7 +514,7 @@ def test_web_onnx_navigation_uses_the_global_manifest_window():
     assert ok
     _wait_until(lambda: 4 in controller.nav.fixed_retrieval_windows)
     assert None not in controller.nav.fixed_retrieval_windows
-    assert player.requested_generation == 2
+    _wait_until(lambda: player.requested_generation == 2)
     controller.stop()
 
 
@@ -656,22 +655,10 @@ def test_wander_request_uses_navigation_cadence_and_final_anchor_without_tail_re
 
 def test_reorganized_request_provenance_preserves_tail_reuse_order():
     controller, _decoder, _player = _controller()
-    latent_queue = queue.Queue(maxsize=controller.LATENT_QUEUE_SIZE)
-    with controller._lock:
-        controller._active_mode = "reorganized"
-        controller._requested_generation = 1
-        controller._requested_window = 4
-        controller._latent_queue = latent_queue
-        controller._running.set()
+    lane = controller._new_lane(1, 4)
+    first = controller._lane_request(lane, "reorganized")
+    second = controller._lane_request(lane, "reorganized")
 
-    producer = threading.Thread(target=controller._producer_loop)
-    producer.start()
-    first = latent_queue.get(timeout=1.0)
-    second = latent_queue.get(timeout=1.0)
-    controller._running.clear()
-    producer.join(timeout=1.0)
-
-    assert not producer.is_alive()
     assert first.frame_indices == (1, 2, 3, 4)
     assert second.frame_indices == (3, 4, 5, 6)
     assert first.raw_latents[:, 0].tolist() == [1.0, 2.0, 3.0, 4.0]
@@ -780,3 +767,169 @@ def test_runtime_failure_latches_visible_error_and_only_new_start_clears_it():
     assert restarted_state["transport"]["error"] is None
     assert restarted_state["transport"]["running"]
     controller.stop()
+
+
+def test_window_controls_validate_atomically_and_are_reported():
+    controller, _, _ = _controller()
+    assert controller.set_window_controls({'mode': 'adaptive', 'minimum': 4, 'maximum': 16})[0]
+    assert not controller.set_window_controls({'minimum': 32, 'content': 'held'})[0]
+    state = controller._decoder_state()['window_controls']
+    assert state == dict(mode='adaptive', minimum=4, maximum=16, content='source', variation=.25)
+    assert not controller.set_window_controls({'variation': float('nan')})[0]
+    assert not controller.set_window_controls({'minimum': 3})[0]
+
+
+def test_manual_held_texture_and_overlap_survive_window_change():
+    controller, _, _ = _controller(initial_mode='manual')
+    controller.Z_concat[:] = np.arange(12)[:, None]
+    assert controller.set_window_controls({'content': 'held'})[0]
+    first = controller._manual_request(0, 8)
+    np.testing.assert_array_equal(first.raw_latents, np.tile(first.raw_latents[0], (8, 1)))
+    second = controller._manual_request(1, 4)
+    np.testing.assert_array_equal(second.raw_latents[:2], first.raw_latents[-2:])
+    assert len(set(second.frame_indices)) == 1
+
+
+def test_manual_content_controls_do_not_reset_wander():
+    controller, _, player = _controller()
+    serial = controller._wander_reset_serial
+    assert controller.set_window_controls({'content': 'variation'})[0]
+    assert controller._wander_reset_serial == serial
+    assert player.requested_generation is None
+
+
+def test_adaptive_change_preserves_wander_planner_state():
+    controller, _, _ = _controller()
+    serial = controller._wander_reset_serial
+    assert controller.set_decoder_window(4, adaptive=True)[0]
+    assert controller._wander_reset_serial == serial
+
+
+def test_adaptive_waits_for_staged_generation_before_changing_again():
+    controller, _, player = _controller(initial_window=8)
+    controller.set_window_controls({'mode': 'adaptive'})
+    controller._running.set()
+    controller._requested_generation = 1
+    controller._generation_counter = 1
+    player.current_generation = 1
+    controller._adaptive.motion = 10
+    controller._adapt_window()
+    assert controller._requested_window == 2
+    requested = controller._requested_generation
+    controller._adaptive.motion = 0
+    controller._adaptive.changed_at = -100
+    controller._adapt_window()
+    assert controller._requested_generation == requested
+    controller._running.clear()
+
+
+def test_content_change_stages_manual_audio_but_does_not_change_navigation():
+    controller, _, player = _controller(initial_mode='manual')
+    controller._running.set()
+    assert controller.set_window_controls({'content': 'held'})[0]
+    assert player.requested_generation == 1
+    assert controller.nav.counter == 0
+    controller._running.clear()
+
+
+def test_long_candidate_decode_keeps_rendering_and_latest_target_eventually_plays():
+    from test_decoder_player import _bare_player
+    controller, decoder, _ = _controller()
+    player = _bare_player(sr=100)
+    player.underruns = 0
+    player.started = False
+    player.start = lambda: setattr(player, 'started', True)
+    player.stop = lambda: setattr(player, 'started', False)
+    controller.decoder = player
+    entered, release = threading.Event(), threading.Event()
+    original_decode = decoder.decode
+    lock = threading.Lock()
+    concurrent = peak = 0
+    nav_threads = set()
+    original_step = controller.nav.step
+    def step(**kw):
+        nav_threads.add(threading.current_thread().name)
+        return original_step(**kw)
+    controller.nav.step = step
+    def decode(latents):
+        nonlocal concurrent, peak
+        with lock:
+            concurrent += 1
+            peak = max(peak, concurrent)
+        try:
+            if len(latents) == 4 and not entered.is_set():
+                entered.set()
+                assert release.wait(3)
+            return original_decode(latents)
+        finally:
+            with lock:
+                concurrent -= 1
+    decoder.decode = decode
+    def render():
+        with player._queue_lock:
+            audio, underrun = player._pcm_buffer.render(1)
+        assert not underrun
+        assert np.all(np.isfinite(audio)) and np.all(audio > 0)
+        return audio
+    controller.start()
+    try:
+        _wait_until(lambda: player.started)
+        controller.set_decoder_window(4)
+        assert entered.wait(2)
+        calls = decoder.calls.count(2)
+        # More than the initial audio reserve is consumed while T4 is blocked.
+        for i in range(80):
+            if i % 4 == 0:
+                controller.set_decoder_window((8, 16, 32)[(i//4) % 3])
+            assert np.allclose(render(), 2)
+            time.sleep(.005)
+        assert len(controller._generation_windows) <= 4
+        assert decoder.calls.count(2) > calls + 3
+        assert peak == 2
+        assert nav_threads == {'saw-onnx-decode'}
+        controller.set_decoder_window(8)
+        release.set()
+        seen = set()
+        deadline = time.monotonic()+4
+        while time.monotonic() < deadline:
+            render()
+            seen.add(player.current_generation)
+            if controller.get_erae_state()['active_window'] == 8:
+                break
+            time.sleep(.005)
+        assert 2 in seen  # The completed intermediate T4 was actually audible.
+        assert controller.get_erae_state()['active_window'] == 8
+        assert controller.get_erae_state()['requested_window'] == 8
+        assert peak == 2
+    finally:
+        release.set()
+        controller.stop()
+
+
+def test_hard_reset_during_candidate_decode_rejects_old_candidate():
+    controller, decoder, player = _controller()
+    controller.start()
+    try:
+        _wait_until(lambda: player.started)
+        decoder.block_once()
+        controller.set_decoder_window(4)
+        assert decoder.decode_entered.wait(2)
+        controller.reset_wander(idx=3)
+        decoder.decode_release.set()
+        _wait_until(lambda: any(g == 3 for g, _ in player.writes))
+        assert not any(g == 2 for g, _ in player.writes)
+    finally:
+        decoder.decode_release.set()
+        controller.stop()
+
+
+def test_staged_planners_share_corpus_but_not_traversal_or_texture_state():
+    controller, _, _ = _controller()
+    active = controller._new_lane(1, 2)
+    active.reset_serial = 7
+    candidate = controller._new_lane(2, 4, active)
+    assert candidate.reset_serial == 7
+    assert candidate.planner._latents is active.planner._latents
+    candidate.planner._recent_units.append(3)
+    assert not active.planner._recent_units
+    assert candidate.texture.rng is not active.texture.rng

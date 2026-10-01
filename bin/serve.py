@@ -180,6 +180,10 @@ def main():
         default="stabilityai/stable-audio-open-1.0",
         help="HuggingFace model ID for the VAE.",
     )
+    ap.add_argument("--erae-osc", action="store_true", help="Enable bidirectional Erae OSC")
+    ap.add_argument("--erae-osc-host", default="127.0.0.1")
+    ap.add_argument("--erae-osc-port", type=int, default=9000)
+    ap.add_argument("--erae-osc-fps", type=float, default=30.0)
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -192,21 +196,41 @@ def main():
 
     pipeline = PipelineManager(pretrained=args.pretrained)
 
+    # Bind early: report OSC port conflicts before starting the GUI services.
+    erae_osc = None
+    if args.erae_osc:
+        from stable_audio_wanderer.runtime.erae_osc import EraeOscServer
+        erae_osc = EraeOscServer(args.erae_osc_host, args.erae_osc_port,
+                                 fps=args.erae_osc_fps).start()
+        print(f"[erae] OSC listening on {erae_osc.address}")
+
     # Start HTTP server
     _start_http_server(web_dir, args.http_port)
 
     # Mutable container for the controller reference
     _controller_ref = [None]
+    _setup_lock = threading.RLock()
+    shutdown_requested = threading.Event()
 
     def on_perform_setup(corpus_dir, decoder, config):
-        controller = _setup_perform_phase(
-            corpus_dir, decoder, config, broadcaster, args.port
-        )
-        _controller_ref[0] = controller
+        with _setup_lock:
+            if shutdown_requested.is_set():
+                raise RuntimeError("application is shutting down")
+            if erae_osc is not None:
+                erae_osc.bind(None)
+                broadcaster.bind_visual()
+            previous, _controller_ref[0] = _controller_ref[0], None
+            if previous is not None:
+                previous.close()
+            controller = _setup_perform_phase(
+                corpus_dir, decoder, config, broadcaster, args.port
+            )
+            _controller_ref[0] = controller
+            if erae_osc is not None:
+                erae_osc.bind(controller)
+                broadcaster.bind_visual(erae_osc.session, erae_osc.revision)
 
     pipeline.set_perform_setup_callback(on_perform_setup)
-
-    shutdown_requested = threading.Event()
 
     def request_shutdown(reason="web"):
         if shutdown_requested.is_set():
@@ -226,6 +250,8 @@ def main():
         on_exit_request=request_shutdown,
         pipeline_message_handler=pipeline.handle_message,
     )
+    if erae_osc is not None:
+        broadcaster.visual_select = erae_osc.select_from_view
     pipeline.set_broadcaster(broadcaster)
 
     print()
@@ -242,8 +268,12 @@ def main():
         pass
     finally:
         print("\n[serve] Shutting down...")
-        if _controller_ref[0] is not None:
-            _controller_ref[0].close()
+        shutdown_requested.set()
+        with _setup_lock:
+            if erae_osc is not None:
+                erae_osc.close()
+            if _controller_ref[0] is not None:
+                _controller_ref[0].close()
         broadcaster.shutdown()
 
     print("[serve] Done.")

@@ -30,6 +30,8 @@ class FakeElement {
 const ids = [
     "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
     "perform-start-btn", "btn-start", "pp-vae-select", "pp-vae-path-group",
+    "window-mode", "window-minimum", "window-maximum", "manual-content", "manual-variation",
+    "adaptive-window-range", "manual-content-controls", "manual-variation-control",
 ];
 const elements = new Map(ids.map(id => [id, new FakeElement(id)]));
 const sent = [];
@@ -55,7 +57,7 @@ vm.runInContext("setupPipelineControls();", context);
 const windows = elements.get("perform-decoder-window");
 const start = elements.get("perform-start-btn");
 const transportStart = elements.get("btn-start");
-assert.deepEqual(windows.options.map(option => option.value), ["2", "4", "8", "16", "32"]);
+assert.deepEqual(windows.options.map(option => option.value), ["2"]);
 assert.equal(windows.value, "2");
 
 vm.runInContext(
@@ -105,3 +107,50 @@ const sketch = fs.readFileSync("web/sketch.js", "utf8");
 assert.match(sketch, /decoder\.backend === 'onnxruntime'/);
 assert.match(sketch, /legacyManualWindow\.disabled = webOnnxMode/);
 console.log("Web app-owned ONNX workflow contract passed");
+
+vm.runInContext("pipelinePhase = 'perform'; updateDecoderWindowState({supported_windows:[2,4,6,8], requested_window:6, window_controls:{mode:'adaptive',minimum:2,maximum:8,content:'variation',variation:0.4}});", context);
+assert.equal(windows.disabled, true);
+assert.deepEqual(elements.get('window-minimum').options.map(o => o.value), ['2','4','6','8']);
+assert.equal(elements.get('manual-content').value, 'variation');
+assert.equal(elements.get('manual-variation-control').hidden, false);
+elements.get('manual-content').value = 'held';
+elements.get('manual-content').listeners.change();
+assert.deepEqual(sent.pop(), {type:'window_controls', controls:{content:'held'}});
+vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'held',variation:0.4}});", context);
+assert.equal(windows.disabled, false);
+assert.equal(elements.get('manual-variation-control').hidden, true);
+
+// Frequent decoder broadcasts must not overwrite an open native dropdown.
+const contentSelect = elements.get('manual-content');
+contentSelect.listeners.focus();
+contentSelect.value = 'variation';
+for (let i = 0; i < 30; i++) {
+    vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'held',variation:0.4}});", context);
+}
+assert.equal(contentSelect.value, 'variation', 'streaming state preserves keyboard/menu selection');
+contentSelect.listeners.change();
+contentSelect.listeners.blur();
+vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'held',variation:0.4}});", context);
+assert.equal(contentSelect.value, 'variation', 'stale state cannot undo an unacknowledged change');
+vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'variation',variation:0.4}});", context);
+assert.equal(contentSelect.value, 'variation');
+vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'source',variation:0.4}});", context);
+assert.equal(contentSelect.value, 'source', 'server state resumes after acknowledgement');
+
+const lengthSelect = elements.get('window-mode');
+lengthSelect.listeners.focus();
+lengthSelect.value = 'adaptive';
+vm.runInContext("updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'fixed',minimum:2,maximum:4,content:'source',variation:0.4}});", context);
+assert.equal(lengthSelect.value, 'adaptive');
+lengthSelect.listeners.change();
+assert.deepEqual(sent.pop(), {type:'window_controls', controls:{mode:'adaptive'}});
+lengthSelect.listeners.blur();
+
+// A reconnect can receive live decoder state before the pipeline phase message.
+vm.runInContext("pipelinePhase = 'idle'; updateDecoderWindowState({supported_windows:[2,4], requested_window:2, window_controls:{mode:'adaptive',minimum:2,maximum:4,content:'source',variation:0.4}});", context);
+assert.equal(lengthSelect.disabled, false);
+assert.equal(contentSelect.disabled, false);
+assert.equal(windows.disabled, true, 'fixed T remains disabled in adaptive mode');
+vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'idle'});", context);
+assert.equal(lengthSelect.disabled, true, 'unloaded transport disables runtime controls');
+console.log('Streaming dropdown interaction and reconnect checks passed');

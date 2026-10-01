@@ -1,16 +1,17 @@
 """Unified-Web transport for the CPU SAME-S ONNX presentation backend.
 
 The standalone ``bin/perform.py`` transport intentionally remains Torch based.
-This controller owns the narrower Web presentation path: fixed manifest windows,
-worker-side ONNX decoding and overlap-add, file-bounded manual windows, and
+This controller owns the Web presentation path: validated decoder windows,
+worker-side ONNX decoding and overlap-add, manual sequences/textures, and
 generation-tagged live window changes.
 """
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
-import queue
+from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+import copy
 import threading
 import time
 from typing import Optional, Tuple
@@ -21,6 +22,7 @@ from .decoder_player import DecoderPlayer, GENERATION_TRANSITION_SAMPLES
 from .manual_windows import build_file_bounded_latent_window
 from .overlap_add import StreamingFullOverlapAdd
 from .wander_windows import WanderWindowPlanner
+from .window_controls import AdaptiveWindow, ManualTexture
 from ..vae.onnx_decoder import SameSOnnxDecoder
 
 
@@ -32,10 +34,28 @@ class _DecodeRequest:
     frame_indices: Tuple[int, ...]
 
 
+@dataclass
+class _DecodeLane:
+    generation: int
+    window: int
+    planner: object
+    texture: object
+    texture_tail: object = None
+    texture_content: object = None
+    previous_frames: list = field(default_factory=list)
+    previous_generation: object = None
+    reset_serial: int = -1
+    future: object = None
+    request: object = None
+    assembler: object = None
+    prepared: list = field(default_factory=list)
+    prepared_samples: int = 0
+    published: bool = False
+
+
 class OnnxTransportController:
     """Fail-closed transport used only by the unified Web pipeline."""
 
-    LATENT_QUEUE_SIZE = 4
     MIN_PREBUFFER_SECONDS = 0.120
 
     def __init__(
@@ -116,14 +136,26 @@ class OnnxTransportController:
         self._lock = threading.Lock()
         self._stats_lock = threading.Lock()
         self._running = threading.Event()
-        self._latent_queue: Optional[queue.Queue[_DecodeRequest]] = None
-        self._producer_thread: Optional[threading.Thread] = None
         self._decode_thread: Optional[threading.Thread] = None
         self._decoder_started = False
 
         self._generation_counter = 0
+        self._hard_generation = 0
+        self._live_generations = set()
         self._requested_generation = 0
         self._requested_window = requested_window
+        self._adaptive_generation = None
+        self._navigation_seconds = 0.0
+        self._window_mode = "fixed"
+        self._window_min = min(latent_decoder.supported_windows)
+        self._window_max = max(latent_decoder.supported_windows)
+        self._manual_content = "source"
+        self._variation_amount = 0.25
+        self._adaptive = AdaptiveWindow()
+        self._manual_input_motion = AdaptiveWindow()
+        self._manual_texture = ManualTexture(self.Z_concat, self.Z_mean, self.Z_std)
+        self._texture_tail = None
+        self._texture_content = None
         self._generation_windows: dict[int, int] = {}
         self._wander_frame_source = "k_nearest"
         self._wander_frame_order = 0.0
@@ -137,18 +169,6 @@ class OnnxTransportController:
 
     def is_running(self) -> bool:
         return self._running.is_set()
-
-    def _drop_pending_requests(self) -> int:
-        latent_queue = self._latent_queue
-        if latent_queue is None:
-            return 0
-        dropped = 0
-        while True:
-            try:
-                latent_queue.get_nowait()
-                dropped += 1
-            except queue.Empty:
-                return dropped
 
     def set_mode(self, mode: str) -> Tuple[bool, str]:
         mode = str(mode)
@@ -169,6 +189,8 @@ class OnnxTransportController:
                 raise ValueError(
                     f"Expected {self.manual.control_dim} controls, got {values.shape[0]}"
                 )
+            if not np.all(np.isfinite(values)):
+                raise ValueError("manual controls must be finite")
             values = np.clip(values, 0.0, 1.0)
         except Exception as exc:
             return False, str(exc)
@@ -176,56 +198,109 @@ class OnnxTransportController:
         with self._lock:
             previous = self._manual_faders.copy()
             self._manual_faders = values.copy()
+            self._manual_input_motion.observe(values, time.monotonic())
             running_manual = self._running.is_set() and self._active_mode == "manual"
         if not running_manual:
             self.manual.set_faders(values)
-        dropped = self._drop_pending_requests() if running_manual else 0
         delta = float(np.max(np.abs(values - previous)))
-        return True, f"manual faders updated (delta={delta:.3f}, dropped={dropped})"
+        return True, f"manual faders updated (delta={delta:.3f})"
 
     def set_manual_wander_params(self, k=None, speed=None) -> Tuple[bool, str]:
         try:
             self.manual.set_wander_params(k=k, speed=speed)
         except Exception as exc:
             return False, str(exc)
-        if self._running.is_set() and self._active_mode == "manual":
-            self._drop_pending_requests()
         return True, "manual wander parameters updated"
 
-    def set_decoder_window(self, size) -> Tuple[bool, str]:
+    def set_decoder_window(self, size, *, adaptive=False) -> Tuple[bool, str]:
         try:
             window = int(size)
         except (TypeError, ValueError):
             return False, f"invalid decoder window: {size!r}"
         if window not in self.latent_decoder.supported_windows:
-            return False, (
-                f"decoder window T{window} is unavailable; "
-                f"supported: {self.latent_decoder.supported_windows}"
-            )
-
+            return False, f"decoder window T{window} is unavailable; supported: {self.latent_decoder.supported_windows}"
         with self._lock:
             if window == self._requested_window:
                 return True, f"decoder window already T{window}"
             self._requested_window = window
-            self._wander_reset_serial += 1
             if self._running.is_set():
                 self._generation_counter += 1
                 self._requested_generation = self._generation_counter
                 self._generation_windows[self._requested_generation] = window
-                generation = self._requested_generation
-            else:
-                generation = None
-        if generation is not None:
-            # Announce before any replacement PCM is available.  This removes a
-            # previously staged generation immediately and makes a late result
-            # fail at write_hop even if it passed the controller snapshot check.
+                self._adaptive_generation = self._requested_generation if adaptive else None
+                keep = self._live_generations | {self._requested_generation, self._hard_generation}
+                self._generation_windows = {g: t for g, t in self._generation_windows.items() if g in keep}
+        # A T request changes intent only. The scheduler finishes one candidate
+        # while sustaining the audible stream, then pursues the newest intent.
+        return True, f"decoder window requested T{window}"
+
+    def _announce_generation(self, generation):
+        """Hard changes retain strict stale-result rejection (unlike T changes)."""
+        with self._lock:
+            if generation < self._hard_generation:
+                return
+            self._hard_generation = generation
             self.decoder.request_generation(generation)
-            dropped = self._drop_pending_requests()
-            return True, (
-                f"staging decoder window T{window} as generation {generation} "
-                f"(dropped {dropped} stale requests)"
-            )
-        return True, f"decoder window set to T{window}"
+
+    def set_window_controls(self, controls):
+        if not isinstance(controls, dict):
+            return False, "window controls must be an object"
+        try:
+            mode = controls.get("mode", self._window_mode)
+            content = controls.get("content", self._manual_content)
+            low = int(controls.get("minimum", self._window_min))
+            high = int(controls.get("maximum", self._window_max))
+            amount = float(controls.get("variation", self._variation_amount))
+            if mode not in ("fixed", "adaptive") or content not in ("source", "held", "variation"):
+                raise ValueError("invalid window mode or manual content")
+            if low not in self.latent_decoder.supported_windows or high not in self.latent_decoder.supported_windows or low > high:
+                raise ValueError("invalid adaptive window range")
+            if not np.isfinite(amount) or not 0 <= amount <= 1:
+                raise ValueError("variation must be between zero and one")
+        except (ValueError, TypeError, OverflowError) as exc:
+            return False, str(exc)
+        with self._lock:
+            changed_content = (content, amount) != (self._manual_content, self._variation_amount)
+            self._window_mode, self._window_min, self._window_max = mode, low, high
+            self._manual_content, self._variation_amount = content, amount
+            generation = None
+            if changed_content and self._running.is_set() and self._active_mode == "manual":
+                self._generation_counter += 1
+                generation = self._requested_generation = self._generation_counter
+                self._generation_windows[generation] = self._requested_window
+        if generation is not None:
+            self._announce_generation(generation)
+        return True, "window controls updated"
+
+    def _observe_centre(self, index, frames):
+        index = int(np.clip(index, 0, len(self.Z_concat) - 1))
+        metadata = self.latent_decoder.metadata_for(self._requested_window)
+        with self._lock:
+            self._navigation_seconds += frames * metadata.samples_per_latent / metadata.sample_rate
+            self._adaptive.observe((self.Z_concat[index] - self.Z_mean) / np.maximum(self.Z_std, 1e-6), self._navigation_seconds)
+
+    def _adapt_window(self):
+        with self._lock:
+            if self._window_mode != "adaptive":
+                return
+            current = self._requested_window
+            windows = [t for t in self.latent_decoder.supported_windows
+                       if self._window_min <= t <= self._window_max]
+        # Finish the previous staged transition before proposing another one.
+        state = self.decoder.get_state()
+        if (self.decoder.current_generation != self._requested_generation
+                or state.get("transition_status", "idle") != "idle"):
+            return
+        now = time.monotonic()
+        with self._lock:
+            input_motion = self._manual_input_motion
+            if self._active_mode == "manual" and input_motion.timestamp is not None:
+                # Input events can shorten T even while a long decode is in flight.
+                elapsed = max(0.0, now - input_motion.timestamp)
+                self._adaptive.motion = max(self._adaptive.motion, input_motion.motion * np.exp(-elapsed / 0.25))
+            target = self._adaptive.choose(current, windows, now)
+        if target != current:
+            self.set_decoder_window(target, adaptive=True)
 
     def set_wander_render_controls(self, controls) -> Tuple[bool, str]:
         """Apply decoder-window rendering controls without renaming Random policy APIs."""
@@ -283,11 +358,9 @@ class OnnxTransportController:
                 generation = None
 
         if generation is not None:
-            self.decoder.request_generation(generation)
-            dropped = self._drop_pending_requests()
+            self._announce_generation(generation)
             return True, (
                 f"staging Wander render generation {generation} "
-                f"(dropped {dropped} stale requests)"
             )
         return True, "wander render controls updated"
 
@@ -303,15 +376,11 @@ class OnnxTransportController:
             else:
                 generation = None
         if generation is not None:
-            self.decoder.request_generation(generation)
-            self._drop_pending_requests()
+            self._announce_generation(generation)
         return True, "Wander reset"
 
     def _cleanup_previous_run(self) -> None:
         self._running.clear()
-        if self._producer_thread is not None:
-            self._producer_thread.join()
-            self._producer_thread = None
         if self._decode_thread is not None:
             self._decode_thread.join()
             self._decode_thread = None
@@ -319,7 +388,6 @@ class OnnxTransportController:
             self.decoder.stop()
             self._decoder_started = False
         self.decoder.reset_buffers()
-        self._latent_queue = None
 
     def start(self) -> Tuple[bool, str]:
         with self._lock:
@@ -341,11 +409,18 @@ class OnnxTransportController:
             window = self._requested_window
             self._requested_generation = generation
             self._generation_windows = {generation: window}
+            self._live_generations = {generation}
             self._transport_error = None
             self._prebuffering = True
             self._wander_reset_serial += 1
 
-        self.decoder.request_generation(generation)
+        self._adaptive = AdaptiveWindow()
+        self._manual_input_motion = AdaptiveWindow()
+        self._manual_input_motion.observe(self._manual_faders, time.monotonic())
+        self._manual_texture = ManualTexture(self.Z_concat, self.Z_mean, self.Z_std)
+        self._texture_tail = None
+        self._texture_content = None
+        self._announce_generation(generation)
         hold_index = self._stationary_hold_index(mode)
         hold_metadata = self.latent_decoder.metadata_for(window)
         self.decoder.capture_presentation_hold(
@@ -359,19 +434,12 @@ class OnnxTransportController:
             self._decode_count = 0
             self._last_decode_ms = 0.0
 
-        self._latent_queue = queue.Queue(maxsize=self.LATENT_QUEUE_SIZE)
         self._running.set()
-        self._producer_thread = threading.Thread(
-            target=self._producer_loop,
-            daemon=True,
-            name="saw-onnx-latent-producer",
-        )
         self._decode_thread = threading.Thread(
             target=self._decode_loop,
             daemon=True,
             name="saw-onnx-decode",
         )
-        self._producer_thread.start()
         self._decode_thread.start()
         return True, f"transport prebuffering ({mode}, T{window})"
 
@@ -379,7 +447,6 @@ class OnnxTransportController:
         had_resources = any(
             (
                 self._running.is_set(),
-                self._producer_thread is not None,
                 self._decode_thread is not None,
                 self._decoder_started,
             )
@@ -417,6 +484,7 @@ class OnnxTransportController:
         # Exactly one spatial query chooses the source-file anchor for a decode.
         frame = self.manual.step_with_faders(faders)
         anchor = int(np.clip(frame.nearest_index, 0, self.Z_concat.shape[0] - 1))
+        self._observe_centre(anchor, (window + 1) // 2)
         raw, plan = build_file_bounded_latent_window(
             self.Z_concat,
             self.file_offsets,
@@ -425,6 +493,26 @@ class OnnxTransportController:
             mean=self.Z_mean,
             std=self.Z_std,
         )
+        with self._lock:
+            content, amount = self._manual_content, self._variation_amount
+        indices = tuple(int(index) for index in plan.frame_indices)
+        if self._texture_content != content:
+            self._texture_tail = None
+            self._texture_content = content
+            self._manual_texture = ManualTexture(self.Z_concat, self.Z_mean, self.Z_std)
+        if content != "source":
+            hop = (window + 1) // 2
+            tail_count = window - hop
+            tail = self._texture_tail
+            if tail is None or len(tail) < tail_count:
+                raw = self._manual_texture.render(anchor, window, content, amount)
+            else:
+                raw = np.concatenate([tail[-tail_count:], self._manual_texture.render(anchor, hop, content, amount)])
+            self._texture_tail = raw[hop:].copy()
+            # These indices identify the texture centre, not exact source samples.
+            indices = (anchor,) * window
+        else:
+            self._texture_tail = None
         with self._stats_lock:
             self._manual_last_index = anchor
             self._manual_last_distance = float(frame.distance)
@@ -432,7 +520,7 @@ class OnnxTransportController:
             generation,
             window,
             raw,
-            tuple(int(index) for index in plan.frame_indices),
+            indices,
         )
 
     def _wander_request(
@@ -444,13 +532,15 @@ class OnnxTransportController:
     ) -> tuple[_DecodeRequest, int]:
         """Advance the policy at the existing cadence, then plan one full T window."""
         hop = (window + 1) // 2
-        step_count = window if generation != previous_generation else hop
+        step_count = window if (generation != previous_generation and generation != self._adaptive_generation) else hop
         anchor = None
         for _ in range(step_count):
             anchor = self.nav.step(fixed_retrieval_window=window)
         if anchor is None:
             raise RuntimeError("Wander navigation produced no anchor")
         anchor_frame = int(getattr(anchor, "nearest_idx", anchor))
+        centre_index = int(np.clip(anchor_frame, 0, len(self.Z_concat) - 1))
+        self._observe_centre(centre_index, step_count)
         with self._lock:
             frame_source = self._wander_frame_source
             frame_order = self._wander_frame_order
@@ -478,70 +568,6 @@ class OnnxTransportController:
             planner_reset_serial,
         )
 
-    def _producer_loop(self) -> None:
-        previous_frames = []
-        previous_generation = None
-        planner_reset_serial = -1
-        try:
-            while self._running.is_set():
-                latent_queue = self._latent_queue
-                if latent_queue is None:
-                    return
-                if latent_queue.full():
-                    time.sleep(0.002)
-                    continue
-
-                generation, window, mode = self._snapshot_request()
-                if mode == "manual":
-                    request = self._manual_request(generation, window)
-                elif mode == "random":
-                    request, planner_reset_serial = self._wander_request(
-                        generation,
-                        window,
-                        previous_generation,
-                        planner_reset_serial,
-                    )
-                    previous_generation = generation
-                else:
-                    def next_frame():
-                        return self.nav.step(fixed_retrieval_window=window)
-
-                    hop = (window + 1) // 2
-                    if generation != previous_generation:
-                        frames = [next_frame() for _ in range(window)]
-                    else:
-                        tail_count = window - hop
-                        tail = list(previous_frames[-tail_count:]) if tail_count else []
-                        if len(tail) < tail_count:
-                            tail = [next_frame() for _ in range(tail_count - len(tail))] + tail
-                        frames = tail + [next_frame() for _ in range(hop)]
-                    z_norm = self.manifold.generate_batch(
-                        frames,
-                        exploration=self.nav.get_active_jump_rate(variant=mode),
-                    )
-                    raw = np.ascontiguousarray(
-                        z_norm * self.Z_std[None, :] + self.Z_mean[None, :],
-                        dtype=np.float32,
-                    )
-                    request = _DecodeRequest(
-                        generation,
-                        window,
-                        raw,
-                        tuple(
-                            int(getattr(frame, "nearest_idx", frame))
-                            for frame in frames
-                        ),
-                    )
-                    previous_frames = frames
-                    previous_generation = generation
-
-                try:
-                    latent_queue.put(request, timeout=0.1)
-                except queue.Full:
-                    continue
-        except Exception as exc:
-            self._latch_runtime_error(f"latent producer failed: {exc}")
-
     def _target_prebuffer_seconds(self, window: int) -> float:
         metadata = self.latent_decoder.metadata_for(window)
         return max(
@@ -549,103 +575,150 @@ class OnnxTransportController:
             metadata.audio_hop_samples / float(metadata.sample_rate),
         )
 
+    def _new_lane(self, generation, window, source=None):
+        planner = source.planner if source else self.wander_planner
+        if source:
+            planner = planner.fork() if hasattr(planner, "fork") else copy.deepcopy(planner)
+        texture = copy.copy(source.texture if source else self._manual_texture)
+        texture.rng = copy.deepcopy(texture.rng)
+        return _DecodeLane(generation, window, planner, texture,
+                           texture_tail=source.texture_tail if source else self._texture_tail,
+                           texture_content=source.texture_content if source else self._texture_content,
+                           reset_serial=source.reset_serial if source else -1)
+
+    def _lane_request(self, lane, mode):
+        # One coordinator owns all navigation. Each stream has private planner,
+        # texture, overlap-add and frame-tail state; corpus data is shared.
+        saved = (self.wander_planner, self._manual_texture, self._texture_tail, self._texture_content)
+        self.wander_planner, self._manual_texture = lane.planner, lane.texture
+        self._texture_tail, self._texture_content = lane.texture_tail, lane.texture_content
+        try:
+            if mode == "manual":
+                request = self._manual_request(lane.generation, lane.window)
+            elif mode == "random":
+                request, lane.reset_serial = self._wander_request(
+                    lane.generation, lane.window, lane.previous_generation, lane.reset_serial)
+            else:
+                hop = (lane.window + 1) // 2
+                tail_count = lane.window - hop
+                frames = list(lane.previous_frames[-tail_count:]) if tail_count else []
+                while len(frames) < lane.window:
+                    frames.append(self.nav.step(fixed_retrieval_window=lane.window))
+                z = self.manifold.generate_batch(frames, exploration=self.nav.get_active_jump_rate(variant=mode))
+                request = _DecodeRequest(lane.generation, lane.window,
+                    np.ascontiguousarray(z*self.Z_std[None, :] + self.Z_mean[None, :], dtype=np.float32),
+                    tuple(int(getattr(frame, "nearest_idx", frame)) for frame in frames))
+                lane.previous_frames = frames
+            lane.previous_generation = lane.generation
+            lane.texture = self._manual_texture
+            lane.texture_tail, lane.texture_content = self._texture_tail, self._texture_content
+            return request
+        finally:
+            self.wander_planner, self._manual_texture, self._texture_tail, self._texture_content = saved
+
+    def _validate_request(self, request):
+        if len(request.frame_indices) != request.window:
+            raise RuntimeError("decode request provenance does not match its latent window")
+        if any(index < 0 or index >= len(self.Z_concat) for index in request.frame_indices):
+            raise RuntimeError("decode request provenance contains an out-of-range corpus index")
+
+    def _finish_decode(self, lane):
+        decoded = lane.future.result()
+        lane.future = None
+        request = lane.request
+        if lane.assembler is None:
+            lane.assembler = StreamingFullOverlapAdd(decoded.metadata.audio_hop_samples,
+                                                     channels=decoded.metadata.channels)
+        hop = lane.assembler.push(decoded.audio.T)
+        indices = request.frame_indices[:int(decoded.metadata.latent_hop)]
+        samples = int(decoded.metadata.samples_per_latent)
+        if len(indices)*samples != hop.shape[1]:
+            raise RuntimeError("decode hop provenance does not match emitted PCM: "
+                               f"{len(indices)} frames * {samples} samples != {hop.shape[1]} hop samples")
+        lane.prepared.append((hop, indices, samples))
+        lane.prepared_samples += hop.shape[1]
+        with self._stats_lock:
+            self._last_decode_ms = float(decoded.decode_time_ms)
+            self._decode_times_ms.append(float(decoded.decode_time_ms))
+            self._decode_count += 1
+
     def _decode_loop(self) -> None:
-        assemblers: dict[int, StreamingFullOverlapAdd] = {}
+        active = candidate = None
+        retired = []
+        # CPU ONNX Run accepts concurrent independent inputs. The wrapper is
+        # read-only during decode. At most two calls exist, with no job backlog.
+        pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="saw-onnx-inference")
         try:
             while self._running.is_set():
-                generation, window, _mode = self._snapshot_request()
-                target_buffer = self._target_prebuffer_seconds(window)
-                if self.decoder.generation_buffer_duration(generation) >= target_buffer:
-                    time.sleep(0.002)
-                    continue
-
-                latent_queue = self._latent_queue
-                if latent_queue is None:
-                    return
-                try:
-                    request = latent_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                if (
-                    request.generation != generation
-                    or request.window != window
-                    or not self._running.is_set()
-                ):
-                    continue
-
-                if len(request.frame_indices) != request.window:
-                    raise RuntimeError(
-                        "decode request provenance does not match its latent window: "
-                        f"{len(request.frame_indices)} != {request.window}"
-                    )
-                corpus_frames = int(self.Z_concat.shape[0])
-                if any(
-                    index < 0 or index >= corpus_frames
-                    for index in request.frame_indices
-                ):
-                    raise RuntimeError(
-                        "decode request provenance contains an out-of-range corpus index"
-                    )
-
-                decoded = self.latent_decoder.decode(request.raw_latents)
-                latest_generation, latest_window, _ = self._snapshot_request()
-                if (
-                    request.generation != latest_generation
-                    or request.window != latest_window
-                    or not self._running.is_set()
-                ):
-                    continue
-
-                assembler = assemblers.get(request.generation)
-                if assembler is None:
-                    assembler = StreamingFullOverlapAdd(
-                        decoded.metadata.audio_hop_samples,
-                        channels=decoded.metadata.channels,
-                    )
-                    assemblers = {request.generation: assembler}
-                hop = assembler.push(decoded.audio.T)
-
-                latent_hop = int(decoded.metadata.latent_hop)
-                samples_per_frame = int(decoded.metadata.samples_per_latent)
-                hop_frame_indices = request.frame_indices[:latent_hop]
-                hop_samples = int(hop.shape[1])
-                represented_samples = len(hop_frame_indices) * samples_per_frame
-                if represented_samples != hop_samples:
-                    raise RuntimeError(
-                        "decode hop provenance does not match emitted PCM: "
-                        f"{len(hop_frame_indices)} frames * {samples_per_frame} samples "
-                        f"!= {hop_samples} hop samples"
-                    )
-
-                latest_generation, latest_window, _ = self._snapshot_request()
-                if (
-                    request.generation != latest_generation
-                    or request.window != latest_window
-                    or not self._running.is_set()
-                ):
-                    continue
-                if not self.decoder.write_hop(
-                    hop,
-                    generation=request.generation,
-                    frame_indices=hop_frame_indices,
-                    samples_per_frame=samples_per_frame,
-                ):
-                    continue
-
-                with self._stats_lock:
-                    self._last_decode_ms = float(decoded.decode_time_ms)
-                    self._decode_times_ms.append(float(decoded.decode_time_ms))
-                    self._decode_count += 1
-
-                if not self._decoder_started:
-                    buffered = self.decoder.generation_buffer_duration(request.generation)
-                    if buffered >= target_buffer:
-                        self.decoder.start()
-                        self._decoder_started = True
+                self._adapt_window()
+                requested, window, mode = self._snapshot_request()
+                with self._lock:
+                    hard = self._hard_generation
+                if active is None or hard > active.generation:
+                    for lane in (active, candidate):
+                        if lane and lane.future:
+                            retired.append(lane.future)
+                    # Start the hard generation even if a newer soft request
+                    # arrived while it was being installed.
+                    generation = hard or requested
+                    active = self._new_lane(generation, self._generation_windows.get(generation, window))
+                    active.published = True
+                    candidate = None
+                retired = [future for future in retired if not future.done()]
+                if candidate and candidate.published and self.decoder.current_generation == candidate.generation:
+                    if active.future:
+                        retired.append(active.future)
+                    active, candidate = candidate, None
+                    self.wander_planner = active.planner
+                    # Keep only metadata that may still be presented/requested.
+                    with self._lock:
+                        keep = {active.generation, self._requested_generation, self._hard_generation}
+                        self._generation_windows = {g: t for g, t in self._generation_windows.items() if g in keep}
+                if (candidate is None and requested != active.generation and self._decoder_started
+                        and self.decoder.get_state().get("transition_status", "idle") == "idle"):
+                    candidate = self._new_lane(requested, window, source=active)
+                with self._lock:
+                    self._live_generations = {lane.generation for lane in (active, candidate) if lane}
+                    for lane in (active, candidate):
+                        if lane:
+                            self._generation_windows[lane.generation] = lane.window
+                for lane in (active, candidate):
+                    if lane is None:
+                        continue
+                    if lane.future and lane.future.done():
+                        self._finish_decode(lane)
+                    target = self._target_prebuffer_seconds(lane.window)
+                    # Have enough audio for the crossfade before exposing a candidate.
+                    ready_samples = max(int(target*self.decoder.sr), GENERATION_TRANSITION_SAMPLES)
+                    with self._lock:
+                        valid = self._running.is_set() and self._hard_generation <= lane.generation
+                        if valid and not lane.published and lane.prepared_samples >= ready_samples:
+                            lane.published = self.decoder.request_generation(lane.generation, continue_current=True)
+                        if valid and lane.published:
+                            for hop, indices, samples in lane.prepared:
+                                self.decoder.write_hop(hop, generation=lane.generation,
+                                    frame_indices=indices, samples_per_frame=samples)
+                            lane.prepared.clear()
+                            lane.prepared_samples = 0
+                            if not self._decoder_started and self.decoder.generation_buffer_duration(lane.generation) >= target:
+                                self.decoder.start()
+                                self._decoder_started = True
+                                self._prebuffering = False
+                    buffered = (self.decoder.generation_buffer_duration(lane.generation) if lane.published
+                                else lane.prepared_samples / float(self.decoder.sr))
+                    threshold = target if lane.published else ready_samples / float(self.decoder.sr)
+                    busy = len(retired) + sum(bool(x and x.future) for x in (active, candidate))
+                    if valid and lane.future is None and buffered < threshold and busy < 2:
+                        lane.request = self._lane_request(lane, mode)
+                        self._validate_request(lane.request)
                         with self._lock:
-                            self._prebuffering = False
+                            if self._running.is_set() and self._hard_generation <= lane.generation:
+                                lane.future = pool.submit(self.latent_decoder.decode, lane.request.raw_latents)
+                time.sleep(0.002)
         except Exception as exc:
             self._latch_runtime_error(f"ONNX decoder runtime failure: {exc}")
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def _latch_runtime_error(self, message: str) -> None:
         with self._lock:
@@ -696,6 +769,10 @@ class OnnxTransportController:
             "provider": self.latent_decoder.info.provider,
             "vae_id": self.latent_decoder.info.vae_id,
             "supported_windows": list(self.latent_decoder.supported_windows),
+            "window_controls": {"mode": self._window_mode, "minimum": self._window_min,
+                                "maximum": self._window_max, "content": self._manual_content,
+                                "variation": self._variation_amount},
+            "manual_provenance": "source_frames" if self._manual_content == "source" else "texture_centre",
             "selected_window": int(selected_window),
             "requested_window": requested_window,
             "latent_hop": int(metadata.latent_hop),
@@ -715,6 +792,37 @@ class OnnxTransportController:
         else:
             state["bundle_path"] = str(info.bundle_path)
         return state
+
+    def get_erae_state(self) -> dict:
+        """Lightweight OSC snapshot; no audio callback work or decode statistics."""
+        with self._lock:
+            running = self._running.is_set()
+            mode = self._active_mode if running else self.selected_mode
+            requested = int(self._requested_window)
+            requested_generation = self._requested_generation
+            windows = dict(self._generation_windows)
+            error = self._transport_error or ""
+            prebuffering = self._prebuffering
+            window_mode = self._window_mode
+        presentation = self.decoder.get_presentation_state() or {}
+        index = presentation.get("index")
+        valid = isinstance(index, (int, np.integer)) and 0 <= index < len(self.Z_concat)
+        generation = presentation.get("generation")
+        if generation is None:
+            generation = self.decoder.current_generation
+        active = windows.get(generation, -1)
+        transition = str(self.decoder.get_state().get("transition_status", "idle"))
+        if error:
+            transition = "error"
+        elif prebuffering:
+            transition = "prebuffering"
+        elif running and generation != requested_generation and transition == "idle":
+            transition = "staging"
+        return dict(running=running, mode=mode, valid=bool(valid),
+                    index=int(index) if valid else -1,
+                    generation=int(generation) if generation is not None else -1,
+                    requested_window=requested, active_window=int(active),
+                    transition=transition, window_mode=window_mode, error=error)
 
     def get_extra_state(self) -> dict:
         with self._lock:
@@ -793,6 +901,10 @@ class OnnxTransportController:
             else:
                 return False
             print(f"[ws] ONNX transport {action}: {message}")
+            return True
+        if msg_type == "window_controls":
+            ok, message = self.set_window_controls(data.get("controls", {}))
+            print(f"[ws] window controls: {message}")
             return True
         if msg_type == "decoder_window":
             ok, message = self.set_decoder_window(data.get("size"))

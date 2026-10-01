@@ -34,7 +34,7 @@ SAMPLES_PER_LATENT = 4_096
 LATENT_HZ = SAMPLE_RATE / SAMPLES_PER_LATENT
 OLA_MODE = "full_overlap_add"
 DEFAULT_WINDOW = 2
-ALLOWED_WINDOWS = (2, 4, 8, 16, 32)
+ALLOWED_WINDOWS = tuple(range(2, 33, 2))
 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 

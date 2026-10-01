@@ -651,3 +651,30 @@ def test_legacy_torch_write_frame_keeps_its_adaptive_crossfade_contract():
     assert queued[999, 0] == np.float32(2.0)
     assert np.all(queued[1000:] == 2.0)
     assert player.get_presentation_state() is None
+
+
+def test_soft_handoff_refills_only_the_current_generation():
+    buffer = GenerationPcmBuffer(transition_samples=4)
+    assert buffer.enqueue(_stereo(1, 8), generation=1)
+    buffer.render(4)
+    assert buffer.request_generation(2, continue_current=True)
+    assert buffer.enqueue(_stereo(1, 8), generation=1)
+    assert not buffer.enqueue(_stereo(9, 8), generation=0)
+    out, underrun = buffer.render(8)
+    assert not underrun and np.all(out == 1)
+    assert buffer.enqueue(_stereo(2, 16), generation=2)
+    assert buffer.enqueue(_stereo(1, 8), generation=1)
+    buffer.render(4)
+    assert buffer.current_generation == 2
+    assert not buffer.enqueue(_stereo(1, 8), generation=1)
+
+
+def test_hard_reset_revokes_soft_handoff_continuation():
+    player = _bare_player()
+    assert player.write_hop(_stereo(1, 1024), generation=1)
+    assert player.request_generation(2, continue_current=True)
+    assert player.write_hop(_stereo(1, 1024), generation=1)
+    assert player.request_generation(3)
+    assert not player.write_hop(_stereo(1, 1024), generation=1)
+    assert not player.write_hop(_stereo(2, 1024), generation=2)
+    assert player.write_hop(_stereo(3, 1024), generation=3)

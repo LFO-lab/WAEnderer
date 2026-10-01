@@ -8,7 +8,28 @@ let pipelinePhase = 'idle';
 let pipelineCorpusDir = null;
 let selectedTab = 'preprocess';
 let pipelineServerSeen = false;
-const APP_DECODER_WINDOWS = [2, 4, 8, 16, 32];
+const APP_DECODER_WINDOWS = [2]; // Backend metadata supplies validated lengths after loading.
+let decoderWindowControlsAvailable = false;
+let decoderWindowMode = 'fixed';
+const editingDecoderControls = new Set();
+const pendingDecoderControls = new Map();
+
+function syncDecoderControl(element, value) {
+    if (!element) return;
+    const incoming = String(value);
+    const pending = pendingDecoderControls.get(element.id);
+    if (pending && pending.value === incoming) pendingDecoderControls.delete(element.id);
+    else if (pending && Date.now() < pending.until) return;
+    else pendingDecoderControls.delete(element.id);
+    // Native select menus and keyboard selection must survive streaming state updates.
+    if (editingDecoderControls.has(element.id)) return;
+    if (element.value !== incoming) element.value = incoming;
+}
+
+function noteDecoderControlChange(element) {
+    pendingDecoderControls.set(element.id, {value: element.value, until: Date.now() + 1500});
+}
+
 
 // Training history for chart rendering
 let trainingHistory = {
@@ -86,11 +107,19 @@ function updateDecoderControls() {
     const windowSelect = document.getElementById('perform-decoder-window');
     const performStartButton = document.getElementById('perform-start-btn');
     const transportStartButton = document.getElementById('btn-start');
-    const performanceLoaded = pipelinePhase === 'perform';
+    const performanceLoaded = pipelinePhase === 'perform' || decoderWindowControlsAvailable;
 
     if (windowSelect) {
-        windowSelect.disabled = !pipelineCorpusDir || !(pipelinePhase === 'idle' || performanceLoaded);
+        windowSelect.disabled = (!performanceLoaded && (!pipelineCorpusDir || pipelinePhase !== 'idle'))
+            || (decoderWindowControlsAvailable && decoderWindowMode === 'adaptive');
     }
+    ['window-mode', 'window-minimum', 'window-maximum', 'manual-content', 'manual-variation'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.disabled = !decoderWindowControlsAvailable;
+            element.title = decoderWindowControlsAvailable ? '' : 'Load Perform with the updated ONNX server to enable this control';
+        }
+    });
     if (performStartButton) {
         performStartButton.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
     }
@@ -119,7 +148,7 @@ function updateDecoderWindowState(decoder) {
     if (windows.length > 0 && windows.join(',') !== existing.join(',')) {
         populateDecoderWindowOptions(windows, selected);
     } else if (select && Number.isInteger(Number(selected)) && existing.includes(Number(selected))) {
-        select.value = String(Number(selected));
+        syncDecoderControl(select, Number(selected));
         const display = document.getElementById('val-decoder-window');
         if (display) display.textContent = `T${Number(selected)}`;
     }
@@ -132,7 +161,36 @@ function updateDecoderWindowState(decoder) {
             'ok'
         );
     }
+    const controls = decoder.window_controls;
+    decoderWindowControlsAvailable = Boolean(controls);
+    if (controls) {
+        decoderWindowMode = controls.mode;
+        const mapping = {mode: 'window-mode', minimum: 'window-minimum', maximum: 'window-maximum',
+                         content: 'manual-content', variation: 'manual-variation'};
+        for (const key of ['minimum', 'maximum']) {
+            const element = document.getElementById(mapping[key]);
+            if (element && !editingDecoderControls.has(element.id) && Array.from(element.options, o => Number(o.value)).join(',') !== windows.join(',')) {
+                element.innerHTML = '';
+                windows.forEach(size => {
+                    const option = document.createElement('option');
+                    option.value = String(size); option.textContent = `T${size}`;
+                    element.appendChild(option);
+                });
+            }
+        }
+        Object.entries(mapping).forEach(([key, id]) => {
+            const element = document.getElementById(id);
+            syncDecoderControl(element, controls[key]);
+        });
+        const range = document.getElementById('adaptive-window-range');
+        if (range) range.hidden = document.getElementById('window-mode')?.value !== 'adaptive';
+        const content = document.getElementById('manual-content-controls');
+        if (content) content.hidden = false;
+        const variation = document.getElementById('manual-variation-control');
+        if (variation) variation.hidden = document.getElementById('manual-content')?.value !== 'variation';
+    }
     updateDecoderControls();
+
 }
 
 function handlePipelineMessage(data) {
@@ -141,6 +199,7 @@ function handlePipelineMessage(data) {
 
     if (type === 'pipeline_state') {
         pipelinePhase = data.phase || 'idle';
+        if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         setPipelineCorpusDir(data.corpus_dir);
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
@@ -151,6 +210,7 @@ function handlePipelineMessage(data) {
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_phase_change') {
         pipelinePhase = data.phase || 'idle';
+        if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         setPipelineCorpusDir(data.corpus_dir);
 
         if (data.completed === 'preprocess') {
@@ -554,15 +614,34 @@ function setupPipelineControls() {
     const decoderWindowSelect = document.getElementById('perform-decoder-window');
     if (decoderWindowSelect) {
         decoderWindowSelect.addEventListener('change', () => {
+            noteDecoderControlChange(decoderWindowSelect);
             const size = Number(decoderWindowSelect.value);
             if (!Number.isInteger(size)) return;
             const display = document.getElementById('val-decoder-window');
             if (display) display.textContent = `T${size}`;
-            if (pipelinePhase === 'perform') {
+            if (pipelinePhase === 'perform' || decoderWindowControlsAvailable) {
                 sendPipelineMessage({ type: 'decoder_window', size });
             }
         });
     }
+
+    const windowControlFields = { 'window-mode': 'mode', 'window-minimum': 'minimum',
+        'window-maximum': 'maximum', 'manual-content': 'content', 'manual-variation': 'variation' };
+    ['perform-decoder-window', ...Object.keys(windowControlFields)].forEach(id => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.addEventListener('focus', () => editingDecoderControls.add(id));
+        element.addEventListener('blur', () => editingDecoderControls.delete(id));
+    });
+    Object.entries(windowControlFields).forEach(([id, key]) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.addEventListener('change', () => {
+            noteDecoderControlChange(element);
+            const value = ['minimum', 'maximum', 'variation'].includes(key) ? Number(element.value) : element.value;
+            sendPipelineMessage({type: 'window_controls', controls: {[key]: value}});
+        });
+    });
 
     // Threshold slider display
     const thresholdSlider = document.getElementById('pp-threshold');

@@ -552,6 +552,15 @@
                 <a href="https://github.com/LFO-lab/WAEnderer/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noreferrer">licenses</a>
             </p>
 
+        <details id="erae-panel" style="margin:12px 0;padding:12px;background:#171b24;color:#eee;overflow-wrap:anywhere">
+            <summary>Erae zone 0 preview</summary>
+            <p><button id="erae-claim">Use this view / take over</button>
+            <button id="erae-release">Release view</button></p>
+            <canvas id="erae-preview" width="32" height="24" style="width:256px;height:192px;image-rendering:pixelated;border:1px solid #555"></canvas>
+            <p id="erae-status">Start the engine with --erae-osc and run the Erae bridge.</p>
+            <p id="erae-owner">No view selected.</p>
+        </details>
+
             <!-- Pipeline Phase Bar -->
             <div id="pipeline-phase-bar" class="phase-bar">
                 <div class="phase-step selected" id="phase-preprocess">Preprocess</div>
@@ -789,6 +798,16 @@
                             </select>
                         </div>
                     </div>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label for="window-mode">Window length</label>
+                            <select id="window-mode" disabled><option value="fixed">Fixed</option><option value="adaptive">Adaptive</option></select>
+                        </div>
+                        <div class="control-group" id="adaptive-window-range" hidden>
+                            <label for="window-minimum">Minimum T</label><select id="window-minimum" disabled></select>
+                            <label for="window-maximum">Maximum T</label><select id="window-maximum" disabled></select>
+                        </div>
+                    </div>
                     <button id="perform-start-btn" type="button" disabled>Start Perform</button>
                 </div>
 
@@ -1016,6 +1035,20 @@
 
             <div id="manual-panel" class="panel-hidden">
                 <h2>Manual XYZW</h2>
+                <div class="control-row" id="manual-content-controls" hidden title="Held and varying textures display their timbral centre on the map.">
+                    <div class="control-group">
+                        <label for="manual-content">Window content</label>
+                        <select id="manual-content" disabled>
+                            <option value="source">Source sequence</option>
+                            <option value="held">Held latent</option>
+                            <option value="variation">Local variation</option>
+                        </select>
+                    </div>
+                    <div class="control-group" id="manual-variation-control" hidden>
+                        <label for="manual-variation">Variation amount</label>
+                        <input id="manual-variation" type="range" min="0" max="1" step="0.01" value="0.25" disabled>
+                    </div>
+                </div>
                 <div class="control-row">
                     <div class="control-group">
                         <div class="control-label">
@@ -1153,6 +1186,8 @@
     </div>
     
     <script src="pipeline.js"></script>
+    <script src="erae_math.js"></script>
     <script src="sketch.js"></script>
+    <script src="erae_visual.js"></script>
 </body>
 </html>
