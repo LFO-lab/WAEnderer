@@ -555,6 +555,15 @@ class TransportController:
 
         self._running.clear()
 
+        # Stop consuming PCM before waiting for producers and the stats thread.
+        # Otherwise shutdown can drain the buffer while no worker replenishes it.
+        if self._decoder_started:
+            try:
+                self.decoder.stop()
+            except Exception:
+                pass
+            self._decoder_started = False
+
         if self._nav_thread is not None:
             self._nav_thread.join(timeout=1.0)
             self._nav_thread = None
@@ -564,13 +573,6 @@ class TransportController:
         if self._stats_thread is not None:
             self._stats_thread.join(timeout=1.0)
             self._stats_thread = None
-
-        if self._decoder_started:
-            try:
-                self.decoder.stop()
-            except Exception:
-                pass
-            self._decoder_started = False
 
         self.decoder.reset_buffers()
         self._latent_queue = None

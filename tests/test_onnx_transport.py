@@ -936,3 +936,24 @@ def test_staged_planners_share_corpus_but_not_traversal_or_texture_state():
     candidate.planner._recent_units.append(3)
     assert not active.planner._recent_units
     assert candidate.texture.rng is not active.texture.rng
+
+
+def test_prebuffer_covers_two_hops_without_producer_progress():
+    from test_decoder_player import _bare_player
+    controller, decoder, _ = _controller(initial_window=8)
+    player = _bare_player(sr=100)
+    player.started = False
+    player.start = lambda: setattr(player, 'started', True)
+    player.stop = lambda: setattr(player, 'started', False)
+    controller.decoder = player
+    controller.start()
+    try:
+        _wait_until(lambda: player.started)
+        # Hold the queue lock so the worker cannot replenish PCM during this
+        # two-hop render: a navigation/inference pause must not expose silence.
+        with player._queue_lock:
+            audio, underrun = player._pcm_buffer.render(2*decoder.metadata_for(8).audio_hop_samples)
+        assert not underrun
+        assert np.all(np.isfinite(audio)) and np.all(audio > 0)
+    finally:
+        controller.stop()

@@ -776,13 +776,20 @@
             <div id="perform-panel" class="panel-hidden">
                 <h2>Perform</h2>
                 <div class="pipeline-section">
-                    <h3>SAME-S ONNX Decoder</h3>
+                    <h3>SAME-S Decoder</h3>
+                    <label for="perform-decoder-engine">Decode with</label>
+                    <select id="perform-decoder-engine">
+                        <option value="onnxruntime|cpu">ONNX · CPU</option>
+                    </select>
+                    <button id="perform-decoder-refresh" type="button">Refresh availability</button>
+                    <div id="perform-decoder-availability" class="stats-text" role="status">Availability not checked.</div>
+
                     <div
                         class="stats-text"
                         id="perform-decoder-status"
                         role="status"
                         aria-live="polite"
-                    >App decoder: SAME-S ONNX · CPU · T2 default</div>
+                    >No active decoder. ONNX · CPU selected.</div>
                     <div class="control-row" style="margin-top:8px">
                         <div class="control-group" style="width:100%;grid-column:1 / -1">
                             <div class="control-label">
@@ -809,6 +816,8 @@
                         </div>
                     </div>
                     <button id="perform-start-btn" type="button" disabled>Start Perform</button>
+                    <button id="perform-stop-btn" type="button" disabled>Stop Perform to change decoder</button>
+                    <p class="stats-text">Stop Decode pauses audio. Stop Perform releases the transport so you can choose another decoder.</p>
                 </div>
 
             <div class="status">

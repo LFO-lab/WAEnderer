@@ -115,7 +115,13 @@ def main():
             rows.append({"seed": seed, **metrics, "passed": passed,
                          "native_ms": decoded.decode_time_ms, "onnx_ms": baseline.decode_time_ms})
         repeat = compare(decoded.audio, native.decode(raw).audio)
-        report["windows"].append({"window": window, "comparisons": rows, "native_repeat": repeat})
+        onnx_repeat = compare(baseline.audio, onnx.decode(raw).audio)
+        timings = {name: dict(zip(("median", "p95", "p99"),
+                    map(float, np.percentile([row[name + "_ms"] for row in rows], [50, 95, 99]))))
+                   for name in ("native", "onnx")}
+        report["windows"].append({"window": window, "comparisons": rows, "native_repeat": repeat,
+                                  "onnx_repeat": onnx_repeat, "timing_ms": timings,
+                                  "hop_budget_ms": window / 2 * 4096 / 44100 * 1000})
         print(f"{args.device} T{window}: {sum(r['passed'] for r in rows)}/{len(rows)} parity checks", flush=True)
     # Actual per-instance concurrency path, beyond the simulated unit test.
     raw = np.zeros((2,256),dtype=np.float32)
@@ -127,6 +133,8 @@ def main():
     report["passed"] = report["concurrent_calls_valid"] and all(r["passed"] for w in report["windows"] for r in w["comparisons"])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    native.close()
+    onnx.close()
     if not report["passed"]:
         raise SystemExit("Native decoder comparison failed; see report")
 

@@ -876,6 +876,8 @@ class DecoderPlayer:
         self.frame_samples = 0
         self.frame_duration = None
         self.underruns = 0
+        self.buffer_underruns = 0
+        self.device_underruns = 0
 
         # Prepared PCM only.  ONNX decoding and OLA happen on the decode worker.
         self._pcm_buffer = GenerationPcmBuffer()
@@ -953,11 +955,13 @@ class DecoderPlayer:
         """Audio callback - runs in sounddevice's audio thread."""
         if getattr(status, "output_underflow", False):
             self.underruns += 1
+            self.device_underruns += 1
         with self._queue_lock:
             underrun = self._pcm_buffer.render_into(outdata)
         outdata *= float(self._gain)
         if underrun:
             self.underruns += 1
+            self.buffer_underruns += 1
 
     def _blocking_writer_loop(self):
         """
@@ -970,12 +974,16 @@ class DecoderPlayer:
                 underrun = self._pcm_buffer.render_into(chunk)
             if underrun:
                 self.underruns += 1
+                self.buffer_underruns += 1
 
             try:
                 chunk *= float(self._gain)
-                self._stream.write(chunk)
+                if self._stream.write(chunk):
+                    self.underruns += 1
+                    self.device_underruns += 1
             except Exception:
                 self.underruns += 1
+                self.device_underruns += 1
                 time.sleep(0.01)
 
     def write_hop(
@@ -1130,6 +1138,8 @@ class DecoderPlayer:
             "gain": self._gain,
             "frame_samples": int(self.frame_samples),
             "underruns": int(self.underruns),
+            "buffer_underruns": int(self.buffer_underruns),
+            "device_underruns": int(self.device_underruns),
             "buffer_duration": buffer_duration,
             "generation": generation,
             "pending_generation": pending_generation,

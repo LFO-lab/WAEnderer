@@ -82,3 +82,24 @@ uv run python bin/check_release_compliance.py \
 - [ ] Review any new, unknown, GPL, or AGPL result before distribution.
 - [ ] Inspect the final wheel/source archive and conference bundle—not only the
   source checkout—for the complete license payload.
+
+## Dual inference qualification
+
+Use [DUAL_INFERENCE_RELEASE.md](docs/DUAL_INFERENCE_RELEASE.md) for installation,
+engine selection and the supported-platform matrix. Keep native SAME-S in its
+separate pinned environment; do not replace the default environment to enable it.
+
+- [x] Full Python regression and the three Web suites pass.
+- [x] Default ONNX startup works without native `stable-audio-3`; standalone CLI and playback are checked.
+- [x] Native weights/library revisions and exported ONNX identity are recorded.
+- [x] Synthetic parity and corpus parity reports include within-engine stochastic repeats.
+- [x] At least ten minutes on the actual audio device pass without underruns for every advertised scenario.
+- [x] Window/mode changes, adaptive windows, stop/reconfigure/retry and memory release pass.
+- [x] Comparative listening of aligned OLA renders is recorded; no new-engine degradation reported (ONNX slightly noisier); raw PCM has numeric parity checks.
+- [x] Each advertised GPU has its own hardware report. MPS results never qualify CUDA.
+- [x] Unqualified devices and failed scenarios remain explicitly identified in release notes.
+- [x] Reports contain no redistributed private corpus or recordings without permission.
+
+The software-clock benchmark is diagnostic evidence, not an audio-device gate.
+
+Completed 2026-10-02 for the recorded ONNX CPU / Apple MPS scenario only: 252 Python tests passed, one optional skip, three Web suites passed. CUDA remains experimental and excluded. See [machine-readable qualification result](docs/dual_inference_qualification_result.json). These checks do not approve the unrelated distribution gates above.

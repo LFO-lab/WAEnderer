@@ -1,0 +1,23 @@
+{
+  "scope": "BurntMemory, macOS Core Audio, production navigation, physical output muted; ONNX CPU and Apple MPS only",
+  "transport_reports": {
+    "onnx_cpu": "dual_inference_phase5_physical_onnx.json",
+    "pytorch_mps": "dual_inference_phase5_physical_mps.json"
+  },
+  "corpus_report": "dual_inference_phase5_corpus_mps.json",
+  "listening": {
+    "reviewer": "Utilisateur du projet",
+    "date": "2026-10-02",
+    "observation": "Rendus très similaires ; ONNX légèrement plus bruiteux que MPS.",
+    "new_engine_regression": false,
+    "assessment": "Aucune dégradation du nouveau moteur MPS identifiée dans le retour utilisateur ; légère différence de bruit conservée comme observation, pas identité perceptuelle."
+  },
+  "unqualified_devices": [
+    "CUDA: no NVIDIA hardware available; experimental and excluded from this release qualification"
+  ],
+  "historical_diagnostics": [
+    "dual_inference_phase5_onnx.json",
+    "dual_inference_phase5_physical_onnx_baseline.json",
+    "dual_inference_phase5_onnx_diagnostic.json"
+  ]
+}

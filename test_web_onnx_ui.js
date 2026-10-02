@@ -29,7 +29,7 @@ class FakeElement {
 
 const ids = [
     "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
-    "perform-start-btn", "btn-start", "pp-vae-select", "pp-vae-path-group",
+    "perform-start-btn", "perform-stop-btn", "perform-decoder-engine", "perform-decoder-refresh", "perform-decoder-availability", "btn-start", "pp-vae-select", "pp-vae-path-group",
     "window-mode", "window-minimum", "window-maximum", "manual-content", "manual-variation",
     "adaptive-window-range", "manual-content-controls", "manual-variation-control",
 ];
@@ -70,7 +70,7 @@ assert.equal(transportStart.disabled, true, "transport waits for perform handoff
 start.listeners.click();
 assert.deepEqual(sent.pop(), {
     type: "pipeline_start_perform",
-    config: { corpus_dir: "/corpus/demo", decoder_window: 2 },
+    config: { corpus_dir: "/corpus/demo", decoder_window: 2, decoder_backend: "onnxruntime", decoder_device: "cpu" },
 });
 
 vm.runInContext(
@@ -154,3 +154,57 @@ assert.equal(windows.disabled, true, 'fixed T remains disabled in adaptive mode'
 vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'idle'});", context);
 assert.equal(lengthSelect.disabled, true, 'unloaded transport disables runtime controls');
 console.log('Streaming dropdown interaction and reconnect checks passed');
+
+// Phase 4: explicit selection, lifecycle lock, errors and reconnect.
+const engine = elements.get('perform-decoder-engine');
+const stopPerform = elements.get('perform-stop-btn');
+vm.runInContext(`handlePipelineMessage({type:'pipeline_decoder_list',decoders:[
+    {backend:'onnxruntime',device:'cpu',label:'ONNX · CPU',hardware:true,dependencies:true,weights:true,selectable:true,detail:'Not yet validated'},
+    {backend:'pytorch',device:'mps',label:'PyTorch · GPU · MPS',hardware:true,dependencies:true,weights:true,selectable:true,detail:'Not yet validated'},
+    {backend:'pytorch',device:'cuda:0',label:'PyTorch · GPU · CUDA:0',hardware:false,dependencies:true,weights:true,selectable:false,detail:'GPU unavailable'}
+]});`, context);
+assert.equal(engine.value, 'onnxruntime|cpu');
+assert.equal(engine.options[2].disabled, true);
+engine.value = 'pytorch|mps';
+engine.listeners.change();
+start.listeners.click();
+assert.equal(sent.at(-1).config.decoder_backend, 'pytorch');
+assert.equal(sent.at(-1).config.decoder_device, 'mps');
+assert.equal(start.disabled, true);
+assert.equal(engine.disabled, true);
+assert.equal(transportStart.disabled, true);
+const sentCount = sent.length;
+start.listeners.click();
+assert.equal(sent.length, sentCount, 'duplicate start is blocked');
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'preparing'});", context);
+assert.equal(vm.runInContext('selectedTab', context), 'perform');
+assert.match(elements.get('perform-decoder-status').textContent, /warming/);
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'perform',decoder:{backend:'pytorch',device:'mps:0'}});", context);
+assert.match(elements.get('perform-decoder-status').textContent, /Active: pytorch · mps:0/);
+assert.equal(engine.disabled, true, 'even paused audio requires leaving Perform');
+assert.equal(stopPerform.disabled, false);
+stopPerform.listeners.click();
+assert.equal(sent.at(-1).type, 'pipeline_stop_perform');
+assert.equal(transportStart.disabled, true);
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'stopping',decoder:null});", context);
+assert.equal(vm.runInContext('selectedTab', context), 'perform');
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'idle',decoder:null});", context);
+assert.equal(engine.disabled, false);
+assert.doesNotMatch(elements.get('perform-decoder-status').textContent, /Active:/);
+engine.value = 'onnxruntime|cpu'; engine.listeners.change(); start.listeners.click();
+assert.equal(sent.at(-1).config.decoder_backend, 'onnxruntime');
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'idle',decoder:null,error:'warm-up failed; retry'});", context);
+assert.equal(start.disabled, false);
+assert.match(elements.get('perform-decoder-status').textContent, /warm-up failed/);
+vm.runInContext('pipelineDisconnected();', context);
+assert.equal(start.disabled, true);
+assert.equal(engine.disabled, true);
+assert.match(elements.get('perform-decoder-status').textContent, /unknown/);
+vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'perform',decoder:{backend:'pytorch',device:'mps:0'}});", context);
+assert.equal(engine.value, 'pytorch|mps', 'reconnect displays server identity');
+assert.equal(stopPerform.disabled, false);
+assert.equal(transportStart.disabled, false);
+vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'error',error:'drain failed',decoder:null});", context);
+assert.equal(start.disabled, true);
+assert.equal(stopPerform.disabled, false, 'cleanup can be retried');
+console.log('Dual decoder selection, lifecycle and reconnect checks passed');

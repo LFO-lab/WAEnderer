@@ -1,0 +1,43 @@
+{
+  "command": [
+    "/private/tmp/waenderer-phase2-native-env/bin/python",
+    "-m",
+    "bin.perform",
+    "--corpus_dir",
+    "corpus/BurntMemory_20260915_211501",
+    "--output_gain",
+    "0",
+    "--autostart",
+    "--ws_port",
+    "0",
+    "--osc_port",
+    "0",
+    "--audio_stats",
+    "--audio_stats_interval",
+    "1",
+    "--initial_navigation_mode",
+    "manual"
+  ],
+  "audio_device": {
+    "name": "Haut-parleurs MacBook Pro",
+    "index": 7,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.018708333333333334,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.028041666666666666,
+    "default_samplerate": 48000.0
+  },
+  "decoded_stats": 21,
+  "gain": 0,
+  "offline": true,
+  "exit_code": 0,
+  "observed_audio_stats": 22,
+  "requested_seconds": 20,
+  "max_underruns": 41,
+  "shutdown_complete": true,
+  "passed": false,
+  "log": "[info] Using corpus: corpus/BurntMemory_20260915_211501/corpus.npz\n[info] Using manual artifact: corpus/BurntMemory_20260915_211501/manual_navigation.npz\n[info] Using random model checkpoint: corpus/BurntMemory_20260915_211501/latent_policy_20260915_214340.pt\n[info] Using reorganized units artifact: corpus/BurntMemory_20260915_211501/policy_v2_units.npz\n[info] Using reorganized model checkpoint: corpus/BurntMemory_20260915_211501/policy_v2_20260915_214413.pt\n[info] Using LatentNavigationEngine (64D latent navigation)\n[info] Loaded V2 transition model: corpus/BurntMemory_20260915_211501/policy_v2_20260915_214413.pt\n[info] Policy V2 ready: units=816, graph_k=24, model=yes\n[info] Manual wandering config: k=1, speed=0.0001\n[info] Manual decode config: window=6, motion_eps=0.010, buffer_ratio=0.15\n[info] Manual retrieval config: artifact_v=3, reducer=umap, mode=two_stage, coarse_k=96, refine_k=16, interp_k=8\n[info] Loading VAE adapter: same_s\nNo module named 'flash_attn'\nflash_attn not installed, disabling Flash Attention\nNo module named 'flash_attn'\nflash_attn varlen/bert_padding not available, disabling varlen attention\n/private/tmp/waenderer-phase2-native-env/lib/python3.12/site-packages/torch/nn/utils/weight_norm.py:143: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.\n  WeightNorm.apply(module, name, dim)\n[info] Running with 43982 segments\n[info] Selected mode: manual\n[info] Random controls: phrase_scale=0.4, jump_rate=0.55, timbre_lock=0.55, drift=0.5, repeat_avoid=0.75, crossfile=0.7\n[info] Reorganized controls: morph_len=0.5, jump_rate=0.6, timbre_lock=0.45, evolution=0.6, novelty=0.5, crossfile=0.7\n[info] Random timbre swap: enabled=True, descriptors=yes\n[info] Random recomposition: enabled=True\n[info] Reorganized availability: enabled=True, artifact=yes, model=yes, temperature=1.00\n[info] Transport is idle. Use the web UI Start button to begin decoding.\n[info] Starting transport (manual mode)\n[info] Manual decode window config: window=6, hop=3, queue=2, target_buf=0.22s\n[info] Pre-buffering manual audio (with latent OLA)...\n[info] Pre-buffered 4 manual windows (1.67s)\n[info] Manual latent queue filled (2 batches)\n[info] Manual navigation loop started (with latent OLA)[info] Decode loop started\n\n[info] Audio stats logging enabled (interval=1.00s)[info] Autostart: transport started (manual)\n\nOSC listening on 127.0.0.1:0\n  /cursor d0 [d1 [d2 ...]] \u2014 set navigation cursor (values in [0..1])\n  Random: /random/phrase_scale, /jump_rate, /timbre_lock, /drift, /repeat_avoid, /crossfile (0..1), /random/reset\n  Reorganized: /reorganized/morph_len, /jump_rate, /timbre_lock, /evolution, /novelty, /crossfile (0..1), /reorganized/reset\n  Decoder: /decoder/gain (0..2)\n  Manual: /manual/x, /manual/y, /manual/z, /manual/w (0..1), /manual/wander_k (1..64), /manual/dither (0..0.2), /manual/xyz x y z, /manual/xyzw x y z w\n[audio] buf=0.660s queue=2 decode_ms_last=0.0 decode_ms_avg=0.0 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.493s queue=2 decode_ms_last=28.4 decode_ms_avg=36.8 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.336s queue=2 decode_ms_last=36.4 decode_ms_avg=34.1 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.578s queue=2 decode_ms_last=34.2 decode_ms_avg=31.2 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.411s queue=2 decode_ms_last=26.7 decode_ms_avg=30.1 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.244s queue=2 decode_ms_last=25.2 decode_ms_avg=29.1 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.495s queue=2 decode_ms_last=35.6 decode_ms_avg=29.2 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.319s queue=2 decode_ms_last=36.1 decode_ms_avg=29.5 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.570s queue=2 decode_ms_last=37.9 decode_ms_avg=29.4 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.404s queue=2 decode_ms_last=31.6 decode_ms_avg=29.4 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.237s queue=2 decode_ms_last=32.1 decode_ms_avg=29.5 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.479s queue=2 decode_ms_last=29.9 decode_ms_avg=29.6 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.312s queue=2 decode_ms_last=29.4 decode_ms_avg=29.4 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.563s queue=2 decode_ms_last=40.0 decode_ms_avg=30.3 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.396s queue=2 decode_ms_last=31.6 decode_ms_avg=30.4 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.220s queue=2 decode_ms_last=41.4 decode_ms_avg=30.7 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.472s queue=2 decode_ms_last=42.8 decode_ms_avg=31.4 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.314s queue=2 decode_ms_last=30.3 decode_ms_avg=31.5 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.556s queue=2 decode_ms_last=40.2 decode_ms_avg=32.1 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.380s queue=2 decode_ms_last=38.6 decode_ms_avg=32.2 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n[audio] buf=0.213s queue=1 decode_ms_last=32.6 decode_ms_avg=32.3 window=6/3 window_changes=0 underruns_total=0 underruns_delta=+0\n\n[info] Shutting down...\n[info] Manual navigation loop stopped\n[info] Decode loop stopped\n[audio] buf=0.000s queue=2 decode_ms_last=31.0 decode_ms_avg=32.2 window=6/3 window_changes=0 underruns_total=41 underruns_delta=+41\n[info] Done.\n"
+}

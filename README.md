@@ -32,12 +32,14 @@ uv sync --all-extras
 
 ### Dependencies
 
-The native SAME-S decoder (selectable through pipeline configuration; Web selector pending)
+The native SAME-S decoder (selectable in Perform → Decode with)
 has a separately validated installation profile. See
 [native decoder setup and validation](docs/DUAL_INFERENCE_PHASE2.md) for the
 pinned weights, PyTorch environment, supported API and hardware test status.
 See [pipeline selection and lifecycle](docs/DUAL_INFERENCE_PHASE3.md) for the
-configuration fields and stop/reconfigure sequence.
+configuration fields and stop/reconfigure sequence. The
+[Web selector guide](docs/DUAL_INFERENCE_PHASE4.md) explains availability, loading
+and the Stop Perform → select → Start Perform workflow.
 
 | Category | Packages |
 |----------|----------|
@@ -675,3 +677,10 @@ took about 817 ms. A four-second simulated real-time PCM consumer observed
 T2 → T32 → T8 with zero underrun callbacks after rapid requests for T32/T16/T8.
 These are short measurements with synthetic latents, not a hardware soak or a
 performance guarantee under other system loads.
+
+### Dual inference release and qualification
+
+See [installation, engine selection and platform limits](docs/DUAL_INFERENCE_RELEASE.md)
+and the [phase 5 campaign](docs/DUAL_INFERENCE_PHASE5.md). Native SAME-S uses the
+separate pinned environment; the default ONNX environment is unchanged.
+The recorded release campaign qualifies ONNX CPU and MPS on the tested M1 Max/Core Audio scenario: ten minutes per engine without underruns, numeric parity and comparative listening. CUDA remains experimental and unqualified. Software-clock measurements alone do not qualify an audio device.

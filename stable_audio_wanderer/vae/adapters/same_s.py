@@ -32,10 +32,11 @@ class SameSAdapter(VAEAdapter):
             from stable_audio_3 import AutoencoderModel
         except ImportError as exc:
             raise ImportError(
-                "SAME-S requires the stable-audio-3 package. If pip cannot "
-                "satisfy its pinned torch==2.7.1 dependency in this venv, keep "
-                "the existing torch install and run: pip install --no-deps "
-                "git+https://github.com/Stability-AI/stable-audio-3.git"
+                "SAME-S requires compatible native dependencies. Use the separate "
+                "pinned environment in requirements-same-s-native-macos.lock "
+                "on macOS arm64, or requirements-same-s-native.txt for another "
+                "platform; see docs/DUAL_INFERENCE_RELEASE.md. Do not bypass "
+                "upstream dependency pins with --no-deps."
             ) from exc
 
         model = AutoencoderModel.from_pretrained(repo_or_path)

@@ -1,0 +1,10 @@
+{
+  "backend": "onnxruntime",
+  "provider": "CPUExecutionProvider",
+  "pcm_shape": [
+    8192,
+    2
+  ],
+  "native_imported": false,
+  "closed": true
+}

@@ -565,6 +565,7 @@ function connectWebSocket() {
         
         ws.onclose = () => {
             wsConnected = false;
+            if (typeof pipelineDisconnected === 'function') pipelineDisconnected();
             updateConnectionStatus(false);
             console.log('WebSocket disconnected');
             if (typeof eraeDisconnected === 'function') eraeDisconnected();
@@ -918,10 +919,10 @@ function updateDecoderRuntimeDisplay(decoder) {
     // standalone perform.py keeps its legacy manual-window control.
     const legacyManualWindow = document.getElementById('manual-window');
     if (legacyManualWindow) {
-        const webOnnxMode = decoder.backend === 'onnxruntime' || Boolean(resourcePath);
+        const webOnnxMode = decoder.backend === 'onnxruntime' || Boolean(decoder.window_controls) || Boolean(resourcePath);
         legacyManualWindow.disabled = webOnnxMode;
         legacyManualWindow.title = webOnnxMode
-            ? 'Managed by the ONNX decoder window selector'
+            ? 'Managed by the decoder window selector'
             : '';
     }
 }

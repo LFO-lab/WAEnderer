@@ -1,6 +1,8 @@
 # Roadmap — Inférence SAME-S sélectionnable : ONNX CPU / PyTorch GPU
 
-Statut : **phases 0 et 1 terminées ; phase 2 implémentée et validée numériquement sur CPU/MPS le 1er octobre 2026**. Écoute et qualification CUDA encore à effectuer. Phase 3 implémentée : sélection par configuration et cycle de vie intégrés au pipeline ; le sélecteur graphique reste en phase 4. Rapports : [phase 0](docs/DUAL_INFERENCE_PHASE0.md), [phase 2](docs/DUAL_INFERENCE_PHASE2.md), [phase 3](docs/DUAL_INFERENCE_PHASE3.md).
+Statut : **phases 0 à 6 implémentées ; phases 5 et 6 terminées le 2 octobre 2026 pour ONNX CPU et MPS sur le scénario matériel testé**. CUDA reste expérimental et non qualifié faute de matériel NVIDIA.
+
+**Audit final :** 252 tests Python réussis, 1 optionnel ignoré ; trois suites Web réussies. Deux campagnes physiques de dix minutes avec politiques de production : zéro underrun par moteur, fenêtres T2 à T32 et trois modes couverts. Parités synthétique et BurntMemory : 128/128 chacune. Écoute utilisateur : très similaire, ONNX légèrement plus bruiteux. Mode autonome hors ligne : lecture et arrêt sans incident. Les échecs initiaux et les corrections restent documentés dans les [preuves de phase 5](docs/DUAL_INFERENCE_PHASE5.md) et le [guide de livraison](docs/DUAL_INFERENCE_RELEASE.md).
 
 ## Objectif et périmètre
 
@@ -112,11 +114,11 @@ Les noms exacts des classes et champs restent à fixer. Configuration envisagée
 - [x] Implémenter les chemins CUDA/MPS et les erreurs explicites de périphérique, dépendance, poids ou opération indisponibles ; aucun fallback.
 - [x] Vérifier le décodage réel sur MPS et CPU : 128 comparaisons par périphérique, toutes réussies.
 - [ ] Qualifier CUDA sur une machine NVIDIA (matériel absent de l’environnement actuel).
-- [ ] Valider l’écoute des rendus ONNX/natif générés à partir des mêmes latents.
+- [x] Valider l’écoute des rendus ONNX/natif générés à partir des mêmes latents (retour utilisateur consigné en phase 5).
 
 **Critère de sortie :** décodage natif conforme au contrat sur chaque périphérique annoncé comme pris en charge, avec comparaison numérique et écoute sur les mêmes entrées que l’ONNX.
 
-**Implémentation et preuves :** [SameSTorchDecoder](stable_audio_wanderer/vae/torch_decoder.py), [chargeur strict](stable_audio_wanderer/vae/same_s_weights.py), [tests](tests/test_torch_decoder.py), [rapport et installation](docs/DUAL_INFERENCE_PHASE2.md). Installation propre avec Torch/Torchaudio 2.7.1, 71 dépendances compatibles ; 182 tests Python réussis, 1 optionnel ignoré, trois suites Web réussies. La qualification perceptuelle et CUDA n’est pas déclarée terminée. Le cycle de vie configurable est intégré en phase 3.
+**Implémentation et preuves :** [SameSTorchDecoder](stable_audio_wanderer/vae/torch_decoder.py), [chargeur strict](stable_audio_wanderer/vae/same_s_weights.py), [tests](tests/test_torch_decoder.py), [rapport et installation](docs/DUAL_INFERENCE_PHASE2.md). Installation propre avec Torch/Torchaudio 2.7.1, 71 dépendances compatibles ; 182 tests Python réussis, 1 optionnel ignoré, trois suites Web réussies. À cette date, la qualification perceptuelle et CUDA restaient ouvertes ; l’écoute a depuis été consignée en phase 5, CUDA reste non qualifié. Le cycle de vie configurable est intégré en phase 3.
 
 ## Phase 3 — Intégrer le cycle de vie et la concurrence
 
@@ -136,26 +138,28 @@ Les noms exacts des classes et champs restent à fixer. Configuration envisagée
 
 ## Phase 4 — Exposer la sélection dans le Web
 
-- [ ] Ajouter « ONNX · CPU » et « PyTorch · GPU », avec identification CUDA/MPS lorsque pertinent.
-- [ ] Distinguer détection du matériel, présence des dépendances/poids et validation effective du décodeur.
-- [ ] Transmettre la configuration au pipeline et afficher le moteur ainsi que le périphérique réellement actifs.
-- [ ] Verrouiller le changement pendant la lecture ; rendre le parcours arrêt → sélection → redémarrage explicite.
-- [ ] Afficher les étapes de chargement/échauffement et les erreurs exploitables, sans figer durablement l’interface.
-- [ ] Préserver ONNX CPU pour les anciennes configurations et adapter les textes actuellement codés en dur.
-- [ ] Maintenir les états utilisés par WebSocket, OSC et l’intégration Erae ; aucune commande de sélection distante supplémentaire n’est requise dans cette version.
+- [x] Ajouter « ONNX · CPU » et « PyTorch · GPU », avec identification CUDA/MPS lorsque pertinent.
+- [x] Distinguer détection du matériel, présence des dépendances/poids et validation effective du décodeur.
+- [x] Transmettre la configuration au pipeline et afficher le moteur ainsi que le périphérique réellement actifs.
+- [x] Verrouiller le changement pendant la lecture ; rendre le parcours arrêt → sélection → redémarrage explicite.
+- [x] Afficher les étapes de chargement/échauffement et les erreurs exploitables, sans figer durablement l’interface.
+- [x] Préserver ONNX CPU pour les anciennes configurations et adapter les textes actuellement codés en dur.
+- [x] Maintenir les états utilisés par WebSocket, OSC et l’intégration Erae ; aucune commande de sélection distante supplémentaire n’est requise dans cette version.
 
 **Critère de sortie :** l’utilisateur peut identifier, sélectionner et démarrer chaque option disponible sans ambiguïté entre choix demandé et moteur actif.
+
+**Résultat : implémenté et vérifié le 1er octobre 2026.** 206 tests Python réussis, 1 ignoré ; trois suites Web réussies. Voir le [rapport et parcours utilisateur](docs/DUAL_INFERENCE_PHASE4.md). La qualification CUDA, l’écoute et les sessions prolongées restent ouvertes.
 
 ## Phase 5 — Valider la qualité audio et le temps réel
 
 ### Vérifications automatisées
 
-- [ ] Contrat partagé : formes, dtype, valeurs finies, fenêtres et métadonnées, erreurs sur entrées invalides.
-- [ ] Pipeline : valeur par défaut, sélection, incompatibilités, réutilisation, libération et récupération après échec.
-- [ ] Transport : transitions, changements de fenêtre, politique de concurrence et absence de publication d’anciens résultats.
-- [ ] UI : configuration transmise, disponibilité, verrouillage et affichage du moteur effectif.
-- [ ] Régression : suites existantes du décodeur, pipeline, transport, lecteur, overlap-add et interface ; vérifier également les consommateurs OSC/Erae concernés.
-- [ ] Séparer les tests sans GPU des essais matériels ; un test simulé ne constitue pas une validation CUDA/MPS.
+- [x] Contrat partagé : formes, dtype, valeurs finies, fenêtres et métadonnées, erreurs sur entrées invalides.
+- [x] Pipeline : valeur par défaut, sélection, incompatibilités, réutilisation, libération et récupération après échec.
+- [x] Transport : transitions, changements de fenêtre, politique de concurrence et absence de publication d’anciens résultats.
+- [x] UI : configuration transmise, disponibilité, verrouillage et affichage du moteur effectif.
+- [x] Régression : suites existantes du décodeur, pipeline, transport, lecteur, overlap-add et interface ; vérifier également les consommateurs OSC/Erae concernés.
+- [x] Séparer les tests sans GPU des essais matériels ; un test simulé ne constitue pas une validation CUDA/MPS.
 
 ### Campagne comparative reproductible
 
@@ -179,16 +183,21 @@ Pour SAME-S, un hop de `H` latents donne un budget audio de `H × 4096 / 44100` 
 - Aucun underrun dans les scénarios déclarés pris en charge pendant la campagne stabilisée ; marge de calcul et conditions matérielles consignées.
 - Un tableau de résultats par périphérique et fenêtre explique les limites observées. Un GPU plus lent que le CPU n’est pas présenté comme une amélioration de performance.
 
+**Résultat : atteint sur ONNX CPU et MPS, dans le périmètre mesuré.** [Protocole et résultats](docs/DUAL_INFERENCE_PHASE5.md), [contrôle des preuves](docs/dual_inference_qualification_result.json). Après augmentation de la réserve à deux hops, les deux campagnes physiques passent sans underrun. Les diagnostics initiaux en échec restent disponibles. CUDA ne fait pas partie des périphériques qualifiés.
+
 ## Phase 6 — Documenter et livrer
 
-- [ ] Documenter les deux parcours, le changement à l’arrêt, les dépendances PyTorch SAME-S et l’accès aux poids natifs.
-- [ ] Décider du conditionnement des dépendances optionnelles et vérifier qu’ONNX CPU reste utilisable sans installation native SAME-S supplémentaire.
-- [ ] Mettre à jour les fichiers de dépendances et de verrouillage uniquement selon le mode d’installation retenu.
-- [ ] Documenter les versions et machines validées, les fenêtres disponibles et les limites CUDA/MPS.
-- [ ] Ajouter la matrice de vérification à la checklist de release et conserver les rapports de parité/performance.
-- [ ] Vérifier le mode autonome historique et le démarrage d’une installation CPU existante.
+- [x] Documenter les deux parcours, le changement à l’arrêt, les dépendances PyTorch SAME-S et l’accès aux poids natifs.
+- [x] Décider du conditionnement des dépendances optionnelles et vérifier qu’ONNX CPU reste utilisable sans installation native SAME-S supplémentaire.
+- [x] Mettre à jour les fichiers de dépendances et de verrouillage uniquement selon le mode d’installation retenu.
+- [x] Documenter les versions et machines validées, les fenêtres disponibles et les limites CUDA/MPS.
+- [x] Ajouter la matrice de vérification à la checklist de release et conserver les rapports de parité/performance.
+- [x] Vérifier le démarrage du pipeline ONNX existant sans import natif et le CLI autonome historique.
+- [x] Qualifier la lecture du mode autonome historique sur le périphérique audio réel, hors ligne, et son arrêt propre.
 
 **Critère de sortie :** installation reproductible, choix explicite fonctionnel, comportement ONNX existant préservé et preuves de validation jointes.
+
+**Livrables :** [guide de livraison et matrice](docs/DUAL_INFERENCE_RELEASE.md), [checklist](RELEASE_CHECKLIST.md), smoke CPU sans import natif et test de démarrage CLI autonome. **Résultat : atteint pour le périmètre ONNX CPU/MPS testé.** Lecture autonome physique validée ; ordre d’arrêt corrigé pour couper la consommation PCM avant l’attente des workers. Les critères de phase 5 passent dans le périmètre documenté. Le profil natif séparé existant est conservé ; aucun changement du verrou principal.
 
 ## Ordre de réalisation et décisions restantes
 

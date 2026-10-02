@@ -1,0 +1,27 @@
+{
+  "transport": {
+    "onnx_cpu": {
+      "passed": true,
+      "reasons": [],
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "report": "dual_inference_phase5_physical_onnx.json"
+    },
+    "pytorch_mps": {
+      "passed": true,
+      "reasons": [],
+      "backend": "pytorch",
+      "device": "mps",
+      "report": "dual_inference_phase5_physical_mps.json"
+    }
+  },
+  "same_corpus": true,
+  "both_backends": true,
+  "numeric_passed": true,
+  "listening_recorded": true,
+  "listening_passed": true,
+  "unqualified_devices": [
+    "CUDA: no NVIDIA hardware available; experimental and excluded from this release qualification"
+  ],
+  "passed": true
+}

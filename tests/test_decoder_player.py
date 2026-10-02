@@ -17,6 +17,7 @@ def _bare_player(sr: int = 44100) -> DecoderPlayer:
     player._gain = 1.0
     player.frame_samples = 0
     player.frame_duration = None
+    player.underruns = player.buffer_underruns = player.device_underruns = 0
     player._crossfade_buffer = None
     player._pcm_buffer = GenerationPcmBuffer()
     player._queue_lock = threading.Lock()
@@ -678,3 +679,31 @@ def test_hard_reset_revokes_soft_handoff_continuation():
     assert not player.write_hop(_stereo(1, 1024), generation=1)
     assert not player.write_hop(_stereo(2, 1024), generation=2)
     assert player.write_hop(_stereo(3, 1024), generation=3)
+
+
+def test_callback_distinguishes_device_underflow_from_pcm_starvation():
+    from types import SimpleNamespace
+    player = _bare_player()
+    player.underruns = player.buffer_underruns = player.device_underruns = 0
+    player.write_hop(_stereo(1, 512), generation=1)
+    output = np.empty((512,2), dtype=np.float32)
+    player._callback(output, 512, None, SimpleNamespace(output_underflow=True))
+    assert (player.underruns, player.device_underruns, player.buffer_underruns) == (1,1,0)
+    player._callback(output, 512, None, SimpleNamespace(output_underflow=False))
+    assert (player.underruns, player.device_underruns, player.buffer_underruns) == (2,1,1)
+
+
+def test_blocking_stream_reports_device_underflow():
+    from types import SimpleNamespace
+    player = _bare_player()
+    player.underruns = player.buffer_underruns = player.device_underruns = 0
+    player._running = threading.Event()
+    player._running.set()
+    player._blocksize = 512
+    player.write_hop(_stereo(1,512), generation=1)
+    def write(_):
+        player._running.clear()
+        return True
+    player._stream = SimpleNamespace(write=write)
+    player._blocking_writer_loop()
+    assert (player.underruns, player.device_underruns, player.buffer_underruns) == (1,1,0)

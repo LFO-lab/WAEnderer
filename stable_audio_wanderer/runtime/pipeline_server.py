@@ -77,7 +77,10 @@ class PipelineManager:
         """Route incoming pipeline_* WebSocket messages."""
         msg_type = data.get("type", "")
 
-        if msg_type == "pipeline_list_files":
+        if msg_type == "pipeline_list_decoders":
+            from ..vae.decoder_availability import decoder_availability
+            self._emit({"type": "pipeline_decoder_list", "decoders": decoder_availability(self._decoder_resource_dir)})
+        elif msg_type == "pipeline_list_files":
             self._handle_list_files(data)
         elif msg_type == "pipeline_list_corpora":
             self._handle_list_corpora()

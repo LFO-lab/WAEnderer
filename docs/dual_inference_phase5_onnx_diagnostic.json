@@ -1,0 +1,361 @@
+{
+  "recorded_at_utc": "2026-10-02T14:41:00.131187+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.13",
+  "torch": "2.7.1",
+  "backend": "onnxruntime",
+  "device": "cpu",
+  "identity": [
+    "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s",
+    "7575ef014e7dad8a2582ea1cd594c7b01ca3670ba2d4ff457f99d65488531913",
+    "333dc948f52fa59e9a80a066ffd2ca801d3a54b2fb07c93aa87cac845c547872"
+  ],
+  "source": {
+    "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501/corpus.npz",
+    "sha256": "af5b6a1cf8ff5f2e28a86f6fbe97cd098164e9438a7043ffc7a2755c776795ba"
+  },
+  "clock": "physical output (muted), 1024 samples at 44100 Hz",
+  "audio_device": "Haut-parleurs MacBook Pro",
+  "navigation": "production",
+  "requested_seconds": 90.0,
+  "duration_seconds": 90.15058400004636,
+  "started_monotonic": 437097.611355708,
+  "preparation_ms": 180.32741599017754,
+  "underruns": 1,
+  "buffer_underruns": 1,
+  "device_underruns": 0,
+  "callback_ms": {
+    "count": 3868,
+    "median": 0.13916700845584273,
+    "p95": 0.2037143131019546,
+    "p99": 0.24625938443932674
+  },
+  "clock_lateness_ms": {
+    "count": 3875,
+    "median": 0.0,
+    "p95": 0.0,
+    "p99": 0.0
+  },
+  "process_cpu_percent": 64.30110425016237,
+  "peak_rss_platform_units": 1130577920,
+  "windows": {
+    "2": {
+      "decode_ms": {
+        "count": 109,
+        "median": 66.53349997941405,
+        "p95": 68.09018380008638,
+        "p99": 68.41387271881104
+      },
+      "hop_budget_ms": 92.87981859410431
+    },
+    "4": {
+      "decode_ms": {
+        "count": 56,
+        "median": 112.2245209699031,
+        "p95": 113.16297922166996,
+        "p99": 130.09492902783688
+      },
+      "hop_budget_ms": 185.75963718820861
+    },
+    "6": {
+      "decode_ms": {
+        "count": 38,
+        "median": 158.00152148585767,
+        "p95": 159.40226884267759,
+        "p99": 159.64818252192345
+      },
+      "hop_budget_ms": 278.6394557823129
+    },
+    "8": {
+      "decode_ms": {
+        "count": 29,
+        "median": 204.1090420098044,
+        "p95": 206.1486338148825,
+        "p99": 206.76642674719915
+      },
+      "hop_budget_ms": 371.51927437641723
+    },
+    "10": {
+      "decode_ms": {
+        "count": 23,
+        "median": 249.7817909461446,
+        "p95": 252.43542500538751,
+        "p99": 253.82088973536156
+      },
+      "hop_budget_ms": 464.39909297052156
+    },
+    "12": {
+      "decode_ms": {
+        "count": 19,
+        "median": 297.25587501889095,
+        "p95": 352.1896747406567,
+        "p99": 522.7691349107773
+      },
+      "hop_budget_ms": 557.2789115646258
+    },
+    "14": {
+      "decode_ms": {
+        "count": 17,
+        "median": 343.4169579995796,
+        "p95": 345.21880897227675,
+        "p99": 345.26792897377163
+      },
+      "hop_budget_ms": 650.1587301587301
+    },
+    "16": {
+      "decode_ms": {
+        "count": 15,
+        "median": 388.90641601756215,
+        "p95": 392.42920367396437,
+        "p99": 392.7671407244634
+      },
+      "hop_budget_ms": 743.0385487528345
+    },
+    "18": {
+      "decode_ms": {
+        "count": 13,
+        "median": 429.01966703357175,
+        "p95": 449.55938296625385,
+        "p99": 466.375342963729
+      },
+      "hop_budget_ms": 835.9183673469388
+    }
+  },
+  "transitions": [
+    {
+      "mode": "reorganized",
+      "step": 0,
+      "requested_at": 2.3750471882522106e-06,
+      "generation": 1,
+      "settled_ms": 144.33149999240413
+    },
+    {
+      "mode": "reorganized",
+      "step": 1,
+      "requested_at": 10.011465749994386,
+      "generation": 2,
+      "settled_ms": 139.76766704581678
+    },
+    {
+      "mode": "reorganized",
+      "step": 2,
+      "requested_at": 20.020221208047587,
+      "generation": 3,
+      "settled_ms": 185.7095419545658
+    },
+    {
+      "mode": "reorganized",
+      "step": 3,
+      "requested_at": 30.025772333028726,
+      "generation": 4,
+      "settled_ms": 230.1401249715127
+    },
+    {
+      "mode": "reorganized",
+      "step": 4,
+      "requested_at": 40.0347460420453,
+      "generation": 5,
+      "settled_ms": 279.2885410017334
+    },
+    {
+      "mode": "reorganized",
+      "step": 5,
+      "requested_at": 50.03920724999625,
+      "generation": 6,
+      "settled_ms": 306.2472080346197
+    },
+    {
+      "mode": "reorganized",
+      "step": 6,
+      "requested_at": 60.04022441699635,
+      "generation": 7,
+      "settled_ms": 368.19787503918633
+    },
+    {
+      "mode": "reorganized",
+      "step": 7,
+      "requested_at": 70.04690612503327,
+      "generation": 8,
+      "settled_ms": 397.3401669645682
+    },
+    {
+      "mode": "reorganized",
+      "step": 8,
+      "requested_at": 80.05437387502752,
+      "generation": 9,
+      "settled_ms": 464.66029196744785
+    }
+  ],
+  "memory_samples": [
+    {
+      "elapsed": 2.3750471882522106e-06,
+      "underruns": 0,
+      "buffer_underruns": 0,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 5.020564958045725,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 10.032823792018462,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 15.048325667041354,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 20.064179917040747,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 25.08259420801187,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 30.096582958009094,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 35.11358754202956,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 40.12863941700198,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 45.14035737502854,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 50.15717341704294,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 55.16182329203002,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 60.180248750024475,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 65.19584566703998,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 70.211264667043,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 75.2229722920456,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 80.23844350001309,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    },
+    {
+      "elapsed": 85.2558966249926,
+      "underruns": 1,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "mps_allocated_bytes": null,
+      "cuda_allocated_bytes": null
+    }
+  ],
+  "underrun_events": [
+    {
+      "monotonic": 437097.968939666,
+      "buffer_underruns": 1,
+      "device_underruns": 0,
+      "state": {
+        "gain": 0.0,
+        "frame_samples": 4096,
+        "underruns": 1,
+        "buffer_underruns": 1,
+        "device_underruns": 0,
+        "buffer_duration": 0.0,
+        "generation": 1,
+        "pending_generation": null,
+        "transition_status": "idle"
+      }
+    }
+  ],
+  "rendered_blocks": 3868,
+  "pcm_peak": 0.0,
+  "pcm_rms": 0.0,
+  "error": null,
+  "sustained_10_minutes": false,
+  "software_buffer_gate_passed": false,
+  "audio_device_qualified": false,
+  "listening_review": "pending"
+}

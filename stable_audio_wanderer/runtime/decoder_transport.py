@@ -57,6 +57,7 @@ class DecoderTransportController:
     """Fail-closed transport used only by the unified Web pipeline."""
 
     MIN_PREBUFFER_SECONDS = 0.120
+    PREBUFFER_HOPS = 2
 
     def __init__(
         self,
@@ -590,10 +591,12 @@ class DecoderTransportController:
         )
 
     def _target_prebuffer_seconds(self, window: int) -> float:
+        # Keep a spare hop while navigation and inference prepare the next one.
+        # One-hop refill margins proved insufficient with real policy transitions.
         metadata = self.latent_decoder.metadata_for(window)
         return max(
             self.MIN_PREBUFFER_SECONDS,
-            metadata.audio_hop_samples / float(metadata.sample_rate),
+            self.PREBUFFER_HOPS * metadata.audio_hop_samples / float(metadata.sample_rate),
         )
 
     def _new_lane(self, generation, window, source=None):

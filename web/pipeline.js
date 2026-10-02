@@ -14,6 +14,92 @@ let decoderWindowMode = 'fixed';
 const editingDecoderControls = new Set();
 const pendingDecoderControls = new Map();
 
+let decoderChoices = null;
+let decoderCommandPending = false;
+let pipelineConnectionReady = true;
+let activePipelineDecoder = null;
+
+function selectedDecoderChoice() {
+    const value = document.getElementById('perform-decoder-engine')?.value || 'onnxruntime|cpu';
+    const [backend, device] = value.split('|');
+    return {backend, device};
+}
+
+function updateDecoderAvailability() {
+    const element = document.getElementById('perform-decoder-availability');
+    const selected = selectedDecoderChoice();
+    const choice = decoderChoices?.find(item => item.backend === selected.backend && item.device === selected.device);
+    if (element) element.textContent = choice
+        ? `Hardware: ${choice.hardware ? 'detected' : 'unavailable'} · Dependencies: ${choice.dependencies ? 'present' : 'missing'} · Weights: ${choice.weights ? 'present' : 'missing'}. ${choice.detail}`
+        : 'Availability not checked. Validation runs on Start Perform.';
+}
+
+function onDecoderList(data) {
+    decoderChoices = data.decoders || [];
+    const select = document.getElementById('perform-decoder-engine');
+    if (select) {
+        const previous = select.value || 'onnxruntime|cpu';
+        select.innerHTML = '';
+        decoderChoices.forEach(choice => {
+            const option = document.createElement('option');
+            option.value = `${choice.backend}|${choice.device}`;
+            option.textContent = choice.label + (choice.selectable ? '' : ' — unavailable');
+            option.disabled = !choice.selectable;
+            select.appendChild(option);
+        });
+        // Never silently replace a requested or active device with another one.
+        if (!Array.from(select.options).some(option => option.value === previous)) {
+            const option = document.createElement('option');
+            option.value = previous; option.textContent = previous + ' — unavailable'; option.disabled = true;
+            select.appendChild(option);
+        }
+        select.value = previous;
+    }
+    updateDecoderAvailability();
+    updateDecoderControls();
+}
+
+function pipelineDisconnected() {
+    pipelineConnectionReady = false;
+    decoderCommandPending = false;
+    decoderWindowControlsAvailable = false;
+    activePipelineDecoder = null;
+    if (typeof updateDecoderRuntimeDisplay === 'function') updateDecoderRuntimeDisplay({});
+    setDecoderStatus('Disconnected — active decoder unknown. Reconnect before changing it.', 'error');
+    updateDecoderControls();
+}
+
+function applyDecoderPhase(data) {
+    pipelineConnectionReady = true;
+    decoderCommandPending = false;
+    activePipelineDecoder = pipelinePhase === 'perform' ? (data.decoder || activePipelineDecoder) : null;
+    if (activePipelineDecoder) {
+        const decoder = activePipelineDecoder;
+        const select = document.getElementById('perform-decoder-engine');
+        const device = decoder.device || (decoder.backend === 'onnxruntime' ? 'cpu' : decoder.provider);
+        const value = `${decoder.backend}|${device === 'mps:0' ? 'mps' : device}`;
+        if (select) {
+            if (!Array.from(select.options).some(option => option.value === value)) {
+                const option = document.createElement('option'); option.value = value; option.textContent = value;
+                select.appendChild(option);
+            }
+            select.value = value;
+        }
+        setDecoderStatus(`Active: ${decoder.backend} · ${device} · preparation validated`, 'ok');
+    } else if (pipelinePhase === 'preparing') {
+        setDecoderStatus('Loading and warming decoder… No active performance.');
+    } else if (pipelinePhase === 'stopping') {
+        setDecoderStatus('Stopping audio and waiting for pending decoding…');
+    } else {
+        setDecoderStatus('No active decoder. Choose a decoder and Start Perform.');
+        if (pipelinePhase === 'idle') populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
+        pendingDecoderControls.clear();
+    }
+    if (!activePipelineDecoder && typeof updateDecoderRuntimeDisplay === 'function') updateDecoderRuntimeDisplay({});
+    if (data.error) setDecoderStatus(`Error: ${data.error}`, 'error');
+    updateDecoderAvailability();
+}
+
 function syncDecoderControl(element, value) {
     if (!element) return;
     const incoming = String(value);
@@ -100,7 +186,7 @@ function pipelineCanStartTransport() {
     // The shared page must remain usable with standalone perform.py, which
     // never emits pipeline_* messages.  Once the unified server identifies
     // itself, decoding is unavailable until its validated handoff completes.
-    return !pipelineServerSeen || pipelinePhase === 'perform';
+    return !pipelineServerSeen || (pipelineConnectionReady && !decoderCommandPending && pipelinePhase === 'perform');
 }
 
 function updateDecoderControls() {
@@ -110,18 +196,28 @@ function updateDecoderControls() {
     const performanceLoaded = pipelinePhase === 'perform' || decoderWindowControlsAvailable;
 
     if (windowSelect) {
-        windowSelect.disabled = (!performanceLoaded && (!pipelineCorpusDir || pipelinePhase !== 'idle'))
+        windowSelect.disabled = !pipelineConnectionReady || decoderCommandPending || (!performanceLoaded && (!pipelineCorpusDir || pipelinePhase !== 'idle'))
             || (decoderWindowControlsAvailable && decoderWindowMode === 'adaptive');
     }
     ['window-mode', 'window-minimum', 'window-maximum', 'manual-content', 'manual-variation'].forEach(id => {
         const element = document.getElementById(id);
         if (element) {
-            element.disabled = !decoderWindowControlsAvailable;
-            element.title = decoderWindowControlsAvailable ? '' : 'Load Perform with the updated ONNX server to enable this control';
+            element.disabled = !pipelineConnectionReady || decoderCommandPending || !decoderWindowControlsAvailable;
+            element.title = decoderWindowControlsAvailable ? '' : 'Load Perform with the updated server to enable this control';
         }
     });
+    const requested = selectedDecoderChoice();
+    const available = decoderChoices?.find(item => item.backend === requested.backend && item.device === requested.device);
+    const ready = pipelineConnectionReady && !decoderCommandPending;
+    const engine = document.getElementById('perform-decoder-engine');
+    if (engine) engine.disabled = !ready || pipelinePhase !== 'idle';
+    const stopPerform = document.getElementById('perform-stop-btn');
+    if (stopPerform) stopPerform.disabled = !ready || !['perform', 'error'].includes(pipelinePhase);
+    const refresh = document.getElementById('perform-decoder-refresh');
+    if (refresh) refresh.disabled = !ready || pipelinePhase !== 'idle';
     if (performStartButton) {
-        performStartButton.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
+        performStartButton.disabled = !ready || pipelinePhase !== 'idle' || !pipelineCorpusDir
+            || (decoderChoices !== null && !available?.selectable);
     }
     if (transportStartButton && pipelineServerSeen) {
         transportStartButton.disabled = !pipelineCanStartTransport();
@@ -152,12 +248,12 @@ function updateDecoderWindowState(decoder) {
         const display = document.getElementById('val-decoder-window');
         if (display) display.textContent = `T${Number(selected)}`;
     }
-    if (pipelinePhase === 'perform' && decoder.backend) {
+    if (pipelinePhase === 'perform' && !decoderCommandPending && pipelineConnectionReady && decoder.backend) {
         const offered = windows.length > 0
             ? ` · ${windows.map(value => `T${value}`).join(', ')}`
             : '';
         setDecoderStatus(
-            `Active: ${decoder.backend} · ${decoder.provider || 'CPUExecutionProvider'}${offered}`,
+            `Active: ${decoder.backend} · ${decoder.device || decoder.provider || 'unknown device'}${offered}`,
             'ok'
         );
     }
@@ -189,6 +285,7 @@ function updateDecoderWindowState(decoder) {
         const variation = document.getElementById('manual-variation-control');
         if (variation) variation.hidden = document.getElementById('manual-content')?.value !== 'variation';
     }
+    if (decoder.error) setDecoderStatus(`Error: ${decoder.error}`, 'error');
     updateDecoderControls();
 
 }
@@ -197,21 +294,25 @@ function handlePipelineMessage(data) {
     const type = data.type;
     pipelineServerSeen = true;
 
-    if (type === 'pipeline_state') {
+    if (type === 'pipeline_decoder_list') {
+        onDecoderList(data);
+    } else if (type === 'pipeline_state') {
         pipelinePhase = data.phase || 'idle';
         if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         setPipelineCorpusDir(data.corpus_dir);
+        applyDecoderPhase(data);
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
             setDecoderStatus(`Error: ${data.error}`, 'error');
         }
         // If server is already in a phase, switch to that tab
-        if (pipelinePhase !== 'idle') selectTab(pipelinePhase);
+        if (pipelinePhase !== 'idle') selectTab(['preprocess', 'train'].includes(pipelinePhase) ? pipelinePhase : 'perform');
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_phase_change') {
         pipelinePhase = data.phase || 'idle';
         if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         setPipelineCorpusDir(data.corpus_dir);
+        applyDecoderPhase(data);
 
         if (data.completed === 'preprocess') {
             onPreprocessComplete(data);
@@ -222,7 +323,7 @@ function handlePipelineMessage(data) {
         }
 
         // Auto-switch to tab when a phase starts
-        if (pipelinePhase !== 'idle') selectTab(pipelinePhase);
+        if (pipelinePhase !== 'idle') selectTab(['preprocess', 'train'].includes(pipelinePhase) ? pipelinePhase : 'perform');
 
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
@@ -465,7 +566,7 @@ function onTrainComplete(data) {
 
 function setupPipelineControls() {
     populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
-    setDecoderStatus('App decoder: SAME-S ONNX · CPU · T2 default');
+    setDecoderStatus('No active decoder. ONNX · CPU selected.');
     // Tab click handlers
     ['preprocess', 'train', 'perform'].forEach(tab => {
         const el = document.getElementById(`phase-${tab}`);
@@ -595,19 +696,44 @@ function setupPipelineControls() {
         });
     }
 
+    document.getElementById('perform-decoder-engine')?.addEventListener('change', () => {
+        updateDecoderAvailability();
+        updateDecoderControls();
+    });
+    document.getElementById('perform-decoder-refresh')?.addEventListener('click', () => {
+        sendPipelineMessage({type: 'pipeline_list_decoders'});
+    });
+    document.getElementById('perform-stop-btn')?.addEventListener('click', () => {
+        if (decoderCommandPending || !['perform', 'error'].includes(pipelinePhase)) return;
+        if (sendPipelineMessage({type: 'pipeline_stop_perform'})) {
+            decoderCommandPending = true;
+            setDecoderStatus('Stopping Perform…');
+            updateDecoderControls();
+        }
+    });
+
     // Perform start
     const performStartBtn = document.getElementById('perform-start-btn');
     if (performStartBtn) {
         performStartBtn.addEventListener('click', () => {
+            if (performStartBtn.disabled || decoderCommandPending) return;
+            const choice = selectedDecoderChoice();
             const decoderWindow = Number(document.getElementById('perform-decoder-window')?.value);
             if (!Number.isInteger(decoderWindow)) return;
-            sendPipelineMessage({
+            const sent = sendPipelineMessage({
                 type: 'pipeline_start_perform',
                 config: {
                     corpus_dir: pipelineCorpusDir,
                     decoder_window: decoderWindow,
+                    decoder_backend: choice.backend,
+                    decoder_device: choice.device,
                 },
             });
+            if (sent) {
+                decoderCommandPending = true;
+                setDecoderStatus('Loading and warming decoder…');
+                updateDecoderControls();
+            } else setDecoderStatus('Not connected. Reconnect and try again.', 'error');
         });
     }
 
@@ -690,6 +816,7 @@ function requestCorpusList() {
     sendPipelineMessage({ type: 'pipeline_list_corpora' });
     sendPipelineMessage({ type: 'pipeline_list_vaes' });
     sendPipelineMessage({ type: 'pipeline_get_state' });
+    sendPipelineMessage({ type: 'pipeline_list_decoders' });
 }
 
 // Initialize on DOM ready
