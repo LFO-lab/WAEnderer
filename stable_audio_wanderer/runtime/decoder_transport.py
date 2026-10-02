@@ -1,4 +1,4 @@
-"""Unified-Web SAME-S transport over a backend-neutral decoder contract.
+"""Unified-Web VAE transport over a backend-neutral decoder contract.
 
 The standalone ``bin/perform.py`` transport intentionally remains Torch based.
 This controller owns the Web presentation path: validated decoder windows,
@@ -94,14 +94,15 @@ class DecoderTransportController:
         self.frame_file_ids = np.asarray(frame_file_ids, dtype=np.int32).reshape(-1)
         self.Z_mean = np.asarray(z_mean, dtype=np.float32).reshape(-1)
         self.Z_std = np.asarray(z_std, dtype=np.float32).reshape(-1)
-        if self.Z_concat.ndim != 2 or self.Z_concat.shape[1] != 256:
-            raise ValueError(f"SAME-S corpus latents must be [N,256], got {self.Z_concat.shape}")
+        latent_dim = latent_decoder.metadata_for(initial_window).latent_dim
+        if self.Z_concat.ndim != 2 or self.Z_concat.shape[1] != latent_dim:
+            raise ValueError(f"Corpus latents must be [N,{latent_dim}], got {self.Z_concat.shape}")
         if self.file_offsets.size < 2 or self.file_offsets[-1] != self.Z_concat.shape[0]:
             raise ValueError("file_offsets must cover every corpus latent frame")
         if self.frame_file_ids.shape[0] != self.Z_concat.shape[0]:
             raise ValueError("frame_file_ids must align with Z_concat")
-        if self.Z_mean.shape != (256,) or self.Z_std.shape != (256,):
-            raise ValueError("Z_mean and Z_std must both have shape [256]")
+        if self.Z_mean.shape != (latent_dim,) or self.Z_std.shape != (latent_dim,):
+            raise ValueError(f"Z_mean and Z_std must both have shape [{latent_dim}]")
 
         if manual_points is None:
             # Compatibility for direct/test construction. Production passes the

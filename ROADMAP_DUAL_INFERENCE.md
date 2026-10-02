@@ -213,3 +213,7 @@ Décisions de phase 0 et suites nécessaires :
 Estimation qualitative : effort modéré pour SAME-S avec sélection à l’arrêt. Les incertitudes principales portent sur le chargement natif, la mémoire et les garanties temporelles pendant les transitions. Le chiffrage en jours doit suivre la phase 0.
 
 La bascule sans interruption et la prise en charge d’autres VAE feront l’objet de phases ultérieures distinctes, après validation de ce socle.
+
+## Suite — réactivation des autres VAE dans le Web
+
+La restriction initiale à SAME-S a ensuite été levée pour les adaptateurs existants Stable Audio Open et EAR 44/48 kHz. Il s’agit d’une extension du chemin PyTorch, pas de nouveaux exports ONNX. Voir [l’implémentation, le contrôle Rack et les limites de qualification](docs/MULTI_VAE_WEB.md). La qualification des phases 5/6 ci-dessus reste celle de SAME-S.

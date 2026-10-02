@@ -15,6 +15,8 @@ const editingDecoderControls = new Set();
 const pendingDecoderControls = new Map();
 
 let decoderChoices = null;
+let decoderChoiceCorpus = null;
+let decoderInitialWindow = 2;
 let decoderCommandPending = false;
 let pipelineConnectionReady = true;
 let activePipelineDecoder = null;
@@ -35,10 +37,24 @@ function updateDecoderAvailability() {
 }
 
 function onDecoderList(data) {
+    if (data.corpus_dir && data.corpus_dir !== pipelineCorpusDir) return;
+    if (pipelineCorpusDir && !data.corpus_dir && decoderChoiceCorpus) return;
+    const corpusChanged = Boolean(data.corpus_dir && data.corpus_dir !== decoderChoiceCorpus);
+    if (data.corpus_dir) decoderChoiceCorpus = data.corpus_dir;
+    if (corpusChanged) {
+        decoderInitialWindow = data.default_window || 2;
+        if (pipelinePhase === 'idle') populateDecoderWindowOptions([decoderInitialWindow], decoderInitialWindow);
+    }
+    const weightGroup = document.getElementById('perform-vae-weight-group');
+    if (weightGroup) weightGroup.hidden = !String(data.vae_id || '').startsWith('ear_');
     decoderChoices = data.decoders || [];
     const select = document.getElementById('perform-decoder-engine');
     if (select) {
-        const previous = select.value || 'onnxruntime|cpu';
+        let previous = select.value || 'onnxruntime|cpu';
+        if (corpusChanged && pipelinePhase !== 'perform' && data.vae_id !== 'same_s') {
+            const preferred = decoderChoices.find(c => c.selectable && c.device !== 'cpu') || decoderChoices.find(c => c.selectable);
+            if (preferred) previous = `${preferred.backend}|${preferred.device}`;
+        } else if (corpusChanged && pipelinePhase !== 'perform') previous = 'onnxruntime|cpu';
         select.innerHTML = '';
         decoderChoices.forEach(choice => {
             const option = document.createElement('option');
@@ -56,6 +72,7 @@ function onDecoderList(data) {
         select.value = previous;
     }
     updateDecoderAvailability();
+    if (data.error) setDecoderStatus(`Error: ${data.error}`, 'error');
     updateDecoderControls();
 }
 
@@ -92,7 +109,7 @@ function applyDecoderPhase(data) {
         setDecoderStatus('Stopping audio and waiting for pending decoding…');
     } else {
         setDecoderStatus('No active decoder. Choose a decoder and Start Perform.');
-        if (pipelinePhase === 'idle') populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
+        if (pipelinePhase === 'idle') populateDecoderWindowOptions([decoderInitialWindow], decoderInitialWindow);
         pendingDecoderControls.clear();
     }
     if (!activePipelineDecoder && typeof updateDecoderRuntimeDisplay === 'function') updateDecoderRuntimeDisplay({});
@@ -133,6 +150,8 @@ function selectTab(tab) {
 function setPipelineCorpusDir(corpusDir) {
     if (!corpusDir || corpusDir === pipelineCorpusDir) return;
     pipelineCorpusDir = corpusDir;
+    decoderChoices = [];
+    requestDecoderAvailability();
     updateDecoderControls();
 }
 
@@ -211,6 +230,8 @@ function updateDecoderControls() {
     const ready = pipelineConnectionReady && !decoderCommandPending;
     const engine = document.getElementById('perform-decoder-engine');
     if (engine) engine.disabled = !ready || pipelinePhase !== 'idle';
+    const weights = document.getElementById('perform-vae-weight-path');
+    if (weights) weights.disabled = !ready || pipelinePhase !== 'idle';
     const stopPerform = document.getElementById('perform-stop-btn');
     if (stopPerform) stopPerform.disabled = !ready || !['perform', 'error'].includes(pipelinePhase);
     const refresh = document.getElementById('perform-decoder-refresh');
@@ -701,7 +722,7 @@ function setupPipelineControls() {
         updateDecoderControls();
     });
     document.getElementById('perform-decoder-refresh')?.addEventListener('click', () => {
-        sendPipelineMessage({type: 'pipeline_list_decoders'});
+        requestDecoderAvailability();
     });
     document.getElementById('perform-stop-btn')?.addEventListener('click', () => {
         if (decoderCommandPending || !['perform', 'error'].includes(pipelinePhase)) return;
@@ -727,6 +748,7 @@ function setupPipelineControls() {
                     decoder_window: decoderWindow,
                     decoder_backend: choice.backend,
                     decoder_device: choice.device,
+                    vae_weight_path: document.getElementById('perform-vae-weight-path')?.value.trim() || '',
                 },
             });
             if (sent) {
@@ -816,7 +838,7 @@ function requestCorpusList() {
     sendPipelineMessage({ type: 'pipeline_list_corpora' });
     sendPipelineMessage({ type: 'pipeline_list_vaes' });
     sendPipelineMessage({ type: 'pipeline_get_state' });
-    sendPipelineMessage({ type: 'pipeline_list_decoders' });
+    requestDecoderAvailability();
 }
 
 // Initialize on DOM ready
@@ -824,4 +846,10 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', setupPipelineControls);
 } else {
     setupPipelineControls();
+}
+
+
+function requestDecoderAvailability() {
+    sendPipelineMessage({type: 'pipeline_list_decoders', corpus_dir: pipelineCorpusDir,
+        vae_weight_path: document.getElementById('perform-vae-weight-path')?.value.trim() || ''});
 }

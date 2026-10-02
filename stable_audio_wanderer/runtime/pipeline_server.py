@@ -79,7 +79,20 @@ class PipelineManager:
 
         if msg_type == "pipeline_list_decoders":
             from ..vae.decoder_availability import decoder_availability
-            self._emit({"type": "pipeline_decoder_list", "decoders": decoder_availability(self._decoder_resource_dir)})
+            corpus_dir = data.get("corpus_dir")
+            if not corpus_dir:
+                self._emit({"type": "pipeline_decoder_list", "decoders": decoder_availability(self._decoder_resource_dir)})
+            else:
+                try:
+                    from ..vae.corpus_decoder import corpus_decoder_spec
+                    spec = corpus_decoder_spec(corpus_dir, validate=False)
+                    self._emit({"type": "pipeline_decoder_list", "corpus_dir": corpus_dir,
+                        "vae_id": spec["vae_id"], "default_window": 2 if spec["vae_id"] == "same_s" else 8,
+                        "decoders": decoder_availability(
+                            self._decoder_resource_dir, corpus_spec=spec, weight_path=data.get("vae_weight_path", ""))})
+                except Exception as exc:
+                    self._emit({"type": "pipeline_decoder_list", "corpus_dir": corpus_dir,
+                                "decoders": [], "error": str(exc)})
         elif msg_type == "pipeline_list_files":
             self._handle_list_files(data)
         elif msg_type == "pipeline_list_corpora":
@@ -418,7 +431,7 @@ class PipelineManager:
             return
         try:
             from ..vae.decoder_factory import select_decoder, create_decoder
-            from ..vae.onnx_decoder import validate_same_s_corpus
+            from ..vae.corpus_decoder import corpus_decoder_spec
             config = data.get("config", {})
             if not isinstance(config, dict):
                 raise ValueError("Perform config must be an object")
@@ -430,8 +443,10 @@ class PipelineManager:
                 raise ValueError("Invalid decoder_window")
             decoder_window = int(window)
             # Corpus checks are mandatory even when an instance is cached.
-            validate_same_s_corpus(corpus_dir)
-            selection = select_decoder(config, resource_dir=self._decoder_resource_dir)
+            corpus_spec = corpus_decoder_spec(corpus_dir)
+            if corpus_spec and corpus_spec["vae_id"] != "same_s" and "decoder_window" not in config:
+                decoder_window = 8
+            selection = select_decoder(config, resource_dir=self._decoder_resource_dir, corpus_spec=corpus_spec)
             self._perform_error = None
             self.phase = "preparing"
             self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
@@ -443,6 +458,8 @@ class PipelineManager:
                 self._app_decoder = create_decoder(selection)
                 self._decoder_selection = selection
             decoder = self._app_decoder
+            if hasattr(decoder, "validate_corpus"):
+                decoder.validate_corpus(corpus_spec)
             if decoder_window not in decoder.supported_windows:
                 raise RuntimeError(f"Decoder window T{decoder_window} is unavailable; supported: {decoder.supported_windows}")
             self._perform_controller = self._perform_setup_callback(corpus_dir, decoder, dict(config))

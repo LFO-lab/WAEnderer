@@ -71,7 +71,8 @@ class DecoderInfo(Protocol):
 class LatentDecoder(Protocol):
     """Prepared decoder consumed by the Web transport, without ONNX coupling.
 
-    SAME-S inputs are finite, raw/denormalized float32 [T, 256] arrays. The
+    Inputs are finite, raw/denormalized float32 [T, latent_dim] arrays
+    (256 dimensions for SAME-S, typically 64 for other adapters). The
     backend validates requests against its supported windows and returns one
     complete audio window, without transport-level padding or overlap-add.
     Decoding may be stochastic: identical inputs need not yield identical PCM.

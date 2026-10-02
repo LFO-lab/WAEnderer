@@ -13,7 +13,12 @@ import http.server
 import os
 import signal
 import socketserver
+import sys
 import threading
+
+# Direct script execution puts bin/, not the repository root, on sys.path.
+# Pipeline workers import sibling entry points as bin.preprocess/bin.perform.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
@@ -35,7 +40,7 @@ def _start_http_server(web_dir: str, port: int) -> threading.Thread:
 
 
 def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_port):
-    """Set up the fail-closed SAME-S Web performance phase."""
+    """Set up Web performance with a prepared corpus-compatible decoder."""
     from bin.perform import (
         load_manual_artifact,
         load_navigation_engine,
@@ -116,12 +121,12 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
         leafsize=int(manual_data["kdtree_leafsize"]),
     )
 
-    if corpus_vae_id != "same_s":
+    if latent_decoder is not None and corpus_vae_id != latent_decoder.info.vae_id:
         raise RuntimeError(
-            f"Unified Web performance requires a SAME-S corpus, got {corpus_vae_id!r}"
+            f"Corpus VAE {corpus_vae_id!r} does not match the prepared decoder"
         )
     if latent_decoder is None:
-        raise RuntimeError("A prepared SAME-S decoder is required")
+        raise RuntimeError("A prepared corpus-compatible decoder is required")
     selected_window = int(config.get("decoder_window", latent_decoder.default_window))
     audio_player = DecoderPlayer(gain=1.0, sr=corpus_sr)
 

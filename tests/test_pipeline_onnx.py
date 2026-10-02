@@ -60,7 +60,7 @@ def test_start_lazily_loads_and_reuses_app_decoder(tmp_path, monkeypatch):
         calls.append(("validate", str(path)))
 
     monkeypatch.setattr(decoder_module, "load_same_s_app_decoder", fake_load)
-    monkeypatch.setattr(decoder_module, "validate_same_s_corpus", fake_validate)
+    monkeypatch.setattr("stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec", fake_validate)
 
     resource = _write_resource(tmp_path)
     pipeline = PipelineManager(decoder_resource_dir=resource)
@@ -92,8 +92,7 @@ def test_start_surfaces_resource_or_corpus_failure(tmp_path, monkeypatch):
     import stable_audio_wanderer.vae.onnx_decoder as decoder_module
 
     monkeypatch.setattr(
-        decoder_module,
-        "validate_same_s_corpus",
+        "stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("not a SAME-S corpus")),
     )
     pipeline = PipelineManager()
@@ -118,7 +117,7 @@ def test_start_rejects_unsupported_window(tmp_path, monkeypatch):
     monkeypatch.setattr(
         decoder_module, "load_same_s_app_decoder", lambda **_kwargs: FakeAppDecoder()
     )
-    monkeypatch.setattr(decoder_module, "validate_same_s_corpus", lambda *_: None)
+    monkeypatch.setattr("stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec", lambda *_: None)
     pipeline = PipelineManager(decoder_resource_dir=_write_resource(tmp_path))
     broadcaster = CapturingBroadcaster()
     pipeline.set_broadcaster(broadcaster)

@@ -1,0 +1,53 @@
+{
+  "corpus": "corpus/Rack_20260428_181107",
+  "torch": "2.13.0",
+  "device": "mps",
+  "window": 8,
+  "audio_device": "Haut-parleurs MacBook Pro",
+  "muted": true,
+  "modes": [
+    {
+      "mode": "random",
+      "seconds": 10,
+      "underruns_total": 0,
+      "blocks": 394
+    },
+    {
+      "mode": "manual",
+      "seconds": 10,
+      "underruns_total": 0,
+      "blocks": 824
+    },
+    {
+      "mode": "reorganized",
+      "seconds": 10,
+      "underruns_total": 0,
+      "blocks": 1243
+    }
+  ],
+  "vae_id": "stable_audio_open",
+  "latent_dim": 64,
+  "samples_per_latent": 2048,
+  "supported_windows": [
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22,
+    24,
+    26,
+    28,
+    30,
+    32
+  ],
+  "underruns": 0,
+  "blocks": 1243,
+  "passed": true,
+  "closed": true
+}

@@ -9,7 +9,7 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 - **Random Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
 - **Reorganized Morphologies Mode** - Unit-graph sequencing with optional learned transition scorer
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
-- **Real-Time Decoding** - Torch in standalone mode; CPU SAME-S ONNX with normalized full-output overlap-add in the unified Web performance path
+- **Real-Time Decoding** - Torch in standalone mode; corpus-selected ONNX/PyTorch with normalized full-output overlap-add in the unified Web performance path
 - **WebSocket Visualization** - p5.js interface showing trajectory, controls, and corpus structure
 - **Explicit Transport** - Choose mode, then Start/Stop decoding from the web UI
 - **OSC Control** - Full parameter control for integration with external controllers
@@ -264,13 +264,13 @@ Open `web/index.html` in a browser, choose a navigation tab, and press **Start D
 If manual descriptor fields are unavailable, random timbre swap/recompose automatically falls back to baseline contiguous retrieval.
 If reorganized units are missing/invalid, reorganized mode is unavailable while manual/random continue to work.
 
-#### AIMC unified Web performance (SAME-S ONNX)
+#### Unified Web performance (corpus-selected VAE)
 
 The unified Web server defaults to an app-owned SAME-S ONNX realtime decoder.
 Pipeline configuration also supports the native decoder; see the
 [selection and lifecycle protocol](docs/DUAL_INFERENCE_PHASE3.md).
 SAME-S is the default encoder in the Web UI, while the other encoder
-choices remain available for non-realtime experiments.
+choices also work in Perform through their existing PyTorch adapters: Stable Audio Open, EAR 44.1 kHz and EAR 48 kHz. The corpus determines the VAE; the selector offers compatible execution devices. EAR requires its local `.pyt` path in Perform and the EAR repository/dependencies. These paths do not use the SAME-S ONNX graph.
 
 Prepare the untracked release resource once from local SAME-S weights:
 
@@ -299,12 +299,9 @@ python bin/serve.py
 ```
 
 Open `http://localhost:8080` and select or create a corpus. After preprocessing
-or training, that corpus remains selected and **Start Perform** is immediately
-available. The decoder loads lazily on Start and checks the packaged model,
-CPU ONNX session, I/O contract, selected window, and corpus VAE geometry. A
-non-SAME-S corpus reports a visible compatibility error at Start.
+or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S offers ONNX CPU or native PyTorch; other registered VAEs use PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
 
-T2 is selected initially. Newly exported decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window
+T2 is selected initially for SAME-S; other VAE adapters start at T8 to leave more audio time per decode. Newly exported SAME-S decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window
 selector remains active during playback. The current T keeps generating audio
 while one replacement stream is prepared. After the replacement has enough
 buffered audio, playback crossfades over 256 samples. Rapid changes update a

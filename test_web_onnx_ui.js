@@ -28,7 +28,7 @@ class FakeElement {
 }
 
 const ids = [
-    "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
+    "perform-vae-weight-group", "perform-vae-weight-path", "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
     "perform-start-btn", "perform-stop-btn", "perform-decoder-engine", "perform-decoder-refresh", "perform-decoder-availability", "btn-start", "pp-vae-select", "pp-vae-path-group",
     "window-mode", "window-minimum", "window-maximum", "manual-content", "manual-variation",
     "adaptive-window-range", "manual-content-controls", "manual-variation-control",
@@ -64,13 +64,16 @@ vm.runInContext(
     "handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:'/corpus/demo'});",
     context,
 );
-assert.equal(start.disabled, false, "selected corpus enables Start without validation");
+assert.equal(start.disabled, true, "corpus-specific availability is required before Start");
+assert.equal(sent.at(-1).corpus_dir, '/corpus/demo');
+vm.runInContext("onDecoderList({corpus_dir:'/corpus/demo',vae_id:'same_s',decoders:[{backend:'onnxruntime',device:'cpu',selectable:true,label:'ONNX'}]});", context);
+assert.equal(start.disabled, false, "compatible decoder enables Start");
 assert.equal(transportStart.disabled, true, "transport waits for perform handoff");
 
 start.listeners.click();
 assert.deepEqual(sent.pop(), {
     type: "pipeline_start_perform",
-    config: { corpus_dir: "/corpus/demo", decoder_window: 2, decoder_backend: "onnxruntime", decoder_device: "cpu" },
+    config: { corpus_dir: "/corpus/demo", decoder_window: 2, decoder_backend: "onnxruntime", decoder_device: "cpu", vae_weight_path: "" },
 });
 
 vm.runInContext(
@@ -158,7 +161,7 @@ console.log('Streaming dropdown interaction and reconnect checks passed');
 // Phase 4: explicit selection, lifecycle lock, errors and reconnect.
 const engine = elements.get('perform-decoder-engine');
 const stopPerform = elements.get('perform-stop-btn');
-vm.runInContext(`handlePipelineMessage({type:'pipeline_decoder_list',decoders:[
+vm.runInContext(`handlePipelineMessage({type:'pipeline_decoder_list',corpus_dir:'/corpus/demo',vae_id:'same_s',decoders:[
     {backend:'onnxruntime',device:'cpu',label:'ONNX · CPU',hardware:true,dependencies:true,weights:true,selectable:true,detail:'Not yet validated'},
     {backend:'pytorch',device:'mps',label:'PyTorch · GPU · MPS',hardware:true,dependencies:true,weights:true,selectable:true,detail:'Not yet validated'},
     {backend:'pytorch',device:'cuda:0',label:'PyTorch · GPU · CUDA:0',hardware:false,dependencies:true,weights:true,selectable:false,detail:'GPU unavailable'}
@@ -208,3 +211,64 @@ vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'erro
 assert.equal(start.disabled, true);
 assert.equal(stopPerform.disabled, false, 'cleanup can be retried');
 console.log('Dual decoder selection, lifecycle and reconnect checks passed');
+
+// A different corpus changes the offered model, not the model used to decode its latents.
+vm.runInContext("pipelinePhase='idle'; decoderCommandPending=false; setPipelineCorpusDir('/corpus/rack');", context);
+assert.equal(start.disabled, true);
+vm.runInContext("onDecoderList({corpus_dir:'/corpus/old',vae_id:'same_s',decoders:[]});", context);
+assert.equal(start.disabled, true, 'stale availability must be ignored');
+vm.runInContext("onDecoderList({corpus_dir:'/corpus/rack',vae_id:'stable_audio_open',default_window:8,decoders:[{backend:'pytorch',device:'cpu',selectable:true,label:'SAO CPU'},{backend:'pytorch',device:'mps',selectable:true,label:'SAO MPS'}]});", context);
+assert.equal(elements.get('perform-decoder-engine').value, 'pytorch|mps');
+assert.equal(elements.get('perform-vae-weight-group').hidden, true);
+assert.ok(elements.get('perform-decoder-engine').options.every(o => !o.value.startsWith('onnxruntime')));
+start.listeners.click();
+assert.equal(sent.at(-1).config.corpus_dir, '/corpus/rack');
+assert.equal(sent.at(-1).config.decoder_window, 8);
+assert.equal(sent.at(-1).config.decoder_backend, 'pytorch');
+vm.runInContext("pipelinePhase='idle'; decoderCommandPending=false; setPipelineCorpusDir('/corpus/ear'); onDecoderList({corpus_dir:'/corpus/ear',vae_id:'ear_vae_48k',decoders:[{backend:'pytorch',device:'cpu',selectable:true,label:'EAR CPU'}]});", context);
+assert.equal(elements.get('perform-vae-weight-group').hidden, false);
+elements.get('perform-vae-weight-path').value = '/models/ear/weights.pyt';
+start.listeners.click();
+assert.equal(sent.at(-1).config.vae_weight_path, '/models/ear/weights.pyt');
+console.log('Corpus-specific VAE selection and EAR weight path passed');
+
+// Phase 0: replay recorded production discovery through fresh clients (reload)
+// and reconnect state. This is a DOM harness, not a live-browser observation.
+const inventory = JSON.parse(fs.readFileSync('docs/multi_vae_phase0_inventory.json', 'utf8'));
+function inventoryClient() {
+    const nodes = new Map(ids.map(id => [id, new FakeElement(id)]));
+    const client = vm.createContext({console, wsConnected:true, ws:{send() {}}, document:{
+        readyState:'loading', getElementById:id => nodes.get(id) || null,
+        createElement:() => new FakeElement(), querySelector:() => null,
+        querySelectorAll:() => [], addEventListener() {}
+    }});
+    vm.runInContext(fs.readFileSync('web/pipeline.js','utf8'),client);
+    vm.runInContext('setupPipelineControls();',client);
+    return {client,nodes};
+}
+function loadDiscovery(target, key) {
+    target.client.response = inventory.discovery[key];
+    vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);",target.client);
+}
+for (let reload=0; reload<2; reload++) {
+    const target = inventoryClient();
+    loadDiscovery(target,'same_s');
+    const menu = target.nodes.get('perform-decoder-engine');
+    assert.ok(menu.options.some(o=>o.value==='onnxruntime|cpu' && !o.disabled), 'SAME-S ONNX survives reload');
+    assert.ok(menu.options.some(o=>o.value==='pytorch|cpu'), 'SAME-S native CPU is visible');
+    menu.value='pytorch|cpu';
+    vm.runInContext("pipelineDisconnected(); handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);",target.client);
+    assert.equal(menu.value,'pytorch|cpu','refresh/reconnect preserves native CPU selection');
+    loadDiscovery(target,'stable_audio_open');
+    assert.ok(menu.options.some(o=>o.value==='pytorch|cpu'));
+    assert.ok(!menu.options.some(o=>o.value==='onnxruntime|cpu'),'SAME-S ONNX must not decode Rack');
+    loadDiscovery(target,'same_s');
+    assert.ok(menu.options.some(o=>o.value==='onnxruntime|cpu' && !o.disabled),'SAME-S ONNX returns after switching back');
+    const unavailable = JSON.parse(JSON.stringify(inventory.discovery.same_s));
+    unavailable.decoders.find(c=>c.backend==='onnxruntime').selectable=false;
+    unavailable.decoders.find(c=>c.backend==='onnxruntime').detail='Packaged graph missing';
+    target.client.response=unavailable;
+    vm.runInContext('handlePipelineMessage(response);',target.client);
+    assert.ok(menu.options.some(o=>o.value==='onnxruntime|cpu' && o.disabled),'missing graph remains visible as unavailable');
+}
+console.log('Phase 0 recorded discovery: SAME-S/Rack, reload, reconnect and missing-artifact states passed');

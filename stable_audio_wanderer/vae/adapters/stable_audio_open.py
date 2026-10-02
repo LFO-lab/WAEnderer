@@ -23,11 +23,11 @@ class StableAudioOpenAdapter(VAEAdapter):
         self._info = _INFO
 
     @classmethod
-    def load(cls, repo_or_path: str = "stabilityai/stable-audio-open-1.0", **_kwargs):
+    def load(cls, repo_or_path: str = "stabilityai/stable-audio-open-1.0", device=None, local_files_only=False, **_kwargs):
         from diffusers import AutoencoderOobleck
         model = AutoencoderOobleck.from_pretrained(
-            repo_or_path, subfolder="vae"
-        ).to(DEVICE).eval()
+            repo_or_path, subfolder="vae", local_files_only=local_files_only
+        ).to(device=device if device is not None else DEVICE, dtype=torch.float32).eval()
         return cls(model)
 
     def info(self) -> VAEInfo:

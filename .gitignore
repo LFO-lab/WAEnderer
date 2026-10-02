@@ -1,4 +1,5 @@
 .venv
+.venv-ear
 *.pyc
 corpus/*
 user_audio/*

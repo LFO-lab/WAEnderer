@@ -81,7 +81,7 @@ class EarVAEAdapter(VAEAdapter):
 
     @classmethod
     def load(cls, weight_path: str = "", repo_path: str = "",
-             sample_rate: int = 44100, **_kwargs):
+             sample_rate: int = 44100, device=None, **_kwargs):
         """Load EAR VAE from a local repo clone + .pyt weight file.
 
         Args:
@@ -137,7 +137,7 @@ class EarVAEAdapter(VAEAdapter):
             raise
         model = EAR_VAE(model_config=model_config)
         model.load_state_dict(state_dict)
-        model = model.to(DEVICE).eval()
+        model = model.to(device=device if device is not None else DEVICE, dtype=torch.float32).eval()
 
         # Compute actual downsampling ratio from the config strides.
         strides = model_config["encoder"]["config"]["strides"]

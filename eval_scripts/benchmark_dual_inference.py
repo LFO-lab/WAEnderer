@@ -3,7 +3,7 @@
 Use --navigation production to exercise learned corpus policies and --audio-device
 for Core Audio evidence. Run backends separately without other inference load.
 Qualification combines these measurements with parity and listening evidence.
-Optional --corpus accepts a SAME-S corpus.npz (normalized Z_concat).
+Optional --corpus accepts a supported corpus.npz (normalized Z_concat).
 """
 import argparse
 from collections import defaultdict
@@ -23,7 +23,7 @@ import torch
 from stable_audio_wanderer.runtime.decoder_transport import DecoderTransportController
 from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
 from stable_audio_wanderer.vae.decoder_factory import select_decoder, create_decoder
-from stable_audio_wanderer.vae.onnx_decoder import validate_same_s_corpus
+from stable_audio_wanderer.vae.corpus_decoder import corpus_decoder_spec
 
 
 def percentiles(values):
@@ -107,22 +107,27 @@ class ObservedPlayer(DecoderPlayer):
 def run(args):
     torch.set_num_threads(1)
     if args.corpus:
-        path = validate_same_s_corpus(args.corpus)
+        spec = corpus_decoder_spec(args.corpus)
+        path = args.corpus / "corpus.npz" if args.corpus.is_dir() else args.corpus
         with np.load(path, allow_pickle=False) as data:
             z, mean, std = (np.asarray(data[key], dtype=np.float32) for key in ('Z_concat','Z_mean','Z_std'))
             offsets = np.asarray(data['file_offsets'], dtype=np.int64)
         source = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     else:
+        spec = None
         z = np.random.default_rng(5006).normal(0, .05, (256,256)).astype(np.float32)
         mean, std = np.zeros(256, np.float32), np.ones(256, np.float32)
         offsets = np.array([0,128,256])
         source = {'synthetic_seed': 5006, 'distribution': 'normal std=.05',
                   'sha256': hashlib.sha256(z.tobytes()).hexdigest()}
     file_ids = np.repeat(np.arange(len(offsets)-1), np.diff(offsets))
-    selection = select_decoder({'decoder_backend': args.backend, 'decoder_device': args.device})
+    selection = select_decoder({'decoder_backend': args.backend, 'decoder_device': args.device}, corpus_spec=spec)
     started = time.perf_counter()
     decoder = MeasuredDecoder(create_decoder(selection))
+    if hasattr(decoder, "validate_corpus"):
+        decoder.validate_corpus(spec)
     preparation_ms = (time.perf_counter()-started)*1000
+    sample_rate = decoder.metadata_for(decoder.default_window).sample_rate
     # Patch only stream creation; keep production PCM buffer, callback, OLA,
     # transport scheduler, transitions and decoder implementations.
     import sounddevice as sd
@@ -140,13 +145,13 @@ def run(args):
                     decoder, {'decoder_window':2}, WSBroadcaster(), 8765)
             player = controller.decoder
         else:
-            player = ObservedPlayer(sr=44100, blocksize=1024, gain=0.0 if args.audio_device else 1.0)
+            player = ObservedPlayer(sr=sample_rate, blocksize=1024, gain=0.0 if args.audio_device else 1.0)
             replay = ReplayNavigation(z)
             controller = DecoderTransportController(nav=replay, manual_engine=replay, manifold=replay,
                 player=player, latent_decoder=decoder, z_concat=z, file_offsets=offsets,
                 frame_file_ids=file_ids, z_mean=mean, z_std=std, initial_window=2)
     output = np.empty((1024,2), np.float32)
-    interval = 1024/44100
+    interval = 1024/sample_rate
     lag, samples, transitions = [], [], []
     pending = None
     cpu_started = time.process_time()
@@ -210,7 +215,7 @@ def run(args):
     report = {'recorded_at_utc':datetime.now(timezone.utc).isoformat(),
         'platform':platform.platform(), 'python':platform.python_version(), 'torch':torch.__version__,
         'backend':args.backend, 'device':args.device, 'identity':selection.identity,
-        'source':source, 'clock':('physical output (muted)' if args.audio_device else 'silent software callback') + ', 1024 samples at 44100 Hz',
+        'source':source, 'clock':('physical output (muted)' if args.audio_device else 'silent software callback') + f', 1024 samples at {sample_rate} Hz',
         'audio_device':args.audio_device,
         'navigation':args.navigation,
         'requested_seconds':args.seconds, 'duration_seconds':duration, 'started_monotonic':start,
@@ -219,7 +224,7 @@ def run(args):
         'callback_ms':percentiles(player.callback_times), 'clock_lateness_ms':percentiles(lag),
         'process_cpu_percent':100*(time.process_time()-cpu_started)/duration,
         'peak_rss_platform_units':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-        'windows':{str(w):{'decode_ms':percentiles(v), 'hop_budget_ms':w/2*4096/44100*1000}
+        'windows':{str(w):{'decode_ms':percentiles(v), 'hop_budget_ms':decoder.metadata_for(w).audio_hop_samples/decoder.metadata_for(w).sample_rate*1000}
                    for w,v in sorted(decoder.times.items())},
         'transitions':transitions, 'memory_samples':samples,
         'underrun_events':player.underrun_events, 'rendered_blocks':player.blocks, 'pcm_peak':player.peak,

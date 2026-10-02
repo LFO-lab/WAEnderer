@@ -23,7 +23,7 @@ def lifecycle(tmp_path, monkeypatch):
         events.append("validate")
         if path.endswith("invalid"):
             raise ValueError("incompatible corpus")
-    monkeypatch.setattr("stable_audio_wanderer.vae.onnx_decoder.validate_same_s_corpus", validate)
+    monkeypatch.setattr("stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec", validate)
     def select(config, **kwargs):
         return factory.DecoderSelection(config.get("decoder_backend", "onnxruntime"),
                                         config.get("decoder_device", "cpu"),
