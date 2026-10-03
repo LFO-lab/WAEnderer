@@ -2503,6 +2503,7 @@ dependencies = [
     { name = "faiss-cpu" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "onnx" },
     { name = "onnxruntime" },
     { name = "python-osc" },
     { name = "safetensors" },
@@ -2525,7 +2526,6 @@ dev = [
     { name = "pytest" },
 ]
 export = [
-    { name = "onnx" },
     { name = "onnxscript" },
 ]
 release = [
@@ -2549,7 +2549,7 @@ requires-dist = [
     { name = "faiss-cpu", specifier = ">=1.7.4" },
     { name = "huggingface-hub", marker = "extra == 'same-s-helpers'", specifier = ">=1.7.1" },
     { name = "numpy", specifier = ">=1.25" },
-    { name = "onnx", marker = "extra == 'export'", specifier = ">=1.21" },
+    { name = "onnx", specifier = ">=1.21" },
     { name = "onnxruntime", specifier = ">=1.26" },
     { name = "onnxscript", marker = "extra == 'export'", specifier = ">=0.7" },
     { name = "pip-licenses", marker = "extra == 'release'" },

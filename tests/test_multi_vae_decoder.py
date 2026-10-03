@@ -58,8 +58,8 @@ def test_registered_adapters_use_measured_pcm_timing_and_explicit_device(monkeyp
 def test_corpus_spec_accepts_legacy_sao_rate_without_same_s_assumptions(tmp_path):
     spec = corpus_decoder_spec(write_corpus(tmp_path/'rack'))
     assert spec == dict(vae_id='stable_audio_open',sample_rate=44100,latent_hz=21.5,latent_dim=64)
-    with pytest.raises(ValueError,match='SAME-S only'):
-        factory.select_decoder({'decoder_backend':'onnxruntime'},corpus_spec=spec)
+    with pytest.raises(ValueError,match='missing metadata'):
+        factory.select_decoder({'decoder_backend':'onnxruntime','decoder_store_dir':str(tmp_path/'empty-store')},corpus_spec=spec)
 
 
 @pytest.mark.parametrize('change', [dict(Z_std=np.zeros(64,np.float32)),

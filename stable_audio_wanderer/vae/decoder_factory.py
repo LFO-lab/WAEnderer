@@ -2,8 +2,7 @@
 
 from dataclasses import dataclass, field
 import hashlib
-from importlib import resources, metadata
-import json
+from importlib import metadata
 from pathlib import Path
 
 
@@ -16,6 +15,7 @@ class DecoderSelection:
     local_files_only: bool = field(default=True, compare=False)
     vae_id: str = "same_s"
     adapter_path: str = ""
+    artifact: object = field(default=None, compare=False, repr=False)
 
 
 def _hash(path):
@@ -32,26 +32,28 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
         raise ValueError("Perform config must be an object")
     vae_id = (corpus_spec or {}).get("vae_id", "same_s")
     backend = config.get("decoder_backend", "onnxruntime" if vae_id == "same_s" else "pytorch")
+    if backend == "onnxruntime":
+        if config.get("decoder_device", "cpu") != "cpu":
+            raise ValueError("ONNX decoding requires decoder_device='cpu'")
+        from .onnx_artifacts import resolve_artifact
+        expected_source = config.get("decoder_source_identity")
+        if expected_source is not None and not isinstance(expected_source, dict):
+            raise ValueError("decoder_source_identity must be an object")
+        if vae_id.startswith("ear_") and config.get("vae_weight_path"):
+            weight_hash = _hash(Path(config["vae_weight_path"]).expanduser())
+            if expected_source and expected_source.get("weights_sha256", weight_hash) != weight_hash:
+                raise ValueError("Selected EAR weights conflict with expected source identity")
+            expected_source = {**(expected_source or {}), "weights_sha256": weight_hash}
+        artifact = resolve_artifact(vae_id,
+            artifact_dir=config.get("decoder_artifact_dir") or resource_dir,
+            store_dir=config.get("decoder_store_dir"), artifact_id=config.get("decoder_artifact_id"),
+            expected_source=expected_source)
+        if corpus_spec:
+            artifact.validate_corpus(corpus_spec)
+        return DecoderSelection(backend, "cpu", artifact.cache_key, artifact.root,
+                                vae_id=vae_id, artifact=artifact)
     if vae_id != "same_s":
         return _select_adapter(config, vae_id, backend)
-    if backend == "onnxruntime":
-        device = config.get("decoder_device", "cpu")
-        if device != "cpu":
-            raise ValueError("ONNX decoding requires decoder_device='cpu'")
-        root = (Path(resource_dir) if resource_dir is not None else
-                Path(str(resources.files("stable_audio_wanderer.resources.same_s")))).resolve()
-        metadata_path = root / "decoder.json"
-        description = json.loads(metadata_path.read_text(encoding="utf-8"))
-        name = description.get("model")
-        if not isinstance(name, str) or Path(name).name != name or not name.endswith(".onnx"):
-            raise ValueError("ONNX decoder model must be a local .onnx filename")
-        model_path = (root / name).resolve()
-        if not model_path.is_relative_to(root):
-            raise ValueError("ONNX model path escapes its resource directory")
-        model_hash = _hash(model_path)
-        if description.get("model_sha256", model_hash) != model_hash:
-            raise ValueError("ONNX decoder model SHA-256 mismatch")
-        return DecoderSelection(backend, "cpu", (str(root), _hash(metadata_path), model_hash), root)
     if backend == "pytorch":
         import torch
         from .torch_decoder import _resolve_device
@@ -71,8 +73,10 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
 def create_decoder(selection: DecoderSelection):
     """Prepare one decoder. The pipeline validates the corpus on every start."""
     if selection.backend == "onnxruntime":
-        from .onnx_decoder import load_same_s_app_decoder
-        return load_same_s_app_decoder(resource_dir=selection.resource_dir)
+        from .artifact_decoder import load_artifact_decoder
+        from .onnx_artifacts import read_artifact
+        artifact = selection.artifact or read_artifact(selection.resource_dir, expected_vae=selection.vae_id)
+        return load_artifact_decoder(artifact)
     if selection.backend == "pytorch" and selection.vae_id != "same_s":
         from .adapter_decoder import AdapterTorchDecoder
         return AdapterTorchDecoder(vae_id=selection.vae_id, device=selection.device,

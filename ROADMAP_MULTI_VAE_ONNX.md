@@ -1,6 +1,6 @@
 # Roadmap — ONNX coverage for every registered VAE
 
-Status: **phase 0 completed on 2 October 2026; phases 1–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
+Status: **phases 0 and 1 completed on 2 October 2026; phases 2–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
 
 This extends the SAME-S dual-inference roadmap. The current uncommitted multi-VAE PyTorch restoration is the starting point, not evidence that multi-VAE ONNX is implemented. Existing SAME-S qualification remains specific to its recorded hardware/scenarios.
 
@@ -56,14 +56,16 @@ The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dth
 
 ## Phase 1 — Generalize ONNX metadata, loading and persistence
 
-- [ ] Introduce the shared artifact description/resolver and migration support for the existing SAME-S format.
-- [ ] Remove SAME-S-specific geometry from the ONNX loader/factory while retaining strict corpus/model matching and finite float32 PCM checks.
-- [ ] Support dynamic graphs and fixed-window graph maps with validated I/O layouts and measured timing geometry.
-- [ ] Include model identity, graph hashes and execution settings in decoder cache keys; preserve stop/drain/release behavior.
-- [ ] Implement safe temporary export publication, missing/corrupt-file errors and complete external-weight resolution.
-- [ ] Test missing metadata, wrong VAE, stale checkpoint/config, corrupt or missing external weights, unsupported windows, replacement and offline reload.
+- [x] Introduce the shared artifact description/resolver and migration support for the existing SAME-S format.
+- [x] Remove SAME-S-specific geometry from the ONNX loader/factory while retaining strict corpus/model matching and finite float32 PCM checks.
+- [x] Support dynamic graphs and fixed-window graph maps with validated I/O layouts and measured timing geometry.
+- [x] Include model identity, graph hashes and execution settings in decoder cache keys; preserve stop/drain/release behavior.
+- [x] Implement safe temporary export publication, missing/corrupt-file errors and complete external-weight resolution.
+- [x] Test missing metadata, wrong VAE, stale checkpoint/config, corrupt or missing external weights, unsupported windows, replacement and offline reload.
 
 **Exit:** the existing SAME-S artifact works through the generalized path, including ONNX CPU and native CPU/GPU selection, without weakening validation or requiring a new export.
+
+**Result:** shared metadata/resolution, CPU loading and atomic validated publication implemented. Existing SAME-S graph and native selection preserved. Full suite: 299 passed, 1 skipped; browser contracts passed. See [phase 1 implementation and limits](docs/MULTI_VAE_ONNX_PHASE1.md) and [real SAME-S compatibility evidence](docs/multi_vae_phase1_compatibility.json). Actual Stable Audio Open/EAR exports and their native parity reports remain phases 2–3 work.
 
 ## Phase 2 — Export and integrate Stable Audio Open
 

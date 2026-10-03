@@ -772,6 +772,11 @@ class SameSAppOnnxDecoder(SameSOnnxDecoder):
             for window in supported
         }
 
+        if ort_module is None:
+            from .onnx_artifacts import read_artifact, inspect_graph
+            artifact = read_artifact(resolved_resource, expected_vae="same_s")
+            inspect_graph(artifact, artifact.graphs[0])
+
         ort = ort_module if ort_module is not None else _load_onnxruntime()
         try:
             options = ort.SessionOptions()

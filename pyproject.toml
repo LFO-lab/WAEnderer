@@ -38,10 +38,11 @@ dependencies = [
   "accelerate>=0.33",
   "safetensors>=0.4",
   "onnxruntime>=1.26",
+  "onnx>=1.21",  # Runtime artifact/external-weight validation; export also uses onnxscript.
 ]
 
 [project.optional-dependencies]
-export = ["onnx>=1.21", "onnxscript>=0.7"]
+export = ["onnxscript>=0.7"]
 same-s-helpers = ["einops-exts", "huggingface-hub>=1.7.1"]
 dev = ["build>=1.2", "pytest>=8"]
 release = ["build>=1.2", "cyclonedx-bom", "pip-licenses"]

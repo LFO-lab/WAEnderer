@@ -1,0 +1,165 @@
+{
+  "recorded_at_utc": "2026-10-02T22:06:46.775554+00:00",
+  "compatibility_class": "SameSAppOnnxDecoder",
+  "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+  "legacy_manifest": true,
+  "graph_sha256": "333dc948f52fa59e9a80a066ffd2ca801d3a54b2fb07c93aa87cac845c547872",
+  "source_identity": {
+    "config_sha256": "c329dd0a6f61d0b3ea4f23930059a6c00437005692fed4310924eb286253303a",
+    "model": "stabilityai/SAME-S",
+    "revision": "fbeb3dcf53a326e5682f38e22e7f740202d44232",
+    "weights_sha256": "c19698ce3a0b462acb967ee495e9eb7945221f236968c50206cce8cf22b3d305"
+  },
+  "providers": [
+    "CPUExecutionProvider"
+  ],
+  "intra_threads": 1,
+  "inter_threads": 1,
+  "optimization": "GraphOptimizationLevel.ORT_ENABLE_BASIC",
+  "windows": [
+    {
+      "window": 2,
+      "shape": [
+        8192,
+        2
+      ],
+      "decode_ms": 94.7899580351077
+    },
+    {
+      "window": 4,
+      "shape": [
+        16384,
+        2
+      ],
+      "decode_ms": 119.29225001949817
+    },
+    {
+      "window": 6,
+      "shape": [
+        24576,
+        2
+      ],
+      "decode_ms": 148.9266250282526
+    },
+    {
+      "window": 8,
+      "shape": [
+        32768,
+        2
+      ],
+      "decode_ms": 190.47904101898894
+    },
+    {
+      "window": 10,
+      "shape": [
+        40960,
+        2
+      ],
+      "decode_ms": 234.93987502297387
+    },
+    {
+      "window": 12,
+      "shape": [
+        49152,
+        2
+      ],
+      "decode_ms": 279.4138750177808
+    },
+    {
+      "window": 14,
+      "shape": [
+        57344,
+        2
+      ],
+      "decode_ms": 326.46487501915544
+    },
+    {
+      "window": 16,
+      "shape": [
+        65536,
+        2
+      ],
+      "decode_ms": 361.2713750335388
+    },
+    {
+      "window": 18,
+      "shape": [
+        73728,
+        2
+      ],
+      "decode_ms": 405.7101249927655
+    },
+    {
+      "window": 20,
+      "shape": [
+        81920,
+        2
+      ],
+      "decode_ms": 440.3516249731183
+    },
+    {
+      "window": 22,
+      "shape": [
+        90112,
+        2
+      ],
+      "decode_ms": 490.8719169907272
+    },
+    {
+      "window": 24,
+      "shape": [
+        98304,
+        2
+      ],
+      "decode_ms": 546.609582961537
+    },
+    {
+      "window": 26,
+      "shape": [
+        106496,
+        2
+      ],
+      "decode_ms": 587.9980419995263
+    },
+    {
+      "window": 28,
+      "shape": [
+        114688,
+        2
+      ],
+      "decode_ms": 615.081875002943
+    },
+    {
+      "window": 30,
+      "shape": [
+        122880,
+        2
+      ],
+      "decode_ms": 670.3085839981213
+    },
+    {
+      "window": 32,
+      "shape": [
+        131072,
+        2
+      ],
+      "decode_ms": 708.5365410312079
+    }
+  ],
+  "native_selections": [
+    {
+      "backend": "pytorch",
+      "device": "cpu",
+      "vae_id": "same_s"
+    },
+    {
+      "backend": "pytorch",
+      "device": "mps:0",
+      "vae_id": "same_s"
+    }
+  ],
+  "graph_unchanged": true,
+  "closed": true,
+  "scope": "Offline real SAME-S ONNX decode and native selection only; no new export or native performance qualification.",
+  "passed": true
+}

@@ -13,13 +13,13 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path="")
             return find_spec(name) is not None
         except (ImportError, ValueError):
             return False
-    onnx_deps = installed('onnxruntime')
+    onnx_deps = installed('onnxruntime') and installed('onnx')
     onnx_files = (root / 'decoder.json').is_file() and any(root.glob('*.onnx'))
     entries = [dict(backend='onnxruntime', device='cpu', label='ONNX · CPU',
                     hardware=True, dependencies=onnx_deps, weights=onnx_files,
                     validated=False, selectable=onnx_deps and onnx_files,
                     detail='Validated when Perform loads.' if onnx_deps and onnx_files else
-                    'Install ONNX Runtime and the packaged SAME-S decoder.')]
+                    'Install ONNX Runtime, the ONNX validator and the packaged SAME-S decoder.')]
     native_deps = all(installed(name) for name in ('torch', 'torchaudio', 'stable_audio_3', 'safetensors', 'huggingface_hub'))
     weights = False
     try:

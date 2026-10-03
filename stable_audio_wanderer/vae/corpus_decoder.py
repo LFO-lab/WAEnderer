@@ -13,6 +13,13 @@ def corpus_decoder_spec(corpus_path, *, validate=True):
             raise ValueError(f'Unsupported corpus VAE {vae_id!r}')
         spec = dict(vae_id=vae_id, sample_rate=int(data['sr'].item()),
                     latent_hz=float(data['latent_hz'].item()))
+        # Optional provenance in newer corpora. Older corpora retain geometry-only
+        # matching; do not invent a checkpoint identity they never recorded.
+        for source_key, target in (("vae_weights_sha256", "weights_sha256"),
+                                   ("vae_config_sha256", "config_sha256"),
+                                   ("vae_source_revision", "revision")):
+            if source_key in data:
+                spec[target] = str(data[source_key].item())
         if not validate:
             return spec
         if vae_id == 'same_s':
