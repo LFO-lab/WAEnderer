@@ -114,7 +114,7 @@ class Artifact:
             raise ArtifactError('Corpus geometry does not match ONNX artifact')
         if not any(math.isclose(spec['latent_hz'], rate, rel_tol=0, abs_tol=1e-7) for rate in self.corpus_latent_hz):
             raise ArtifactError('Corpus latent rate does not match ONNX artifact')
-        for name in ('config_sha256', 'weights_sha256', 'revision'):
+        for name in ('config_sha256', 'weights_sha256', 'revision', 'effective_config_sha256', 'code_sha256'):
             if name in spec and spec[name] != dict(self.source).get(name):
                 raise ArtifactError(f'Corpus source {name} does not match ONNX artifact')
 
@@ -242,7 +242,10 @@ def inspect_graph(artifact, graph):
         if message.DESCRIPTOR.full_name=='onnx.TensorProto': yield message
         for field,value in message.ListFields():
             if field.type==field.TYPE_MESSAGE:
-                for child in value if field.is_repeated else (value,):
+                repeated = getattr(field, "is_repeated", None)
+                if repeated is None:  # protobuf 4 (EAR) predates is_repeated.
+                    repeated = field.label == field.LABEL_REPEATED
+                for child in value if repeated else (value,):
                     yield from tensors(child)
     for tensor in tensors(model):
         if tensor.data_location!=onnx.TensorProto.EXTERNAL and not tensor.external_data: continue

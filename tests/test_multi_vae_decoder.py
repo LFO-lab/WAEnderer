@@ -19,7 +19,7 @@ def write_corpus(path, **overrides):
 
 
 @pytest.mark.parametrize('vae_id,sr,ratio,hz', [('stable_audio_open',44100,2048,21.5),
-    ('ear_vae_44k',44100,1024,44100/1024), ('ear_vae_48k',48000,1024,48000/1024)])
+    ('ear_vae_44k',44100,1024,44100/1024), ('ear_vae_48k',48000,960,48000/960)])
 def test_registered_adapters_use_measured_pcm_timing_and_explicit_device(monkeypatch, vae_id, sr, ratio, hz):
     calls = []
     class Adapter:

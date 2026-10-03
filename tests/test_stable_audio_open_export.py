@@ -56,6 +56,7 @@ def test_vst_timing_uses_measured_ratio_instead_of_rounded_corpus(tmp_path, monk
 
 def test_dynamic_failure_falls_back_and_failed_fixed_parity_never_publishes(tmp_path, monkeypatch):
     monkeypatch.setattr('stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec', lambda _: {'vae_id':'stable_audio_open','latent_dim':64,'sample_rate':44100,'latent_hz':21.5})
+    (tmp_path/'corpus.npz').write_bytes(b'synthetic corpus')
     source={'model':'test'}
     monkeypatch.setattr(export,'resolve_source',lambda **kw:(tmp_path,source))
     monkeypatch.setattr(export,'load_wrapper',lambda **kw:(object(),source,2048))

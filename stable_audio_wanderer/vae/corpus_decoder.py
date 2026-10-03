@@ -17,7 +17,9 @@ def corpus_decoder_spec(corpus_path, *, validate=True):
         # matching; do not invent a checkpoint identity they never recorded.
         for source_key, target in (("vae_weights_sha256", "weights_sha256"),
                                    ("vae_config_sha256", "config_sha256"),
-                                   ("vae_source_revision", "revision")):
+                                   ("vae_source_revision", "revision"),
+                                   ("vae_effective_config_sha256", "effective_config_sha256"),
+                                   ("vae_code_sha256", "code_sha256")):
             if source_key in data:
                 spec[target] = str(data[source_key].item())
         if not validate:

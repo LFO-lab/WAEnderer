@@ -15,6 +15,9 @@ class DecoderSelection:
     local_files_only: bool = field(default=True, compare=False)
     vae_id: str = "same_s"
     adapter_path: str = ""
+    adapter_repo: str = ""
+    adapter_config: str = ""
+    adapter_source: tuple = ()
     artifact: object = field(default=None, compare=False, repr=False)
 
 
@@ -40,10 +43,12 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
         if expected_source is not None and not isinstance(expected_source, dict):
             raise ValueError("decoder_source_identity must be an object")
         if vae_id.startswith("ear_") and config.get("vae_weight_path"):
-            weight_hash = _hash(Path(config["vae_weight_path"]).expanduser())
-            if expected_source and expected_source.get("weights_sha256", weight_hash) != weight_hash:
-                raise ValueError("Selected EAR weights conflict with expected source identity")
-            expected_source = {**(expected_source or {}), "weights_sha256": weight_hash}
+            from .ear_weights import selected_file_identity
+            selected = selected_file_identity(vae_id, config['vae_weight_path'],
+                config.get('vae_repo_path',''), config.get('vae_config_path',''))
+            if expected_source and any(k in expected_source and expected_source[k]!=v for k,v in selected.items()):
+                raise ValueError('Selected EAR files conflict with expected source identity')
+            expected_source = {**(expected_source or {}), **selected}
         artifact = resolve_artifact(vae_id,
             artifact_dir=config.get("decoder_artifact_dir") or resource_dir,
             store_dir=config.get("decoder_store_dir"), artifact_id=config.get("decoder_artifact_id"),
@@ -82,7 +87,9 @@ def create_decoder(selection: DecoderSelection):
         return AdapterTorchDecoder(vae_id=selection.vae_id, device=selection.device,
             weight_path=selection.adapter_path if selection.vae_id.startswith("ear_") else "",
             repo_or_path=selection.adapter_path if selection.vae_id == "stable_audio_open" else None,
-            local_files_only=selection.local_files_only)
+            local_files_only=selection.local_files_only,
+            repo_path=selection.adapter_repo, config_path=selection.adapter_config,
+            expected_source=dict(selection.adapter_source) if selection.adapter_source else None)
     if selection.backend == "pytorch":
         from .torch_decoder import SameSTorchDecoder
         return SameSTorchDecoder(device=selection.device, local_files_only=selection.local_files_only)
@@ -91,7 +98,7 @@ def create_decoder(selection: DecoderSelection):
 
 def _select_adapter(config, vae_id, backend, corpus_spec=None):
     if backend != 'pytorch':
-        raise ValueError(f'{vae_id} requires PyTorch; the packaged ONNX graph supports SAME-S only')
+        raise ValueError(f'Unsupported decoder backend {backend!r} for {vae_id}')
     import torch
     from .torch_decoder import _resolve_device
     device = str(_resolve_device(torch, config.get('decoder_device', 'cpu')))
@@ -111,17 +118,20 @@ def _select_adapter(config, vae_id, backend, corpus_spec=None):
         adapter_path = str(root)
         identity = (vae_id, adapter_path, *source.values(), metadata.version('diffusers'))
     elif vae_id in ('ear_vae_44k', 'ear_vae_48k'):
-        path = Path(config.get('vae_weight_path', '')).expanduser()
-        if not path.is_file():
-            raise ValueError('EAR VAE requires an existing .pyt weight file in its EAR_VAE repository; set VAE weights in Perform')
-        path = path.resolve()
-        configs = []
-        for parent in list(path.parents)[:4]:
-            if (parent / 'model').is_dir():
-                configs = sorted((parent / 'config').glob('*.json'))
-                break
-        adapter_path = str(path)
-        identity = (vae_id, adapter_path, _hash(path), *(_hash(p) for p in configs))
+        from .ear_weights import resolve_source
+        resolved = resolve_source(vae_id, config.get('vae_weight_path',''),
+            config.get('vae_repo_path',''), config.get('vae_config_path',''),
+            config.get('decoder_source_identity'))
+        for key in resolved.identity:
+            if key in (corpus_spec or {}) and corpus_spec[key] != resolved.identity[key]:
+                raise ValueError(f'Corpus source {key} does not match native EAR decoder')
+        return DecoderSelection(backend, device,
+            (vae_id, str(resolved.weights), str(resolved.repo), str(resolved.config_path),
+             *resolved.identity.values(), metadata.version('descript-audio-codec'),
+             metadata.version('descript-audiotools'), metadata.version('einops'), str(torch.__version__), 'float32'),
+            local_files_only=offline, vae_id=vae_id, adapter_path=str(resolved.weights),
+            adapter_repo=str(resolved.repo), adapter_config=str(resolved.config_path),
+            adapter_source=tuple(sorted(resolved.identity.items())))
     else:
         raise ValueError(f'Unsupported corpus VAE {vae_id!r}')
     return DecoderSelection(backend, device, (*identity, str(torch.__version__), 'float32'),

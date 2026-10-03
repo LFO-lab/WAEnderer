@@ -1,0 +1,1360 @@
+{
+  "vae_id": "ear_vae_48k",
+  "source": {
+    "model": "earlab/EAR_VAE",
+    "revision": "4ce37867bc09af11e691e72708f14996eb38a85b",
+    "weights_sha256": "cc53f3f043aaae01307ffe1439b3a1c9d9e019652e6c13e089cd18d6037c2d3f",
+    "config_sha256": "7797e3d5e7560487690987a0a52e3b2c715ba44dad6caca61ff8d920b93b8ba8",
+    "effective_config_sha256": "df921922a6c49bf0a7900bce61f2b8574accf54f86379de437f93a2345751b65",
+    "code_sha256": "85cefc7ff647004085529aef775a9d63b68874b33754d65c857979eb326b5787",
+    "reconciliation": "checkpoint-transformer-keys-v1",
+    "transformer": "absent"
+  },
+  "evidence": {
+    "probe_seed": 20261003,
+    "probe_classes": [
+      "zero",
+      "seeded_random",
+      "source_bound_encoded_audio"
+    ],
+    "fixture_sha256": "34d395dfebaf90de4ed784ee1046ceb7b1453d22db88348ee382e42c374d033a",
+    "fixture": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/build/phase3/ear_vae_48k_probes.npz",
+    "synthetic_only": false
+  },
+  "tolerances": {
+    "max_abs_error": 0.0001,
+    "rmse": 1e-05
+  },
+  "windows": {
+    "2": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            1920
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 9.071081876754761e-07,
+          "rmse": 1.8271909523037516e-07,
+          "snr_db": 104.65755413167996
+        },
+        {
+          "shape": [
+            1,
+            2,
+            1920
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.0281801223754883e-06,
+          "rmse": 2.3945666381900825e-07,
+          "snr_db": 116.43199495795217
+        },
+        {
+          "shape": [
+            1,
+            2,
+            1920
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.8924474716186523e-06,
+          "rmse": 2.61506426510351e-07,
+          "snr_db": 112.09794999303409
+        },
+        {
+          "shape": [
+            1,
+            2,
+            1920
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.847564458847046e-07,
+          "rmse": 1.7160228125464493e-07,
+          "snr_db": 111.99595689223237
+        },
+        {
+          "shape": [
+            1,
+            2,
+            1920
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 4.5262277126312256e-07,
+          "rmse": 8.285269423417694e-08,
+          "snr_db": 112.5959095902278
+        }
+      ],
+      "files": {
+        "decoder_T2.onnx": "cfe2662c7999574728b5cd498b0219e1988effa03a0bc5f22f84b743bf10e180"
+      },
+      "bytes": 337224701
+    },
+    "4": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            3840
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.014030754566193e-07,
+          "rmse": 1.6180751114042545e-07,
+          "snr_db": 106.53884806542848
+        },
+        {
+          "shape": [
+            1,
+            2,
+            3840
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.043081283569336e-06,
+          "rmse": 2.0154965357565385e-07,
+          "snr_db": 115.87566527246355
+        },
+        {
+          "shape": [
+            1,
+            2,
+            3840
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.301568984985352e-07,
+          "rmse": 1.3995565199533287e-07,
+          "snr_db": 114.41005110849551
+        },
+        {
+          "shape": [
+            1,
+            2,
+            3840
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.3262033462524414e-06,
+          "rmse": 1.5088493094712021e-07,
+          "snr_db": 113.21536659391428
+        },
+        {
+          "shape": [
+            1,
+            2,
+            3840
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.152557373046875e-07,
+          "rmse": 6.855867515092674e-08,
+          "snr_db": 113.11410313410775
+        }
+      ],
+      "files": {
+        "decoder_T4.onnx": "b7f8c5657b62d781efd6d755dd05ce83957d962c1bbe7b9d731bb1e271e7d838"
+      },
+      "bytes": 337224701
+    },
+    "6": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            5760
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.133930921554565e-07,
+          "rmse": 1.5886765549180163e-07,
+          "snr_db": 106.88427615024622
+        },
+        {
+          "shape": [
+            1,
+            2,
+            5760
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.6689300537109375e-06,
+          "rmse": 2.388562322711119e-07,
+          "snr_db": 115.76851720229828
+        },
+        {
+          "shape": [
+            1,
+            2,
+            5760
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 6.258487701416016e-07,
+          "rmse": 1.1543339654622036e-07,
+          "snr_db": 114.35522204127672
+        },
+        {
+          "shape": [
+            1,
+            2,
+            5760
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.2069940567016602e-06,
+          "rmse": 1.4071168449776046e-07,
+          "snr_db": 113.57374306704999
+        },
+        {
+          "shape": [
+            1,
+            2,
+            5760
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 3.62517312169075e-07,
+          "rmse": 5.839191192899661e-08,
+          "snr_db": 114.18484433349579
+        }
+      ],
+      "files": {
+        "decoder_T6.onnx": "f77237307bc62330302d4a76d0fda5c213a4968ee3d992b04595778f355e8963"
+      },
+      "bytes": 337224701
+    },
+    "8": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            7680
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.580965757369995e-07,
+          "rmse": 1.6187160138857125e-07,
+          "snr_db": 106.88529335754325
+        },
+        {
+          "shape": [
+            1,
+            2,
+            7680
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.5795230865478516e-06,
+          "rmse": 2.7337657210184887e-07,
+          "snr_db": 115.28635840204771
+        },
+        {
+          "shape": [
+            1,
+            2,
+            7680
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 6.407499313354492e-07,
+          "rmse": 9.8914950366802e-08,
+          "snr_db": 114.41422298537915
+        },
+        {
+          "shape": [
+            1,
+            2,
+            7680
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.0058283805847168e-06,
+          "rmse": 1.218112176947981e-07,
+          "snr_db": 114.44063124876425
+        },
+        {
+          "shape": [
+            1,
+            2,
+            7680
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 4.246830940246582e-07,
+          "rmse": 5.665289867664964e-08,
+          "snr_db": 113.96137232551766
+        }
+      ],
+      "files": {
+        "decoder_T8.onnx": "3e1bae46ac0ce9615dd47afad41844135cfbf9ed47334e014d1515e1394c8ac2"
+      },
+      "bytes": 337224701
+    },
+    "10": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            9600
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.568167686462402e-07,
+          "rmse": 1.6780921421896156e-07,
+          "snr_db": 106.65581592662635
+        },
+        {
+          "shape": [
+            1,
+            2,
+            9600
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.2814998626708984e-06,
+          "rmse": 2.360599582836334e-07,
+          "snr_db": 116.18143185916905
+        },
+        {
+          "shape": [
+            1,
+            2,
+            9600
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 8.627634321317143e-08,
+          "snr_db": 114.60444812214791
+        },
+        {
+          "shape": [
+            1,
+            2,
+            9600
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.152557373046875e-07,
+          "rmse": 1.1605918056711075e-07,
+          "snr_db": 114.8796710647237
+        },
+        {
+          "shape": [
+            1,
+            2,
+            9600
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.420297384262085e-07,
+          "rmse": 5.3174692685078023e-08,
+          "snr_db": 114.49120196267005
+        }
+      ],
+      "files": {
+        "decoder_T10.onnx": "73c190b6f474e5f611d9962ffdaad2a2054e4736658afe916e1484d8f8c7602b"
+      },
+      "bytes": 337224701
+    },
+    "12": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            11520
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.568167686462402e-07,
+          "rmse": 1.6970584596575943e-07,
+          "snr_db": 106.61262016740308
+        },
+        {
+          "shape": [
+            1,
+            2,
+            11520
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.0265579223632812e-06,
+          "rmse": 2.735303639519043e-07,
+          "snr_db": 115.61111027679868
+        },
+        {
+          "shape": [
+            1,
+            2,
+            11520
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 7.870416708340021e-08,
+          "snr_db": 114.60142439535662
+        },
+        {
+          "shape": [
+            1,
+            2,
+            11520
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 6.407499313354492e-07,
+          "rmse": 1.0988947856920627e-07,
+          "snr_db": 115.00182639828088
+        },
+        {
+          "shape": [
+            1,
+            2,
+            11520
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.420297384262085e-07,
+          "rmse": 5.199163559040608e-08,
+          "snr_db": 114.72190696508575
+        }
+      ],
+      "files": {
+        "decoder_T12.onnx": "f7ad9080d416e099b3f1244e3dd871a04af087bee06819e38aca4a67e257e676"
+      },
+      "bytes": 337224701
+    },
+    "14": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            13440
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.568167686462402e-07,
+          "rmse": 1.7170926542478292e-07,
+          "snr_db": 106.54914278733943
+        },
+        {
+          "shape": [
+            1,
+            2,
+            13440
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.1622905731201172e-06,
+          "rmse": 2.2494535947746012e-07,
+          "snr_db": 115.90828726519766
+        },
+        {
+          "shape": [
+            1,
+            2,
+            13440
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 7.481143323256473e-08,
+          "snr_db": 114.38235973616061
+        },
+        {
+          "shape": [
+            1,
+            2,
+            13440
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.0654330253601074e-06,
+          "rmse": 1.1863481235438745e-07,
+          "snr_db": 114.18063679072434
+        },
+        {
+          "shape": [
+            1,
+            2,
+            13440
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.420297384262085e-07,
+          "rmse": 5.439385299585158e-08,
+          "snr_db": 114.59119050837609
+        }
+      ],
+      "files": {
+        "decoder_T14.onnx": "f3913eab5fdd55ba100c755bf6f75d1e92d78ff63584d61f706178e0e37a6a89"
+      },
+      "bytes": 337224701
+    },
+    "16": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            15360
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.568167686462402e-07,
+          "rmse": 1.727015034855268e-07,
+          "snr_db": 106.52771873010649
+        },
+        {
+          "shape": [
+            1,
+            2,
+            15360
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.8775463104248047e-06,
+          "rmse": 2.873506728343524e-07,
+          "snr_db": 114.92766750612864
+        },
+        {
+          "shape": [
+            1,
+            2,
+            15360
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.513429641723633e-07,
+          "rmse": 6.935232108601553e-08,
+          "snr_db": 114.45941188428422
+        },
+        {
+          "shape": [
+            1,
+            2,
+            15360
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.82310962677002e-07,
+          "rmse": 1.1585109601430091e-07,
+          "snr_db": 114.08348795168874
+        },
+        {
+          "shape": [
+            1,
+            2,
+            15360
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.047768354415894e-07,
+          "rmse": 5.556230556831803e-08,
+          "snr_db": 114.73035309449217
+        }
+      ],
+      "files": {
+        "decoder_T16.onnx": "a78f69b660c146fe7e28db2a3aab151274a7f37014291fcb89a1064d47be8403"
+      },
+      "bytes": 337224701
+    },
+    "18": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            17280
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.7324957113920266e-07,
+          "snr_db": 106.52233126370194
+        },
+        {
+          "shape": [
+            1,
+            2,
+            17280
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.5497207641601562e-06,
+          "rmse": 2.931474957922589e-07,
+          "snr_db": 115.40354925650719
+        },
+        {
+          "shape": [
+            1,
+            2,
+            17280
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 6.621043191556672e-08,
+          "snr_db": 114.3425389776394
+        },
+        {
+          "shape": [
+            1,
+            2,
+            17280
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.771615982055664e-06,
+          "rmse": 1.4650857029203547e-07,
+          "snr_db": 112.74222379883878
+        },
+        {
+          "shape": [
+            1,
+            2,
+            17280
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.569308996200562e-07,
+          "rmse": 5.5943974176590434e-08,
+          "snr_db": 114.84325442574391
+        }
+      ],
+      "files": {
+        "decoder_T18.onnx": "6b7f25be5c77e94b7d44d32eee403c5d710f326e5bfd09728f393e74491a0471"
+      },
+      "bytes": 337224702
+    },
+    "20": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            19200
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.729479716607464e-07,
+          "snr_db": 106.55509081863863
+        },
+        {
+          "shape": [
+            1,
+            2,
+            19200
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.430511474609375e-06,
+          "rmse": 2.524977009282656e-07,
+          "snr_db": 115.3664703117274
+        },
+        {
+          "shape": [
+            1,
+            2,
+            19200
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 6.29498143120634e-08,
+          "snr_db": 114.3257170311454
+        },
+        {
+          "shape": [
+            1,
+            2,
+            19200
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.475214958190918e-06,
+          "rmse": 1.6011626378275186e-07,
+          "snr_db": 113.83194413467584
+        },
+        {
+          "shape": [
+            1,
+            2,
+            19200
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.569308996200562e-07,
+          "rmse": 5.151473643526446e-08,
+          "snr_db": 115.40577399005139
+        }
+      ],
+      "files": {
+        "decoder_T20.onnx": "8ed9dd477d21ae8ca0e3d4a0c58e795ba46cfa338da186f1c15cfbd623a5877a"
+      },
+      "bytes": 337224702
+    },
+    "22": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            21120
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.7246145216093337e-07,
+          "snr_db": 106.5939275430776
+        },
+        {
+          "shape": [
+            1,
+            2,
+            21120
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.2814998626708984e-06,
+          "rmse": 2.521468414720901e-07,
+          "snr_db": 115.59767514533624
+        },
+        {
+          "shape": [
+            1,
+            2,
+            21120
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 6.030897668461709e-08,
+          "snr_db": 114.28284435573572
+        },
+        {
+          "shape": [
+            1,
+            2,
+            21120
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.4139881134033203e-06,
+          "rmse": 1.7098063880115184e-07,
+          "snr_db": 113.89042870247026
+        },
+        {
+          "shape": [
+            1,
+            2,
+            21120
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.569308996200562e-07,
+          "rmse": 5.1994876631632366e-08,
+          "snr_db": 115.26138943810767
+        }
+      ],
+      "files": {
+        "decoder_T22.onnx": "5312461d12c278f034eb61e9e8e74435332e2592b1f7529c5daf70a9863e2632"
+      },
+      "bytes": 337224702
+    },
+    "24": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            23040
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 9.350478649139404e-07,
+          "rmse": 1.7416533548881863e-07,
+          "snr_db": 106.52047099602514
+        },
+        {
+          "shape": [
+            1,
+            2,
+            23040
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.7583370208740234e-06,
+          "rmse": 2.520391478514264e-07,
+          "snr_db": 115.80508970656639
+        },
+        {
+          "shape": [
+            1,
+            2,
+            23040
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 5.812090139483072e-08,
+          "snr_db": 114.227439428337
+        },
+        {
+          "shape": [
+            1,
+            2,
+            23040
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.682209014892578e-06,
+          "rmse": 1.8110106161612116e-07,
+          "snr_db": 113.710905892576
+        },
+        {
+          "shape": [
+            1,
+            2,
+            23040
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.569308996200562e-07,
+          "rmse": 5.039799601066408e-08,
+          "snr_db": 115.45850659901737
+        }
+      ],
+      "files": {
+        "decoder_T24.onnx": "0beb392c4849b22f2fa84f37d4fed5e0611f82ca2274c28988a45a49a1072e4e"
+      },
+      "bytes": 337224702
+    },
+    "26": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            24960
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.744076026050267e-07,
+          "snr_db": 106.51847252343417
+        },
+        {
+          "shape": [
+            1,
+            2,
+            24960
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.086162567138672e-06,
+          "rmse": 2.5963931104424435e-07,
+          "snr_db": 115.18430392757426
+        },
+        {
+          "shape": [
+            1,
+            2,
+            24960
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 5.593324162574185e-08,
+          "snr_db": 114.20892510559983
+        },
+        {
+          "shape": [
+            1,
+            2,
+            24960
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.9371509552001953e-06,
+          "rmse": 1.809745507609551e-07,
+          "snr_db": 114.05919109923693
+        },
+        {
+          "shape": [
+            1,
+            2,
+            24960
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 9.5367431640625e-07,
+          "rmse": 6.397501269242502e-08,
+          "snr_db": 115.31438906939287
+        }
+      ],
+      "files": {
+        "decoder_T26.onnx": "711a5f9a04dd3473563d9918d8d0fb7c6628c5ca875b36cd91e3c02bdc4440fd"
+      },
+      "bytes": 337224702
+    },
+    "28": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            26880
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.7453156413649637e-07,
+          "snr_db": 106.52091832689098
+        },
+        {
+          "shape": [
+            1,
+            2,
+            26880
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.4901161193847656e-06,
+          "rmse": 3.009054658052609e-07,
+          "snr_db": 115.06217151984123
+        },
+        {
+          "shape": [
+            1,
+            2,
+            26880
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.860362529754639e-07,
+          "rmse": 6.82057850786584e-08,
+          "snr_db": 112.3901578472244
+        },
+        {
+          "shape": [
+            1,
+            2,
+            26880
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.9371509552001953e-06,
+          "rmse": 1.7932303671839114e-07,
+          "snr_db": 114.48933398007478
+        },
+        {
+          "shape": [
+            1,
+            2,
+            26880
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 6.705522537231445e-07,
+          "rmse": 6.959649587038465e-08,
+          "snr_db": 115.1138543139447
+        }
+      ],
+      "files": {
+        "decoder_T28.onnx": "5d4650e6b0e7046a4aa8a3a1b97dfb9bb964742642d7ed3a31fdb30f28cd3300"
+      },
+      "bytes": 337224702
+    },
+    "30": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            28800
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.7556307383937465e-07,
+          "snr_db": 106.47718905428002
+        },
+        {
+          "shape": [
+            1,
+            2,
+            28800
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.8477439880371094e-06,
+          "rmse": 2.886475776553054e-07,
+          "snr_db": 114.64777596871929
+        },
+        {
+          "shape": [
+            1,
+            2,
+            28800
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.662441253662109e-07,
+          "rmse": 5.613179530384475e-08,
+          "snr_db": 113.6014751549345
+        },
+        {
+          "shape": [
+            1,
+            2,
+            28800
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.9371509552001953e-06,
+          "rmse": 1.8578710952875213e-07,
+          "snr_db": 114.61545726261129
+        },
+        {
+          "shape": [
+            1,
+            2,
+            28800
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 6.854534149169922e-07,
+          "rmse": 6.78671180314246e-08,
+          "snr_db": 115.12915048175523
+        }
+      ],
+      "files": {
+        "decoder_T30.onnx": "59679125fa4c4ee9a929a3cb89e6d85626a7b64e50b2659499b0ffbcdff408f1"
+      },
+      "bytes": 337224702
+    },
+    "32": {
+      "parity": [
+        {
+          "shape": [
+            1,
+            2,
+            30720
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 8.270144462585449e-07,
+          "rmse": 1.7574071322637898e-07,
+          "snr_db": 106.47491702959766
+        },
+        {
+          "shape": [
+            1,
+            2,
+            30720
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 1.4901161193847656e-06,
+          "rmse": 2.4768560955319094e-07,
+          "snr_db": 115.6607216454107
+        },
+        {
+          "shape": [
+            1,
+            2,
+            30720
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 5.811452865600586e-07,
+          "rmse": 5.434895718367845e-08,
+          "snr_db": 113.59069173129642
+        },
+        {
+          "shape": [
+            1,
+            2,
+            30720
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 2.0265579223632812e-06,
+          "rmse": 1.932042121547497e-07,
+          "snr_db": 114.56318635262059
+        },
+        {
+          "shape": [
+            1,
+            2,
+            30720
+          ],
+          "native_repeat": {
+            "max_abs_error": 0.0,
+            "rmse": 0.0,
+            "snr_db": null
+          },
+          "max_abs_error": 7.152557373046875e-07,
+          "rmse": 6.61112538494181e-08,
+          "snr_db": 115.03497707448473
+        }
+      ],
+      "files": {
+        "decoder_T32.onnx": "20b099ed570fd0a0ce8116967049bc43468366ede97484f11457331d1346e2dd"
+      },
+      "bytes": 337224702
+    }
+  },
+  "scope": "Real fixed-window parity, temporary duplicate graphs discarded; dynamic artifacts are deployed.",
+  "passed": true
+}

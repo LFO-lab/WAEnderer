@@ -1,0 +1,25 @@
+{
+  "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+  "corpus_sha256": "b676b39871f7a576c944d110808a3f1a08f36cfbecf712f271f7366428d45b1b",
+  "source": {
+    "model": "earlab/EAR_VAE",
+    "revision": "4ce37867bc09af11e691e72708f14996eb38a85b",
+    "weights_sha256": "cc53f3f043aaae01307ffe1439b3a1c9d9e019652e6c13e089cd18d6037c2d3f",
+    "config_sha256": "7797e3d5e7560487690987a0a52e3b2c715ba44dad6caca61ff8d920b93b8ba8",
+    "effective_config_sha256": "df921922a6c49bf0a7900bce61f2b8574accf54f86379de437f93a2345751b65",
+    "code_sha256": "85cefc7ff647004085529aef775a9d63b68874b33754d65c857979eb326b5787",
+    "reconciliation": "checkpoint-transformer-keys-v1",
+    "transformer": "absent"
+  },
+  "source_audio": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/user_audio/TC_Harpsichord/ToutCroche_(harpsichord).wav",
+  "source_audio_sha256": "9bdcef8251bc0e60a9fb07d7588fe4297c6394bb7855e3beefa46d557f171e93",
+  "excerpt_starts": [
+    0,
+    6064552,
+    12129104
+  ],
+  "excerpt_frames": 384000,
+  "source_sample_rate": 48000,
+  "encode_seed": 20261003,
+  "scope": "Real local audio encoded with the selected EAR checkpoint; full production preprocessing."
+}

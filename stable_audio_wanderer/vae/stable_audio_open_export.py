@@ -3,7 +3,6 @@ import json
 import math
 from importlib.metadata import version
 from pathlib import Path
-import tempfile
 import numpy as np
 from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION, resolve_source
 from .onnx_artifacts import publish_artifact, resolve_artifact, sha256
@@ -14,21 +13,12 @@ WINDOWS = tuple(range(2, 33, 2))
 TOLERANCES = {'max_abs_error': 2e-4, 'rmse': 2e-5}
 
 
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
+from .export_common import write_json, export_graph, build_artifact
+from . import export_common
 
 
 def parity(reference, actual):
-    if actual.dtype != np.float32 or actual.shape != reference.shape or not np.isfinite(actual).all():
-        raise ValueError('Decoder parity shape/dtype/finiteness failure')
-    error = actual.astype(np.float64) - reference.astype(np.float64)
-    rmse = float(np.sqrt(np.mean(error ** 2)))
-    signal = float(np.sqrt(np.mean(reference.astype(np.float64) ** 2)))
-    result = dict(max_abs_error=float(np.max(np.abs(error))), rmse=rmse,
-                  snr_db=20 * math.log10(signal / rmse) if signal > 0 and rmse > 0 else None)
-    if any(result[k] > limit for k, limit in TOLERANCES.items()):
-        raise ValueError(f'Decoder numerical parity failed: {result}; limits={TOLERANCES}')
-    return result
+    return export_common.parity(reference, actual, TOLERANCES)
 
 
 def load_wrapper(repo_or_path=SOURCE_MODEL, revision=SOURCE_REVISION):
@@ -63,39 +53,8 @@ def corpus_samples(corpus):
                     for start in sorted({0, (len(z)-w)//2, len(z)-w})] for w in WINDOWS}
 
 
-def export_graph(wrapper, path, sample, *, dynamic, opset):
-    import torch
-    # Legacy tracing preserves Oobleck's convolutional decoder and dynamic time.
-    torch.onnx.export(wrapper, (torch.from_numpy(sample),), str(path),
-        input_names=['latents'], output_names=['audio'], opset_version=opset,
-        dynamo=False, external_data=True,
-        dynamic_axes={'latents': {2: 'latent_time'}, 'audio': {2: 'audio_time'}} if dynamic else None)
-
-
 def validate_graph(wrapper, path, samples):
-    import torch
-    import onnx
-    import onnxruntime as ort
-    onnx.checker.check_model(str(path))
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = options.inter_op_num_threads = 1
-    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
-    session = ort.InferenceSession(str(path), sess_options=options, providers=['CPUExecutionProvider'])
-    results = {}
-    for window, probes in samples.items():
-        rows = []
-        for sample in probes:
-            with torch.inference_mode():
-                ref = wrapper(torch.from_numpy(sample)).numpy()
-                repeat = wrapper(torch.from_numpy(sample)).numpy()
-            if ref.shape != (1, 2, window*2048) or ref.dtype != np.float32 or not np.isfinite(ref).all():
-                raise ValueError('Native geometry/finiteness failure')
-            variability = parity(ref, repeat)
-            actual = session.run(['audio'], {'latents': sample})[0]
-            rows.append(dict(shape=list(actual.shape), native_repeat=variability, **parity(ref, actual)))
-        results[str(window)] = rows
-        print(f'Validated T{window}: {len(rows)} probes', flush=True)
-    return results
+    return export_common.validate_graph(wrapper, path, samples, ratio=2048, channels=2, tolerances=TOLERANCES)
 
 
 def prepare(corpus, *, store_dir=None, revision=SOURCE_REVISION, opset=18, force=False):
@@ -135,38 +94,10 @@ def prepare(corpus, *, store_dir=None, revision=SOURCE_REVISION, opset=18, force
     rng = np.random.default_rng(20261002)
     samples = {w: [np.zeros((1,64,w),np.float32), rng.standard_normal((1,64,w)).astype(np.float32), *real[w]] for w in WINDOWS}
     wrapper, source, ratio = load_wrapper(revision=revision)
-    with tempfile.TemporaryDirectory(prefix='waenderer-sao-') as temp:
-        root = Path(temp)
-        graphs, results, failure = [], {}, None
-        try:
-            print('Exporting dynamic Stable Audio Open decoder', flush=True)
-            path = root/'decoder_dynamic.onnx'
-            export_graph(wrapper, path, samples[8][0], dynamic=True, opset=opset)
-            results[path.name] = validate_graph(wrapper, path, samples)
-            graphs.append(dict(path=path.name, dynamic=True, windows=list(WINDOWS)))
-        except Exception as exc:
-            failure = f'{type(exc).__name__}: {exc}'
-            print(f'Dynamic export failed; testing fixed graphs: {failure}', flush=True)
-            # Isolate failed dynamic files from the published set.
-            for p in root.iterdir():
-                if p.is_file(): p.unlink()
-            for w in WINDOWS:
-                path = root/f'decoder_T{w}.onnx'
-                export_graph(wrapper, path, samples[w][0], dynamic=False, opset=opset)
-                results[path.name] = validate_graph(wrapper, path, {w:samples[w]})
-                graphs.append(dict(path=path.name, dynamic=False, windows=[w]))
-        files = {p.name:sha256(p) for p in root.iterdir() if p.is_file()}
-        report = dict(passed=True, source=source, graphs={g['path']:files[g['path']] for g in graphs},
-            tolerances=TOLERANCES, results=results, dynamic_failure=failure,
-            corpus=str(Path(corpus).resolve()), corpus_sha256=sha256(Path(corpus)/'corpus.npz' if Path(corpus).is_dir() else Path(corpus)),
-            scope='CPU float32 native/ORT parity; no real-time qualification')
-        write_json(root/'parity.json', report)
-        files['parity.json'] = sha256(root/'parity.json')
-        write_json(root/'decoder.json', dict(format_version='waenderer.onnx_decoder.v1',
-            vae_id='stable_audio_open', backend='onnxruntime', provider='CPUExecutionProvider',
-            source=source, export=settings, sample_rate=44100, channels=2, latent_dim=64,
-            samples_per_latent=ratio, corpus_latent_hz=[21.5,44100/ratio],
-            supported_windows=list(WINDOWS), default_window=8, input_name='latents', output_name='audio',
-            input_layout='BDT', output_layout='BCT', ola_mode='full_overlap_add', graphs=graphs,
-            files=files, validation_report='parity.json'))
-        return publish_artifact(root, store_dir=store_dir)
+    return build_artifact(wrapper=wrapper, source=source, vae_id='stable_audio_open', samples=samples,
+        geometry=dict(sample_rate=44100, channels=2, latent_dim=64, samples_per_latent=ratio,
+                      corpus_latent_hz=[21.5,44100/ratio]),
+        settings=settings, tolerances=TOLERANCES, store_dir=store_dir,
+        evidence=dict(corpus=str(Path(corpus).resolve()),
+            corpus_sha256=sha256(Path(corpus)/'corpus.npz' if Path(corpus).is_dir() else Path(corpus))),
+        export_fn=export_graph, validate_fn=validate_graph, publish_fn=publish_artifact)

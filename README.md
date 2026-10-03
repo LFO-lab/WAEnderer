@@ -313,7 +313,9 @@ python bin/serve.py
 ```
 
 Open `http://localhost:8080` and select or create a corpus. After preprocessing
-or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open corpora offer ONNX CPU or native PyTorch; EAR uses PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
+or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open/EAR corpora offer ONNX CPU or native PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
+
+Prepare EAR explicitly with `python -m bin.prepare_ear_onnx --vae-id ear_vae_44k --weights /path/to/ear_vae_44k.pyt --repo /path/to/EAR_VAE` in the EAR export environment; use `ear_vae_48k` with its matching checkpoint for 48 kHz. Both support even windows T2–T32. See [EAR preparation, validation and measured limits](docs/MULTI_VAE_ONNX_PHASE3.md). Restart an existing server after updating the code.
 
 T2 is selected initially for SAME-S; other VAE adapters start at T8 to leave more audio time per decode. Newly exported SAME-S decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window
 selector remains active during playback. The current T keeps generating audio

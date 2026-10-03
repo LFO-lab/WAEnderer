@@ -288,3 +288,20 @@ for (const run of phase2.runs) {
     assert.equal(menu.value,'onnxruntime|cpu','Rack ONNX survives reconnect');
 }
 console.log('Phase 2 recorded Rack ONNX/native choices and offline server restart passed');
+
+// Phase 3 production responses come from the default environment without DAC.
+for (const variant of ['44k','48k']) {
+    const evidence = JSON.parse(fs.readFileSync(`docs/multi_vae_phase3_web_${variant}.json`, 'utf8'));
+    for (const run of evidence.runs) {
+        const target = inventoryClient();
+        target.client.response = run.discovery;
+        vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);", target.client);
+        const menu = target.nodes.get('perform-decoder-engine');
+        assert.ok(menu.options.some(o=>o.value==='onnxruntime|cpu' && !o.disabled), `EAR ${variant} ONNX works without DAC`);
+        assert.ok(menu.options.some(o=>o.value==='pytorch|cpu'), `EAR ${variant} native CPU remains visible`);
+        menu.value='onnxruntime|cpu';
+        vm.runInContext("pipelineDisconnected(); handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);", target.client);
+        assert.equal(menu.value,'onnxruntime|cpu', `EAR ${variant} selection survives reconnect`);
+    }
+}
+console.log('Phase 3 recorded EAR 44k/48k discovery, offline restart and reconnect passed');

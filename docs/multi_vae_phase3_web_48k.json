@@ -1,0 +1,262 @@
+{
+  "runs": [
+    {
+      "discovery": {
+        "type": "pipeline_decoder_list",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+        "vae_id": "ear_vae_48k",
+        "default_window": 8,
+        "decoders": [
+          {
+            "backend": "onnxruntime",
+            "device": "cpu",
+            "vae_id": "ear_vae_48k",
+            "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Artifact verified; runtime checked on Start Perform."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cpu",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "mps",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cuda:0",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+            "hardware": false,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          }
+        ]
+      },
+      "ready": {
+        "type": "pipeline_phase_change",
+        "phase": "perform",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+        "decoder": {
+          "backend": "onnxruntime",
+          "provider": "CPUExecutionProvider",
+          "device": "cpu",
+          "vae_id": "ear_vae_48k"
+        }
+      },
+      "decoder": {
+        "gain": 0.0,
+        "frame_samples": 3840,
+        "underruns": 23,
+        "buffer_underruns": 23,
+        "device_underruns": 0,
+        "buffer_duration": 0.06933333333333333,
+        "generation": 1,
+        "pending_generation": null,
+        "transition_status": "idle",
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "vae_id": "ear_vae_48k",
+        "supported_windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "window_controls": {
+          "mode": "fixed",
+          "minimum": 2,
+          "maximum": 32,
+          "content": "source",
+          "variation": 0.25
+        },
+        "manual_provenance": "source_frames",
+        "selected_window": 8,
+        "requested_window": 8,
+        "latent_hop": 4,
+        "audio_hop_samples": 3840,
+        "audio_window_samples": 7680,
+        "decode_timing": {
+          "last_ms": 394.13816697197035,
+          "p99_ms": 398.0398733052425,
+          "count": 3
+        },
+        "requested_generation": 1,
+        "error": null,
+        "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx"
+      },
+      "stopped": {
+        "type": "pipeline_phase_change",
+        "phase": "idle",
+        "decoder": null
+      }
+    },
+    {
+      "discovery": {
+        "type": "pipeline_decoder_list",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+        "vae_id": "ear_vae_48k",
+        "default_window": 8,
+        "decoders": [
+          {
+            "backend": "onnxruntime",
+            "device": "cpu",
+            "vae_id": "ear_vae_48k",
+            "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Artifact verified; runtime checked on Start Perform."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cpu",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "mps",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+            "hardware": true,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cuda:0",
+            "vae_id": "ear_vae_48k",
+            "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+            "hardware": false,
+            "dependencies": false,
+            "weights": false,
+            "validated": false,
+            "selectable": false,
+            "detail": "Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup. Windows are validated at startup; real-time performance depends on this VAE/device."
+          }
+        ]
+      },
+      "ready": {
+        "type": "pipeline_phase_change",
+        "phase": "perform",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+        "decoder": {
+          "backend": "onnxruntime",
+          "provider": "CPUExecutionProvider",
+          "device": "cpu",
+          "vae_id": "ear_vae_48k"
+        }
+      },
+      "decoder": {
+        "gain": 0.0,
+        "frame_samples": 3840,
+        "underruns": 20,
+        "buffer_underruns": 20,
+        "device_underruns": 0,
+        "buffer_duration": 0.06933333333333333,
+        "generation": 1,
+        "pending_generation": null,
+        "transition_status": "idle",
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "vae_id": "ear_vae_48k",
+        "supported_windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "window_controls": {
+          "mode": "fixed",
+          "minimum": 2,
+          "maximum": 32,
+          "content": "source",
+          "variation": 0.25
+        },
+        "manual_provenance": "source_frames",
+        "selected_window": 8,
+        "requested_window": 8,
+        "latent_hop": 4,
+        "audio_hop_samples": 3840,
+        "audio_window_samples": 7680,
+        "decode_timing": {
+          "last_ms": 367.93916596798226,
+          "p99_ms": 400.6274008541368,
+          "count": 3
+        },
+        "requested_generation": 1,
+        "error": null,
+        "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx"
+      },
+      "stopped": {
+        "type": "pipeline_phase_change",
+        "phase": "idle",
+        "decoder": null
+      }
+    }
+  ],
+  "scope": "Isolated production HTTP/WebSocket server, offline restart, muted short functional playback; no real-time qualification.",
+  "passed": true
+}

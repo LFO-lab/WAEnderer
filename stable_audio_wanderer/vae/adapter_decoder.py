@@ -10,7 +10,8 @@ from .torch_decoder import _resolve_device
 
 
 class AdapterTorchDecoder:
-    def __init__(self, *, vae_id, device, weight_path='', repo_or_path=None, local_files_only=True):
+    def __init__(self, *, vae_id, device, weight_path='', repo_or_path=None, local_files_only=True,
+                 repo_path="", config_path="", expected_source=None):
         import torch
         self._torch = torch
         self._device = _resolve_device(torch, device)
@@ -19,6 +20,8 @@ class AdapterTorchDecoder:
         self._windows = {}
         try:
             options = {"repo_or_path": repo_or_path} if repo_or_path else {}
+            if vae_id.startswith("ear_"):
+                options.update(repo_path=repo_path, config_path=config_path, expected_source=expected_source)
             self._adapter = load_vae_adapter(vae_id, **options, device=str(self._device),
                 weight_path=weight_path, local_files_only=local_files_only)
             meta = self._adapter.info()

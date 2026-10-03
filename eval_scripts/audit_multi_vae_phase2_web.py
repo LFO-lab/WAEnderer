@@ -12,7 +12,7 @@ import time
 import websockets
 
 
-async def exercise(corpus, port):
+async def exercise(corpus, port, *, samples_per_latent=2048, vae_id="stable_audio_open"):
     async with websockets.connect(f'ws://127.0.0.1:{port}',max_size=32*1024*1024) as ws:
         async def send(message):await ws.send(json.dumps(message))
         async def until(predicate,timeout=90):
@@ -29,12 +29,13 @@ async def exercise(corpus, port):
             decoder_backend='onnxruntime',decoder_device='cpu',decoder_window=8)))
         ready=await until(lambda m:m.get('type')=='pipeline_phase_change' and m.get('phase')=='perform')
         assert ready['decoder']['provider']=='CPUExecutionProvider'
+        assert ready['decoder']['vae_id']==vae_id
         await send(dict(type='decoder',params=dict(gain=0)))
         await send(dict(type='transport',action='set_mode',mode='manual'))
         await send(dict(type='transport',action='start'))
         playing=await until(lambda m:m.get('type')=='state' and m.get('decoder',{}).get('decode_timing',{}).get('count',0)>=3)
         assert playing['decoder']['backend']=='onnxruntime'
-        assert playing['decoder']['audio_window_samples']==16384
+        assert playing['decoder']['audio_window_samples']==8*samples_per_latent
         await send(dict(type='transport',action='stop'))
         await send(dict(type='pipeline_stop_perform'))
         stopped=await until(lambda m:m.get('type')=='pipeline_phase_change' and m.get('phase')=='idle')
@@ -45,6 +46,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus',required=True,type=Path)
     parser.add_argument('--output',required=True,type=Path)
+    parser.add_argument('--vae-id',default='stable_audio_open')
+    parser.add_argument('--samples-per-latent',type=int,default=2048)
     parser.add_argument('--port',type=int,default=18765)
     parser.add_argument('--http-port',type=int,default=18080)
     args=parser.parse_args()
@@ -66,7 +69,8 @@ def main():
                         try:
                             with socket.create_connection(('127.0.0.1',args.port),timeout=.2):break
                         except OSError:time.sleep(.2)
-                    report['runs'].append(asyncio.run(exercise(str(args.corpus.resolve()),args.port)))
+                    report['runs'].append(asyncio.run(exercise(str(args.corpus.resolve()),args.port,
+                        samples_per_latent=args.samples_per_latent,vae_id=args.vae_id)))
                 finally:
                     proc.send_signal(signal.SIGINT)
                     try:proc.wait(timeout=30)

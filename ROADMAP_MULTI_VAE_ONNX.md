@@ -1,6 +1,6 @@
 # Roadmap — ONNX coverage for every registered VAE
 
-Status: **phases 0–2 completed on 2 October 2026; phases 3–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
+Status: **phases 0–2 completed on 2 October 2026; phase 3 completed on 3 October 2026; phases 4–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
 
 This extends the SAME-S dual-inference roadmap. The current uncommitted multi-VAE PyTorch restoration is the starting point, not evidence that multi-VAE ONNX is implemented. Existing SAME-S qualification remains specific to its recorded hardware/scenarios.
 
@@ -19,7 +19,7 @@ The requested ONNX artifacts are **audio decoder graphs**, including the paramet
 
 PyTorch CPU is a functional option for every VAE, not merely a hidden diagnostic route. Slow performance must not remove this option. Installation, successful decoding and real-time qualification are separate states.
 
-The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dthibault/Documents/GitHub/EAR_VAE/pretrained_weight/ear_vae_44k.pyt` and `/Users/dthibault/Documents/GitHub/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt`. Their configurations and hashes are recorded. EAR dependencies are installed in `.venv-ear`; the default `.venv` lacks `descript-audio-codec`. Actual EAR loading/export validation remains phase 3 work. Do not substitute arbitrary checkpoints or claim existing ONNX exports.
+The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dthibault/Documents/GitHub/EAR_VAE/pretrained_weight/ear_vae_44k.pyt` and `/Users/dthibault/Documents/GitHub/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt`. Their configurations and hashes are recorded. EAR dependencies are installed in `.venv-ear`; the default `.venv` lacks `descript-audio-codec`. Both supplied EAR variants now have validated, persistent ONNX artifacts; see [Phase 3 evidence](docs/MULTI_VAE_ONNX_PHASE3.md).
 
 ## Verified starting point
 
@@ -82,15 +82,19 @@ The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dth
 
 ## Phase 3 — EAR export implementation and checkpoint-dependent validation
 
-- [ ] Extend the export interface to the existing EAR adapter and both sample-rate identities.
-- [ ] Obtain the exact EAR checkpoint(s) and matching repository/configuration when supplied or explicitly selected by the user. Do not assume the two registered variants use identical weights or architecture.
-- [ ] Probe operations, decoder output length, latent dimension and supported windows using those actual checkpoints; record any ONNX export blockers.
-- [ ] Export each installed EAR variant, persist its complete artifact set and compare against its native decoder on CPU and available GPU hardware.
-- [ ] Verify 44.1 kHz/48 kHz timing, restart/reload, missing dependencies, missing weights and checkpoint replacement.
+- [x] Extend the export interface to the existing EAR adapter and both sample-rate identities.
+- [x] Obtain the exact EAR checkpoint(s) and matching repository/configuration when supplied or explicitly selected by the user. Do not assume the two registered variants use identical weights or architecture.
+- [x] Probe operations, decoder output length, latent dimension and supported windows using those actual checkpoints; record any ONNX export blockers.
+- [x] Export each installed EAR variant, persist its complete artifact set and compare against its native decoder on CPU and available GPU hardware.
+- [x] Verify 44.1 kHz/48 kHz timing, restart/reload, missing dependencies, missing weights and checkpoint replacement.
 
 **Exit:** each installed EAR variant has a real validated ONNX artifact and native CPU functionality. Without EAR weights, only interface/missing-model tests can pass: this phase's artifact and numerical validation items remain pending. Do not mark “all four VAEs exported” on simulated tests alone.
 
+**Result:** both actual EAR checkpoints exported with complete dynamic artifacts; all even T2–T32 passed CPU/ONNX/MPS parity and fixed fallback checks. Offline reload, Web restart, timing and native transport passed. CPU underruns remain a performance limitation. See [Phase 3 implementation and evidence](docs/MULTI_VAE_ONNX_PHASE3.md).
+
 ## Phase 4 — Consistent “Decode with” choices and preparation flow
+
+Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (3 October 2026; implementation pending).
 
 - [ ] For the selected corpus, list `ONNX · CPU · <VAE>`, `PyTorch · CPU · <VAE>`, and relevant GPU choices. SAME-S gets the same explicit model labels and CPU entry.
 - [ ] Keep unavailable options visible with their reason: missing native weights, missing ONNX artifact, missing runtime/library, unavailable hardware, or failed validation.
@@ -128,8 +132,8 @@ The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dth
 
 ## Recommended implementation order
 
-Work in reviewed increments: **0 → 1 → 2 → 4 → 5 → 6 for SAME-S and Stable Audio Open**. Both EAR checkpoints are now available. Phase 3 can follow phase 2 once the EAR environment is verified; then repeat phases 4–6 for those variants. EAR numerical/export validation remains a separate gate.
+Work in reviewed increments: **0 → 1 → 2 → 4 → 5 → 6 for SAME-S and Stable Audio Open**. Phase 3 has now passed its EAR numerical/export gates. Continue phases 4–6 across all four registered VAEs.
 
 Do not implement the whole roadmap in one unchecked change. First verify SAME-S compatibility and CPU menu coverage; then complete Stable Audio Open end to end. Exporter complexity and CPU speed should be measured before estimating or promising complete EAR support.
 
-The four-VAE objective remains open until actual EAR exports are validated. A SAME-S/Stable Audio Open milestone may be delivered independently with EAR explicitly pending.
+All four registered VAEs now have real validated decoder artifacts. The broader roadmap remains open for Phase 4 preparation/UI flow, Phase 5 qualification and Phase 6 packaging.

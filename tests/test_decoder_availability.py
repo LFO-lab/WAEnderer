@@ -57,8 +57,8 @@ def test_all_registered_vaes_keep_native_cpu_without_gpu(tmp_path, monkeypatch):
         cpu = next(c for c in choices if (c['backend'],c['device']) == ('pytorch','cpu'))
         assert cpu['hardware'] and cpu['selectable'] and not cpu['validated']
         assert not any(c['selectable'] for c in choices if c['device'] != 'cpu')
-        # SAME-S and Stable Audio Open expose ONNX; EAR preparation UI remains later work.
-        assert any(c['backend']=='onnxruntime' for c in choices) == (vae_id in ('same_s', 'stable_audio_open'))
+        # All registered VAEs expose ONNX independently of native dependencies.
+        assert any(c['backend']=='onnxruntime' for c in choices) is True
 
 
 def test_ear_presence_is_not_checkpoint_validation(tmp_path, monkeypatch):
@@ -66,8 +66,8 @@ def test_ear_presence_is_not_checkpoint_validation(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, 'torch', None)
     for name in ('ear_vae_44k','ear_vae_48k'):
         missing = discovery.decoder_availability(corpus_spec={'vae_id':name})
-        assert all(not c['weights'] and not c['validated'] for c in missing)
+        assert all(not c['weights'] and not c['validated'] for c in missing if c['backend']=='pytorch')
         path = tmp_path / (name+'.pyt')
         path.write_bytes(b'not a checkpoint')
         present = discovery.decoder_availability(corpus_spec={'vae_id':name},weight_path=str(path))
-        assert all(c['weights'] and not c['validated'] for c in present)
+        assert all(c['weights'] and not c['validated'] for c in present if c['backend']=='pytorch')

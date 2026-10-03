@@ -7,12 +7,17 @@ from pathlib import Path
 def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path=""):
     if corpus_spec and corpus_spec["vae_id"] != "same_s":
         entries = _adapter_availability(corpus_spec["vae_id"], weight_path)
-        if corpus_spec['vae_id'] == 'stable_audio_open':
+        if corpus_spec['vae_id'] in ('stable_audio_open', 'ear_vae_44k', 'ear_vae_48k'):
             from .onnx_artifacts import resolve_artifact
-            ready, detail = False, 'Prepare the Stable Audio Open ONNX decoder first.'
+            ready, detail = False, 'Prepare this VAE ONNX decoder first.'
             try:
-                artifact = resolve_artifact('stable_audio_open', expected_source={
-                    k:corpus_spec[k] for k in ('config_sha256','weights_sha256','revision') if k in corpus_spec})
+                artifact = resolve_artifact(corpus_spec['vae_id'], expected_source={
+                    k:corpus_spec[k] for k in ('config_sha256','weights_sha256','revision','effective_config_sha256','code_sha256') if k in corpus_spec})
+                if corpus_spec['vae_id'].startswith('ear_') and weight_path:
+                    from .ear_weights import selected_file_identity
+                    selected = selected_file_identity(corpus_spec['vae_id'], weight_path)
+                    if any(dict(artifact.source).get(k)!=v for k,v in selected.items()):
+                        raise ValueError('Selected EAR files do not match the ONNX artifact')
                 if 'latent_dim' in corpus_spec:
                     artifact.validate_corpus(corpus_spec)
                 ready, detail = True, 'Artifact verified; runtime checked on Start Perform.'
@@ -22,8 +27,8 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path="")
                 deps = find_spec('onnxruntime') is not None and find_spec('onnx') is not None
             except (ImportError, ValueError):
                 deps = False
-            entries.insert(0, dict(backend='onnxruntime', device='cpu', vae_id='stable_audio_open',
-                label='ONNX · CPU · stable_audio_open', hardware=True, dependencies=deps,
+            entries.insert(0, dict(backend='onnxruntime', device='cpu', vae_id=corpus_spec['vae_id'],
+                label=f"ONNX · CPU · {corpus_spec['vae_id']}", hardware=True, dependencies=deps,
                 weights=ready, validated=False, selectable=ready and deps, detail=detail))
         return entries
     root = Path(resource_dir) if resource_dir else Path(str(resources.files('stable_audio_wanderer.resources.same_s')))

@@ -1,13 +1,10 @@
 """EAR VAE adapter (earlab/EAR_VAE via local repo + .pyt weights)."""
-import json
 import math
-import os
-import sys
 
 import torch
 from ..base import VAEAdapter, VAEInfo
 from ..registry import register_vae
-from ...config import DEVICE, DTYPE
+from ...config import DEVICE
 
 _INFO_44K = VAEInfo(
     vae_id="ear_vae_44k",
@@ -24,52 +21,12 @@ _INFO_48K = VAEInfo(
     vae_id="ear_vae_48k",
     display_name="EAR VAE (48k)",
     sample_rate=48000,
-    latent_hz=48000.0 / 1024.0,  # default; overridden at load time
+    latent_hz=48000.0 / 960.0,  # default; overridden at load time
     latent_dim=64,
     channels=2,
     requires_path=True,
     path_label="Path to .pyt weight file",
 )
-
-
-def _pick_config(repo_path: str, weight_path: str) -> dict:
-    """Select the right JSON config for the given weight file.
-
-    Heuristic: if the weight filename contains 'v2', use ear_vae_v2.json,
-    otherwise use model_config.json.  Falls back to model_config.json if
-    the v2 config doesn't exist.
-    """
-    config_dir = os.path.join(repo_path, "config")
-    weight_name = os.path.basename(weight_path).lower()
-
-    if "v2" in weight_name:
-        v2_path = os.path.join(config_dir, "ear_vae_v2.json")
-        if os.path.isfile(v2_path):
-            with open(v2_path, "r") as f:
-                return json.load(f)
-
-    default_path = os.path.join(config_dir, "model_config.json")
-    if not os.path.isfile(default_path):
-        raise FileNotFoundError(
-            f"EAR VAE config not found in {config_dir}. "
-            "Ensure the EAR_VAE repo has config/model_config.json."
-        )
-    with open(default_path, "r") as f:
-        return json.load(f)
-
-
-def _reconcile_transformer(model_config: dict, state_dict: dict) -> dict:
-    """Remove transformer from config if the checkpoint has no transformer keys.
-
-    The EAR_VAE v2 config file ships with a transformer block defined,
-    but the v2 pretrained weights were trained without one.  If there
-    are no ``transformers.*`` keys in the state dict, we set the
-    transformer config entry to None so the model is built without it.
-    """
-    has_transformer_keys = any(k.startswith("transformers.") for k in state_dict)
-    if not has_transformer_keys:
-        model_config["transformer"] = None
-    return model_config
 
 
 class EarVAEAdapter(VAEAdapter):
@@ -80,63 +37,16 @@ class EarVAEAdapter(VAEAdapter):
         self._info = info
 
     @classmethod
-    def load(cls, weight_path: str = "", repo_path: str = "",
-             sample_rate: int = 44100, device=None, **_kwargs):
-        """Load EAR VAE from a local repo clone + .pyt weight file.
-
-        Args:
-            weight_path: Path to the .pyt checkpoint file.
-            repo_path: Path to the EAR_VAE repo root. If empty, inferred
-                       from weight_path (assumes weights are inside the repo).
-            sample_rate: 44100 or 48000 — selects which VAEInfo to use.
-        """
-        if not weight_path:
-            raise ValueError(
-                "EAR VAE requires a weight_path. Please provide the path "
-                "to your .pyt checkpoint file."
-            )
-        if not os.path.isfile(weight_path):
-            raise FileNotFoundError(f"EAR VAE weight file not found: {weight_path}")
-
-        # Infer repo root from weight path if not given.
-        if not repo_path:
-            candidate = os.path.dirname(os.path.abspath(weight_path))
-            for _ in range(4):
-                if os.path.isdir(os.path.join(candidate, "model")):
-                    repo_path = candidate
-                    break
-                candidate = os.path.dirname(candidate)
-            if not repo_path:
-                raise FileNotFoundError(
-                    "Could not find EAR_VAE repo root (directory containing 'model/'). "
-                    "Please provide repo_path explicitly or ensure your weight file "
-                    "is inside the EAR_VAE repository."
-                )
-
-        # Add repo to sys.path so we can import the model module.
-        repo_path = os.path.abspath(repo_path)
-        if repo_path not in sys.path:
-            sys.path.insert(0, repo_path)
-
-        # Select config matching the weight file variant.
-        model_config = _pick_config(repo_path, weight_path)
-
-        # Load state dict and reconcile transformer presence.
-        state_dict = torch.load(weight_path, map_location="cpu", weights_only=False)
-        model_config = _reconcile_transformer(model_config, state_dict)
-
-        # Import and instantiate.
-        try:
-            from model.ear_vae import EAR_VAE  # type: ignore[import-not-found]
-        except ModuleNotFoundError as e:
-            if "dac" in str(e):
-                raise ImportError(
-                    "EAR VAE requires the descript-audio-codec package. "
-                    "Install it with: pip install descript-audio-codec"
-                ) from e
-            raise
-        model = EAR_VAE(model_config=model_config)
-        model.load_state_dict(state_dict)
+    def load(cls, weight_path: str = "", repo_path: str = "", config_path: str = "",
+             sample_rate: int = 44100, device=None, expected_source=None, **_kwargs):
+        from ..ear_weights import resolve_source, load_model_class
+        if sample_rate not in (44100, 48000):
+            raise ValueError('EAR sample rate must be 44100 or 48000')
+        vae_id = 'ear_vae_44k' if sample_rate == 44100 else 'ear_vae_48k'
+        source = resolve_source(vae_id, weight_path, repo_path, config_path, expected_source)
+        model_config = source.config
+        model = load_model_class(source)(model_config=model_config)
+        model.load_state_dict(source.state, strict=True)
         model = model.to(device=device if device is not None else DEVICE, dtype=torch.float32).eval()
 
         # Compute actual downsampling ratio from the config strides.
@@ -159,7 +69,11 @@ class EarVAEAdapter(VAEAdapter):
             requires_path=base.requires_path,
             path_label=base.path_label,
         )
-        return cls(model, info)
+        adapter = cls(model, info)
+        adapter.source = source.identity
+        adapter.source_files = source.code_files
+        adapter.effective_config = source.config
+        return adapter
 
     def info(self) -> VAEInfo:
         return self._info
@@ -174,12 +88,16 @@ class EarVAEAdapter(VAEAdapter):
 
 
 def _load_ear_44k(**kwargs):
-    kwargs.setdefault("sample_rate", 44100)
+    if kwargs.pop("sample_rate", 44100) != 44100:
+        raise ValueError("EAR 44.1 kHz registry sample-rate mismatch")
+    kwargs["sample_rate"] = 44100
     return EarVAEAdapter.load(**kwargs)
 
 
 def _load_ear_48k(**kwargs):
-    kwargs.setdefault("sample_rate", 48000)
+    if kwargs.pop("sample_rate", 48000) != 48000:
+        raise ValueError("EAR 48 kHz registry sample-rate mismatch")
+    kwargs["sample_rate"] = 48000
     return EarVAEAdapter.load(**kwargs)
 
 
