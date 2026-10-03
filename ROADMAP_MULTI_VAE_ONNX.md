@@ -1,6 +1,6 @@
 # Roadmap — ONNX coverage for every registered VAE
 
-Status: **phases 0 and 1 completed on 2 October 2026; phases 2–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
+Status: **phases 0–2 completed on 2 October 2026; phases 3–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
 
 This extends the SAME-S dual-inference roadmap. The current uncommitted multi-VAE PyTorch restoration is the starting point, not evidence that multi-VAE ONNX is implemented. Existing SAME-S qualification remains specific to its recorded hardware/scenarios.
 
@@ -69,14 +69,16 @@ The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dth
 
 ## Phase 2 — Export and integrate Stable Audio Open
 
-- [ ] Reuse/refactor the existing `AutoencoderOobleck` decoder wrapper instead of introducing a different decoding method.
-- [ ] Pin config and weights to one immutable source revision, shared with the PyTorch reference.
-- [ ] Derive timing from model configuration and actual decoded shapes; enforce the 2048-sample latent ratio for the tested source. Fix the shared VST-export timing calculation too.
-- [ ] Attempt a dynamic-time decoder graph; validate all even windows T2–T32. Retain a tested fixed-window export strategy if dynamic export is unsupported.
-- [ ] Generate and persist the actual graph(s), parameters, manifest and parity report from the installed weights.
-- [ ] Load those artifacts in Web Perform on Rack, restart offline, and switch between ONNX CPU, PyTorch CPU and MPS at a stopped transport.
+- [x] Reuse/refactor the existing `AutoencoderOobleck` decoder wrapper instead of introducing a different decoding method.
+- [x] Pin config and weights to one immutable source revision, shared with the PyTorch reference.
+- [x] Derive timing from model configuration and actual decoded shapes; enforce the 2048-sample latent ratio for the tested source. Fix the shared VST-export timing calculation too.
+- [x] Attempt a dynamic-time decoder graph; validate all even windows T2–T32. Retain a tested fixed-window export strategy if dynamic export is unsupported.
+- [x] Generate and persist the actual graph(s), parameters, manifest and parity report from the installed weights.
+- [x] Load those artifacts in Web Perform on Rack, restart offline, and switch between ONNX CPU, PyTorch CPU and MPS at a stopped transport.
 
 **Exit:** real Stable Audio Open ONNX files exist and survive restart; the Web path uses ONNX Runtime on CPU and matches the native reference numerically and geometrically. PyTorch CPU remains independently usable.
+
+**Result:** real dynamic Stable Audio Open decoder published to the local store; all even T2–T32 passed native parity, with fixed fallback exports independently tested. Rack Web discovery, offline server restart and stopped ONNX CPU/native CPU/MPS switching passed. Short CPU runs underrun and are not real-time qualified. See [phase 2 implementation and evidence](docs/MULTI_VAE_ONNX_PHASE2.md).
 
 ## Phase 3 — EAR export implementation and checkpoint-dependent validation
 

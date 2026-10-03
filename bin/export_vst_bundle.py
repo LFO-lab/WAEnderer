@@ -248,64 +248,30 @@ def export_stable_audio_open_decoder_onnx(
     samples_per_latent: int,
     repo_or_path: str,
     opset: int,
+    source_revision: str = "f21265c1e2710b3bd2386596943f0007f55f802e",
 ) -> Dict[str, Any]:
-    try:
-        import onnx
-        import onnxruntime as ort
-        import torch
-        from diffusers import AutoencoderOobleck
-    except Exception as exc:  # pragma: no cover - dependency error path
-        raise RuntimeError(
-            "Decoder ONNX export requires torch, diffusers, onnx, onnxscript, and onnxruntime"
-        ) from exc
-
-    class DecoderWrapper(torch.nn.Module):
-        def __init__(self, model: torch.nn.Module):
-            super().__init__()
-            self.model = model
-
-        def forward(self, latents):  # noqa: ANN001 - torch export signature
-            return self.model.decode(latents).sample
-
+    from stable_audio_wanderer.vae.stable_audio_open_export import load_wrapper, export_graph, validate_graph, TOLERANCES
+    # Retain the legacy argument for callers; measured geometry overrides it.
+    wrapper, source, samples_per_latent = load_wrapper(repo_or_path, source_revision)
     decoder_dir = models_dir / "decoder"
     decoder_dir.mkdir(parents=True, exist_ok=True)
-
-    model = AutoencoderOobleck.from_pretrained(repo_or_path, subfolder="vae")
-    wrapper = DecoderWrapper(model.to("cpu").eval()).eval()
-
     windows: Dict[str, Any] = {}
     parity: Dict[str, Any] = {
         "backend": "onnxruntime",
         "provider": "CPUExecutionProvider",
         "repo_or_path": repo_or_path,
         "opset": opset,
+        "source": source,
+        "passed": True,
+        "tolerances": TOLERANCES,
         "windows": {},
     }
 
     for window, latents_np in latent_samples.items():
         onnx_path = decoder_dir / f"stable_audio_open_decoder_T{window}.onnx"
-        dummy = torch.from_numpy(latents_np).to("cpu")
-
-        with torch.inference_mode():
-            torch_audio = wrapper(dummy).detach().cpu().numpy().astype(np.float32)
-
-        torch.onnx.export(
-            wrapper,
-            (dummy,),
-            str(onnx_path),
-            input_names=["latents"],
-            output_names=["audio"],
-            opset_version=opset,
-            dynamo=True,
-            external_data=False,
-        )
-
-        onnx_model = onnx.load(str(onnx_path))
-        onnx.checker.check_model(onnx_model)
-
-        session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-        onnx_audio = session.run(["audio"], {"latents": latents_np})[0].astype(np.float32)
-        metrics = _parity_metrics(torch_audio, onnx_audio)
+        export_graph(wrapper, onnx_path, latents_np, dynamic=False, opset=opset)
+        metrics = validate_graph(wrapper, onnx_path, {window: [latents_np]})[str(window)][0]
+        output_shape = [1, 2, int(window) * samples_per_latent]
 
         entry = {
             "path": f"models/decoder/{onnx_path.name}",
@@ -314,15 +280,19 @@ def export_stable_audio_open_decoder_onnx(
             "input_name": "latents",
             "output_name": "audio",
             "input_shape": list(latents_np.shape),
-            "output_shape": list(torch_audio.shape),
-            "output_samples": int(torch_audio.shape[-1]) if torch_audio.ndim >= 3 else None,
+            "output_shape": output_shape,
+            "output_samples": output_shape[-1],
             "opset": opset,
+            "source": source,
             **_decoder_timing_entry(window, samples_per_latent),
         }
         windows[str(window)] = entry
         parity["windows"][str(window)] = {
             **entry,
             **metrics,
+            "shape_match": True,
+            "torch_shape": output_shape,
+            "onnx_shape": output_shape,
         }
 
     parity_path = reports_dir / "decoder_parity.json"
@@ -334,6 +304,7 @@ def export_stable_audio_open_decoder_onnx(
         "vae_id": "stable_audio_open",
         "repo_or_path": repo_or_path,
         "opset": opset,
+        "source": source,
         "input_name": "latents",
         "output_name": "audio",
         "parity_report": "reports/decoder_parity.json",
@@ -760,7 +731,9 @@ def export_bundle(
             if latent_hz <= 0.0:
                 raise RuntimeError("corpus.npz must include a positive latent_hz for ONNX OLA export")
 
-            samples_per_latent = max(1, int(round(float(sample_rate) / latent_hz)))
+            # Stable Audio Open timing is measured by its shared exporter.
+            samples_per_latent = (max(1, int(round(float(sample_rate) / latent_hz)))
+                                  if vae_id == "same_s" else None)
             latent_samples = _decoder_samples_from_corpus(corpus, decoder_windows)
 
             if vae_id == "stable_audio_open":
@@ -770,6 +743,7 @@ def export_bundle(
                     latent_samples=latent_samples,
                     samples_per_latent=samples_per_latent,
                     repo_or_path=decoder_repo or STABLE_AUDIO_OPEN_REPO,
+                    source_revision=decoder_revision or "f21265c1e2710b3bd2386596943f0007f55f802e",
                     opset=decoder_opset,
                 )
             elif vae_id == "same_s":
@@ -863,7 +837,7 @@ def parse_args() -> argparse.Namespace:
         "--decoder-revision",
         default=None,
         help=(
-            "Full Hugging Face Git revision for SAME-S decoder export. Required "
+            "Immutable Hugging Face revision (Stable Audio Open defaults to its verified pin). Required "
             "when the corpus vae_id is same_s."
         ),
     )

@@ -53,7 +53,7 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
         return DecoderSelection(backend, "cpu", artifact.cache_key, artifact.root,
                                 vae_id=vae_id, artifact=artifact)
     if vae_id != "same_s":
-        return _select_adapter(config, vae_id, backend)
+        return _select_adapter(config, vae_id, backend, corpus_spec)
     if backend == "pytorch":
         import torch
         from .torch_decoder import _resolve_device
@@ -89,7 +89,7 @@ def create_decoder(selection: DecoderSelection):
     raise ValueError(f"Unsupported decoder backend {selection.backend!r}")
 
 
-def _select_adapter(config, vae_id, backend):
+def _select_adapter(config, vae_id, backend, corpus_spec=None):
     if backend != 'pytorch':
         raise ValueError(f'{vae_id} requires PyTorch; the packaged ONNX graph supports SAME-S only')
     import torch
@@ -99,17 +99,17 @@ def _select_adapter(config, vae_id, backend):
     if type(offline) is not bool:
         raise ValueError('decoder_local_files_only must be a boolean')
     if vae_id == 'stable_audio_open':
-        from huggingface_hub import hf_hub_download
-        try:
-            files = [Path(hf_hub_download('stabilityai/stable-audio-open-1.0', name,
-                local_files_only=offline)) for name in
-                ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors')]
-        except Exception as exc:
-            raise ValueError('Stable Audio Open weights are unavailable locally. Prepare the VAE cache before Start Perform.') from exc
-        if files[0].parent.parent != files[1].parent.parent:
-            raise ValueError("Stable Audio Open config and weights must come from one cached revision")
-        adapter_path = str(files[0].parent.parent)
-        identity = (vae_id, adapter_path, *(_hash(p) for p in files), metadata.version('diffusers'))
+        from .stable_audio_open_weights import resolve_source
+        root, source = resolve_source(local_files_only=offline)
+        expected = config.get('decoder_source_identity')
+        if expected is not None and (not isinstance(expected, dict) or
+                any(source.get(k) != v for k, v in expected.items())):
+            raise ValueError('Stale source checkpoint/config identity')
+        for key in ('config_sha256', 'weights_sha256', 'revision'):
+            if key in (corpus_spec or {}) and corpus_spec[key] != source[key]:
+                raise ValueError(f'Corpus source {key} does not match native decoder')
+        adapter_path = str(root)
+        identity = (vae_id, adapter_path, *source.values(), metadata.version('diffusers'))
     elif vae_id in ('ear_vae_44k', 'ear_vae_48k'):
         path = Path(config.get('vae_weight_path', '')).expanduser()
         if not path.is_file():

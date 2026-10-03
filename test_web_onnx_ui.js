@@ -272,3 +272,19 @@ for (let reload=0; reload<2; reload++) {
     assert.ok(menu.options.some(o=>o.value==='onnxruntime|cpu' && o.disabled),'missing graph remains visible as unavailable');
 }
 console.log('Phase 0 recorded discovery: SAME-S/Rack, reload, reconnect and missing-artifact states passed');
+
+// Phase 2 uses real recorded production responses from the published Rack artifact.
+const phase2 = JSON.parse(fs.readFileSync('docs/multi_vae_phase2_web.json', 'utf8'));
+for (const run of phase2.runs) {
+    const target = inventoryClient();
+    target.client.response = run.discovery;
+    vm.runInContext("handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);",target.client);
+    const menu = target.nodes.get('perform-decoder-engine');
+    for (const value of ['onnxruntime|cpu','pytorch|cpu','pytorch|mps']) {
+        assert.ok(menu.options.some(o=>o.value===value && !o.disabled), `Rack ${value} available`);
+    }
+    menu.value='onnxruntime|cpu';
+    vm.runInContext("pipelineDisconnected(); handlePipelineMessage({type:'pipeline_state',phase:'idle',corpus_dir:response.corpus_dir}); handlePipelineMessage(response);",target.client);
+    assert.equal(menu.value,'onnxruntime|cpu','Rack ONNX survives reconnect');
+}
+console.log('Phase 2 recorded Rack ONNX/native choices and offline server restart passed');

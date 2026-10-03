@@ -270,7 +270,7 @@ The unified Web server defaults to an app-owned SAME-S ONNX realtime decoder.
 Pipeline configuration also supports the native decoder; see the
 [selection and lifecycle protocol](docs/DUAL_INFERENCE_PHASE3.md).
 SAME-S is the default encoder in the Web UI, while the other encoder
-choices also work in Perform through their existing PyTorch adapters: Stable Audio Open, EAR 44.1 kHz and EAR 48 kHz. The corpus determines the VAE; the selector offers compatible execution devices. EAR requires its local `.pyt` path in Perform and the EAR repository/dependencies. These paths do not use the SAME-S ONNX graph.
+choices also work in Perform through their existing PyTorch adapters: Stable Audio Open, EAR 44.1 kHz and EAR 48 kHz. Stable Audio Open additionally supports a locally prepared ONNX CPU decoder. The corpus determines the VAE; the selector offers compatible execution devices. EAR requires its local `.pyt` path in Perform and the EAR repository/dependencies. These paths do not use the SAME-S ONNX graph.
 
 Prepare the untracked release resource once from local SAME-S weights:
 
@@ -292,6 +292,20 @@ license, and conversion description.
 When updating SAME-S, verify the new Hugging Face commit and pass that full
 revision explicitly rather than using a branch name.
 
+Prepare Stable Audio Open ONNX explicitly from the installed pinned weights:
+
+```bash
+.venv/bin/python -m bin.prepare_stable_audio_open_onnx \
+  --corpus corpus/Rack_20260428_181107
+```
+
+The validated dynamic graph is stored in `~/.cache/waenderer/decoders`, covers
+T2–T32, and survives restart. Preparation is offline and reuses a verified existing
+export. Restart the Web server after upgrading, then select **ONNX · CPU ·
+stable_audio_open** for Rack. PyTorch CPU/MPS remain separate choices. The short
+CPU tests showed underruns; successful export does not establish real-time
+performance. See [Phase 2 evidence and reproduction](docs/MULTI_VAE_ONNX_PHASE2.md).
+
 Start the unified server offline with:
 
 ```bash
@@ -299,7 +313,7 @@ python bin/serve.py
 ```
 
 Open `http://localhost:8080` and select or create a corpus. After preprocessing
-or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S offers ONNX CPU or native PyTorch; other registered VAEs use PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
+or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open corpora offer ONNX CPU or native PyTorch; EAR uses PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
 
 T2 is selected initially for SAME-S; other VAE adapters start at T8 to leave more audio time per decode. Newly exported SAME-S decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window
 selector remains active during playback. The current T keeps generating audio

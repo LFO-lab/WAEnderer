@@ -6,7 +6,26 @@ from pathlib import Path
 
 def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path=""):
     if corpus_spec and corpus_spec["vae_id"] != "same_s":
-        return _adapter_availability(corpus_spec["vae_id"], weight_path)
+        entries = _adapter_availability(corpus_spec["vae_id"], weight_path)
+        if corpus_spec['vae_id'] == 'stable_audio_open':
+            from .onnx_artifacts import resolve_artifact
+            ready, detail = False, 'Prepare the Stable Audio Open ONNX decoder first.'
+            try:
+                artifact = resolve_artifact('stable_audio_open', expected_source={
+                    k:corpus_spec[k] for k in ('config_sha256','weights_sha256','revision') if k in corpus_spec})
+                if 'latent_dim' in corpus_spec:
+                    artifact.validate_corpus(corpus_spec)
+                ready, detail = True, 'Artifact verified; runtime checked on Start Perform.'
+            except (ValueError, OSError) as exc:
+                detail = str(exc)
+            try:
+                deps = find_spec('onnxruntime') is not None and find_spec('onnx') is not None
+            except (ImportError, ValueError):
+                deps = False
+            entries.insert(0, dict(backend='onnxruntime', device='cpu', vae_id='stable_audio_open',
+                label='ONNX · CPU · stable_audio_open', hardware=True, dependencies=deps,
+                weights=ready, validated=False, selectable=ready and deps, detail=detail))
+        return entries
     root = Path(resource_dir) if resource_dir else Path(str(resources.files('stable_audio_wanderer.resources.same_s')))
     def installed(name):
         try:
@@ -62,7 +81,8 @@ def _adapter_availability(vae_id, weight_path):
     if vae_id == 'stable_audio_open':
         try:
             from huggingface_hub import try_to_load_from_cache
-            weights = all(isinstance(try_to_load_from_cache('stabilityai/stable-audio-open-1.0', name), str)
+            from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION
+            weights = all(isinstance(try_to_load_from_cache(SOURCE_MODEL, name, revision=SOURCE_REVISION), str)
                 for name in ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors'))
         except Exception:
             pass
@@ -80,6 +100,6 @@ def _adapter_availability(vae_id, weight_path):
         dependencies=dependencies, weights=weights, validated=False,
         selectable=hardware and dependencies and (weights or vae_id.startswith('ear_')),
         detail=('Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup.'
-                if vae_id.startswith('ear_') else 'Uses the cached Stable Audio Open VAE; ONNX is available for SAME-S only.')
+                if vae_id.startswith('ear_') else 'Uses the pinned cached Stable Audio Open VAE.')
                + ' Windows are validated at startup; real-time performance depends on this VAE/device.')
         for device, hardware in devices]

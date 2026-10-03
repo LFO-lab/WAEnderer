@@ -1,0 +1,262 @@
+{
+  "runs": [
+    {
+      "discovery": {
+        "type": "pipeline_decoder_list",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+        "vae_id": "stable_audio_open",
+        "default_window": 8,
+        "decoders": [
+          {
+            "backend": "onnxruntime",
+            "device": "cpu",
+            "vae_id": "stable_audio_open",
+            "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Artifact verified; runtime checked on Start Perform."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cpu",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "mps",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cuda:0",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+            "hardware": false,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": false,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          }
+        ]
+      },
+      "ready": {
+        "type": "pipeline_phase_change",
+        "phase": "perform",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+        "decoder": {
+          "backend": "onnxruntime",
+          "provider": "CPUExecutionProvider",
+          "device": "cpu",
+          "vae_id": "stable_audio_open"
+        }
+      },
+      "decoder": {
+        "gain": 0.0,
+        "frame_samples": 8192,
+        "underruns": 25,
+        "buffer_underruns": 25,
+        "device_underruns": 0,
+        "buffer_duration": 0.1675283446712018,
+        "generation": 1,
+        "pending_generation": null,
+        "transition_status": "idle",
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "vae_id": "stable_audio_open",
+        "supported_windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "window_controls": {
+          "mode": "fixed",
+          "minimum": 2,
+          "maximum": 32,
+          "content": "source",
+          "variation": 0.25
+        },
+        "manual_provenance": "source_frames",
+        "selected_window": 8,
+        "requested_window": 8,
+        "latent_hop": 4,
+        "audio_hop_samples": 8192,
+        "audio_window_samples": 16384,
+        "decode_timing": {
+          "last_ms": 577.2626249818131,
+          "p99_ms": 581.128602513345,
+          "count": 3
+        },
+        "requested_generation": 1,
+        "error": null,
+        "resource_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "model_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder_dynamic.onnx"
+      },
+      "stopped": {
+        "type": "pipeline_phase_change",
+        "phase": "idle",
+        "decoder": null
+      }
+    },
+    {
+      "discovery": {
+        "type": "pipeline_decoder_list",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+        "vae_id": "stable_audio_open",
+        "default_window": 8,
+        "decoders": [
+          {
+            "backend": "onnxruntime",
+            "device": "cpu",
+            "vae_id": "stable_audio_open",
+            "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Artifact verified; runtime checked on Start Perform."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cpu",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "mps",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+            "hardware": true,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": true,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          },
+          {
+            "backend": "pytorch",
+            "device": "cuda:0",
+            "vae_id": "stable_audio_open",
+            "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+            "hardware": false,
+            "dependencies": true,
+            "weights": true,
+            "validated": false,
+            "selectable": false,
+            "detail": "Uses the pinned cached Stable Audio Open VAE. Windows are validated at startup; real-time performance depends on this VAE/device."
+          }
+        ]
+      },
+      "ready": {
+        "type": "pipeline_phase_change",
+        "phase": "perform",
+        "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+        "decoder": {
+          "backend": "onnxruntime",
+          "provider": "CPUExecutionProvider",
+          "device": "cpu",
+          "vae_id": "stable_audio_open"
+        }
+      },
+      "decoder": {
+        "gain": 0.0,
+        "frame_samples": 8192,
+        "underruns": 28,
+        "buffer_underruns": 28,
+        "device_underruns": 0,
+        "buffer_duration": 0.1675283446712018,
+        "generation": 1,
+        "pending_generation": null,
+        "transition_status": "idle",
+        "backend": "onnxruntime",
+        "provider": "CPUExecutionProvider",
+        "vae_id": "stable_audio_open",
+        "supported_windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "window_controls": {
+          "mode": "fixed",
+          "minimum": 2,
+          "maximum": 32,
+          "content": "source",
+          "variation": 0.25
+        },
+        "manual_provenance": "source_frames",
+        "selected_window": 8,
+        "requested_window": 8,
+        "latent_hop": 4,
+        "audio_hop_samples": 8192,
+        "audio_window_samples": 16384,
+        "decode_timing": {
+          "last_ms": 606.1909580021165,
+          "p99_ms": 605.4691663419362,
+          "count": 3
+        },
+        "requested_generation": 1,
+        "error": null,
+        "resource_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "model_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder_dynamic.onnx"
+      },
+      "stopped": {
+        "type": "pipeline_phase_change",
+        "phase": "idle",
+        "decoder": null
+      }
+    }
+  ],
+  "scope": "Isolated production HTTP/WebSocket server, offline restart, muted short functional playback; no real-time qualification.",
+  "passed": true
+}

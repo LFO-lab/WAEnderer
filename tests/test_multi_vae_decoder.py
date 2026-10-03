@@ -107,9 +107,13 @@ def test_sao_selection_pins_cached_files_without_same_s_dependency(tmp_path, mon
     (root/'config.json').write_text('{}')
     (root/'diffusion_pytorch_model.safetensors').write_bytes(b'weights-a')
     monkeypatch.setattr(huggingface_hub,'hf_hub_download',lambda repo,name,**kwargs:str(root/name.split('/')[-1]))
+    from stable_audio_wanderer.vae import stable_audio_open_weights as weights
+    monkeypatch.setattr(weights, 'CONFIG_SHA256', weights.sha256(root/'config.json'))
+    monkeypatch.setattr(weights, 'WEIGHTS_SHA256', weights.sha256(root/'diffusion_pytorch_model.safetensors'))
     spec = {'vae_id':'stable_audio_open'}
     config = {'decoder_backend':'pytorch','decoder_device':'cpu'}
     first = factory.select_decoder(config,corpus_spec=spec)
     assert first.vae_id == 'stable_audio_open' and first.adapter_path == str(root.parent)
     (root/'diffusion_pytorch_model.safetensors').write_bytes(b'weights-b')
-    assert factory.select_decoder(config,corpus_spec=spec) != first
+    with pytest.raises(ValueError, match='SHA-256 mismatch'):
+        factory.select_decoder(config,corpus_spec=spec)
