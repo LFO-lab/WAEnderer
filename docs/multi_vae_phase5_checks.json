@@ -1,0 +1,344 @@
+{
+  "date": "2026-10-04",
+  "checks": [
+    {
+      "report": "build/phase5/ear_vae_44k_cpu_quick.json",
+      "sha256": "1942dc29327431b67aaa6c2f3516e733e00cd291fb052b0a2623804104530b45",
+      "vae_id": "ear_vae_44k",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/ear_vae_44k_lifecycle.json",
+      "sha256": "d075f5bbd366cbd2e3c99b85333d4e1b3060d88bbfdcb4f2183aa62ca4efb103",
+      "vae_id": "ear_vae_44k",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 3
+    },
+    {
+      "report": "build/phase5/ear_vae_44k_lifecycle_mps.json",
+      "sha256": "cffc14d34749d28135a797b65bb09d3715577df96364cb14d497f3e2906a5c93",
+      "vae_id": "ear_vae_44k",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 4
+    },
+    {
+      "report": "build/phase5/ear_vae_44k_mps_quick.json",
+      "sha256": "17ef87152f9f783cb1ae67412ad53a8cfbde9cc26943a55d5fc811d2b89e217b",
+      "vae_id": "ear_vae_44k",
+      "device": "mps",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/ear_vae_48k_cpu_numerical.json",
+      "sha256": "ec898f2a12872e259c9f3aa50b0525b6a003248f9d60cef56db18bde80559a18",
+      "vae_id": "ear_vae_48k",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "full",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 192,
+        "synthetic": 128,
+        "listening_pairs": 3
+      }
+    },
+    {
+      "report": "build/phase5/ear_vae_48k_lifecycle.json",
+      "sha256": "3b6b88e14e94cf3d727a9962c29f5f6da7528b98e9540a3edf4f641af7657b6e",
+      "vae_id": "ear_vae_48k",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 3
+    },
+    {
+      "report": "build/phase5/ear_vae_48k_lifecycle_mps.json",
+      "sha256": "a725026483c076df0e95552058fab8f680cd13d55672aeed6f300abe029083c6",
+      "vae_id": "ear_vae_48k",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 4
+    },
+    {
+      "report": "build/phase5/ear_vae_48k_mps_quick.json",
+      "sha256": "3a65d5b44db0d363bb0886b0b23f0df801229a32874fc0ca1c202ab402fa5b5f",
+      "vae_id": "ear_vae_48k",
+      "device": "mps",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/same_s_cpu_quick.json",
+      "sha256": "cfc31cb0597bf0bcafbcceb3c94886a356d4fd85a83a49bc1780ad7b9e388e38",
+      "vae_id": "same_s",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/same_s_lifecycle.json",
+      "sha256": "8675a78db66a98af56d46c9c93f717ab6cd7b3dfaeafac7052fa7bdfc2d9c805",
+      "vae_id": "same_s",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 3
+    },
+    {
+      "report": "build/phase5/same_s_lifecycle_mps.json",
+      "sha256": "a3219b3bf62dbd1f037809a57180fb261ef413c0e381f1dd854b74618d97e114",
+      "vae_id": "same_s",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 4
+    },
+    {
+      "report": "build/phase5/same_s_mps_quick.json",
+      "sha256": "e7cfc69f2c77d7b562017a90a8a9ad2f7b6a3aac327197a1d0ad4976de681deb",
+      "vae_id": "same_s",
+      "device": "mps",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/stable_audio_open_cpu_quick.json",
+      "sha256": "e91a9eaf291e1652843dc4f7d602a83b7f41d82da4e2c2e7cba7d8031ac7c55e",
+      "vae_id": "stable_audio_open",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/stable_audio_open_lifecycle.json",
+      "sha256": "15a0b5e4f5890e35f1b1304709fa6c988d3c417a85ea65c4eda4d81381dd2b9a",
+      "vae_id": "stable_audio_open",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 3
+    },
+    {
+      "report": "build/phase5/stable_audio_open_lifecycle_mps.json",
+      "sha256": "ffc34ebae36864b2f58295d03556ab2acdce9f7c186655970cb33615f3cfa211",
+      "vae_id": "stable_audio_open",
+      "device": "cpu",
+      "error": null,
+      "lifecycle_passed": true,
+      "offline_reload": true,
+      "cycles": 4
+    },
+    {
+      "report": "build/phase5/stable_audio_open_mps_quick.json",
+      "sha256": "140f67915c3b9b2b53a4dc2565793579b8354b5b809c3998ba8d2ef439742fb9",
+      "vae_id": "stable_audio_open",
+      "device": "mps",
+      "error": null,
+      "validation_scope": "quick_diagnostic",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 3,
+        "synthetic": 3,
+        "listening_pairs": 1
+      }
+    },
+    {
+      "report": "build/phase5/stable_audio_open_native_gpu_reference.json",
+      "sha256": "0ecd494e924a1e340c5f3dbba0d254f70cf8664215d8fa2f8ba06f49ca111395",
+      "vae_id": "stable_audio_open",
+      "device": "mps",
+      "error": null,
+      "native_reference_passed": true,
+      "comparisons": 32,
+      "limits": {
+        "max_abs_error": 0.0002,
+        "rmse": 2e-05
+      },
+      "max_abs_error": 3.5371631383895874e-06,
+      "max_rmse": 3.06058182344779e-07
+    }
+  ],
+  "listening": "No audible degradation reported by the user for one ONNX/native CPU pair per VAE; GPU pairs not reviewed.",
+  "realtime": "not tested in this session",
+  "notes": [
+    "CPU full report was supplied by the user and reused without rerunning.",
+    "MPS quick diagnostic was run outside the sandbox after the restricted environment reported MPS unavailable.",
+    "SAME-S, Stable Audio Open and EAR 44k CPU quick diagnostics passed; all four models passed stopped ONNX/native CPU/ONNX lifecycle and fresh offline reload. Historical SAME-S qualification is preserved separately, not converted into new reports.",
+    "All four models passed CPU and MPS quick diagnostics and CPU/MPS/ONNX lifecycle with fresh offline reload. Stable Audio Open native CPU/MPS reference passed all even windows on real and synthetic probes before its ONNX/MPS evaluation; its separate frozen GPU protocol preserves the original CPU report digests."
+  ],
+  "historical_same_s_qualification_passed": true,
+  "campaign_matrix": "build/phase5/qualification.json",
+  "matrix": [
+    {
+      "vae_id": "same_s",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "same_s",
+      "backend": "pytorch",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "same_s",
+      "backend": "pytorch",
+      "device": "mps",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "pending"
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "pytorch",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "pytorch",
+      "device": "mps",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "pending"
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "pytorch",
+      "device": "cpu",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "pytorch",
+      "device": "mps",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "pending"
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "functional": "passed",
+      "numerical": "passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "pytorch",
+      "device": "cpu",
+      "functional": "passed",
+      "numerical": "passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "passed"
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "pytorch",
+      "device": "mps",
+      "functional": "observed",
+      "numerical": "diagnostic_passed",
+      "realtime": "not_tested",
+      "lifecycle": "passed",
+      "listening": "pending"
+    }
+  ]
+}

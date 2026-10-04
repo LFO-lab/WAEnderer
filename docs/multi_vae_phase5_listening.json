@@ -1,0 +1,101 @@
+{
+  "reviews": [
+    {
+      "vae_id": "same_s",
+      "engines": [
+        "onnxruntime/cpu",
+        "pytorch/cpu"
+      ],
+      "numerical_report": "build/phase5/same_s_cpu_quick.json",
+      "numerical_report_sha256": "cfc31cb0597bf0bcafbcceb3c94886a356d4fd85a83a49bc1780ad7b9e388e38",
+      "file_index": 0,
+      "files": {
+        "onnx": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/same_s_cpu_quick/file0_onnx.wav",
+          "sha256": "d344b0a1942fb38b8513c8261cf1ae923615b0231b8f7f92c1b2170f468eebc9"
+        },
+        "native": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/same_s_cpu_quick/file0_native.wav",
+          "sha256": "dba6a1c5fe596ae1f240156550ab05418a2af1fb1361cdde536feed46be10608"
+        }
+      },
+      "reviewer": "Utilisateur du projet",
+      "date": "2026-10-04",
+      "observation": "Pas de d\u00e9gradation audible",
+      "new_engine_regression": false
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "engines": [
+        "onnxruntime/cpu",
+        "pytorch/cpu"
+      ],
+      "numerical_report": "build/phase5/stable_audio_open_cpu_quick.json",
+      "numerical_report_sha256": "e91a9eaf291e1652843dc4f7d602a83b7f41d82da4e2c2e7cba7d8031ac7c55e",
+      "file_index": 0,
+      "files": {
+        "onnx": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/stable_audio_open_cpu_quick/file0_onnx.wav",
+          "sha256": "8ba7de138340d3225e76dfbdb149e6d5c29f6e36ad141210a5594582af7cc32b"
+        },
+        "native": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/stable_audio_open_cpu_quick/file0_native.wav",
+          "sha256": "af79b42030b93f5f0101c9591ab6aedca00276b89b8a7b785be695267c25e4b9"
+        }
+      },
+      "reviewer": "Utilisateur du projet",
+      "date": "2026-10-04",
+      "observation": "Pas de d\u00e9gradation audible",
+      "new_engine_regression": false
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "engines": [
+        "onnxruntime/cpu",
+        "pytorch/cpu"
+      ],
+      "numerical_report": "build/phase5/ear_vae_44k_cpu_quick.json",
+      "numerical_report_sha256": "1942dc29327431b67aaa6c2f3516e733e00cd291fb052b0a2623804104530b45",
+      "file_index": 0,
+      "files": {
+        "onnx": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/ear_vae_44k_cpu_quick/file0_onnx.wav",
+          "sha256": "5dd4fd7f9de5ed6e3b9f7f88418ab57181b43b9d75696a30681a7cc864df4ddf"
+        },
+        "native": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/ear_vae_44k_cpu_quick/file0_native.wav",
+          "sha256": "a7923a58061fdc2fe33bd8c437da5ad652df6d01fd57d3c5316cb088de002a4c"
+        }
+      },
+      "reviewer": "Utilisateur du projet",
+      "date": "2026-10-04",
+      "observation": "Pas de d\u00e9gradation audible",
+      "new_engine_regression": false
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "engines": [
+        "onnxruntime/cpu",
+        "pytorch/cpu"
+      ],
+      "numerical_report": "build/phase5/ear_vae_48k_cpu_numerical.json",
+      "numerical_report_sha256": "ec898f2a12872e259c9f3aa50b0525b6a003248f9d60cef56db18bde80559a18",
+      "file_index": 0,
+      "files": {
+        "onnx": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/ear_vae_48k_cpu/file0_onnx.wav",
+          "sha256": "d6a9df66d1a7e46ff19e824c45e385d870ba961ee602c6f4c5898bb3b9802dd7"
+        },
+        "native": {
+          "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/eval_out/multi_vae_phase5/ear_vae_48k_cpu/file0_native.wav",
+          "sha256": "f43eb097c812b02c316a1fa086e1361af82207a041b995d4e5553883da33ab97"
+        }
+      },
+      "reviewer": "Utilisateur du projet",
+      "date": "2026-10-04",
+      "observation": "Pas de d\u00e9gradation audible",
+      "new_engine_regression": false
+    }
+  ],
+  "scope": "Only the exact reviewed CPU pairs; no transfer to other excerpts, VAEs or GPU renders"
+}

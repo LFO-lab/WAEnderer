@@ -110,7 +110,9 @@ Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (impleme
 
 ## Phase 5 — Numerical, audio and runtime validation
 
-- [ ] Freeze per-model numerical tolerances from reference behavior before evaluating exported graphs. Preserve stochastic behavior and measure within-engine variability where present; do not require SAME-S bitwise equality.
+Implementation plan: [Phase 5 plan](docs/MULTI_VAE_ONNX_PHASE5_PLAN.md). Validation tooling implemented on 4 October 2026; see [the code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md). Full numerical/runtime campaigns and listening qualification remain pending; the checkboxes below describe evidence gates, not tool availability.
+
+- [x] Freeze per-model numerical tolerances from reference behavior before evaluating exported graphs. Preserve stochastic behavior and measure within-engine variability where present; do not require SAME-S bitwise equality. CPU/installed MPS policies recorded; Stable Audio Open native CPU/MPS characterization and its separately frozen GPU protocol added on 4 October. CUDA remains untested.
 - [ ] Compare identical raw latent windows, output shapes, sample counts and assembled OLA audio on synthetic data and representative real corpora.
 - [ ] Use BurntMemory for SAME-S and Rack for Stable Audio Open. EAR needs representative data encoded with the supplied checkpoint(s), in addition to synthetic contract probes.
 - [ ] Keep functional decoding results separate from real-time qualification. CPU functionality can pass despite missed audio deadlines.

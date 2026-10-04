@@ -317,6 +317,8 @@ or training, that corpus remains selected. **Start Perform** is enabled after co
 
 All four VAEs now share model-specific decoder choices, visible unavailability reasons, and explicit **Prepare ONNX decoder / Retry** controls. A verified ONNX CPU artifact is the default for a new corpus; explicit backend choices persist across refresh/reconnect/reload. Preparation never starts playback or changes the selected backend. Use `python -m bin.prepare_decoders --all-installed` for batch preparation/reuse. See [Phase 4 configuration, lifecycle and verification](docs/MULTI_VAE_ONNX_PHASE4.md) for separate exporter environments and the server configuration file.
 
+Phase 5 validation tools now compare identical corpus latents and assembled audio across all four VAEs, record physical runtime measurements, and check a source-bound qualification matrix. Full campaigns and listening reviews remain pending. See [the Phase 5 code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md) for short diagnostics, manual checks and the relevant functions to debug.
+
 Prepare EAR explicitly with `python -m bin.prepare_ear_onnx --vae-id ear_vae_44k --weights /path/to/ear_vae_44k.pyt --repo /path/to/EAR_VAE` in the EAR export environment; use `ear_vae_48k` with its matching checkpoint for 48 kHz. Both support even windows T2–T32. See [EAR preparation, validation and measured limits](docs/MULTI_VAE_ONNX_PHASE3.md). Restart an existing server after updating the code.
 
 T2 is selected initially for SAME-S; other VAE adapters start at T8 to leave more audio time per decode. Newly exported SAME-S decoders support every even T through T32; older decoder resources expose their existing validated sizes. The window

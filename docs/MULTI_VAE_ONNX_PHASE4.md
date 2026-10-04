@@ -2,6 +2,8 @@
 
 Completed on 3 October 2026. All four registered VAEs now use consistent discovery, explicit offline preparation jobs and persistent backend selection. Numerical export policies and real-time qualification remain separate.
 
+Rechecked on 4 October 2026: the Phase 4 implementation is committed as `898283e` (`ONNX uniformity - Phase 4`). Existing runtime, export and browser audit reports retain passing results. A fresh read-only discovery check confirmed all four correct VAE labels, usable ONNX CPU entries and visible PyTorch CPU entries; its local receipt is `build/phase4/recheck_20261004.json`. This recheck did not repeat exports or the browser campaign.
+
 ## Delivered behavior
 
 “Decode with” includes the corpus VAE in every ONNX CPU, PyTorch CPU and GPU label, including SAME-S. Unavailable options remain visible; their full reasons appear under “Unavailable choices and reasons” and in option help. Native source presence, verified ONNX artifacts, runtime dependencies and hardware are independent. An EAR ONNX artifact remains usable without DAC or its native checkpoint. Explicitly selected conflicting EAR sources cannot leave ONNX selectable.

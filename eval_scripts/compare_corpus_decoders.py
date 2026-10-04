@@ -1,90 +1,170 @@
-"""Compare native/ONNX on identical raw corpus windows and export listening pairs.
+"""Compare identical raw latents and production OLA for any registered VAE.
 
-Cross-engine RMSE must be <= 3 times the larger within-engine repeat RMSE
-(floor 1e-7). This stochastic regression gate is not a perceptual threshold.
+No playback or export. WAVs remain local. Two calls per engine preserve model
+noise. Use --synthetic for the eight-seed contract probes in addition to corpus.
 """
 import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
+import os
 import time
+from pathlib import Path
 
+os.environ['HF_HUB_OFFLINE'] = '1'
 import numpy as np
 import soundfile as sf
 import torch
-from stable_audio_wanderer.vae.onnx_decoder import validate_same_s_corpus, load_same_s_app_decoder
-from stable_audio_wanderer.vae.torch_decoder import SameSTorchDecoder
+from stable_audio_wanderer.vae.corpus_decoder import corpus_decoder_spec
+from stable_audio_wanderer.vae.decoder_factory import select_decoder, create_decoder
 from stable_audio_wanderer.runtime.overlap_add import StreamingFullOverlapAdd
-from eval_scripts.validate_torch_decoder import compare
+from eval_scripts.multi_vae_validation_common import (
+    add_selection_arguments, selection_config, evidence_context, digest,
+    write_report, compare, numerical_gate, checked_decode,
+    normalize_device, validate_native_source,
+)
+
+
+def probe(onnx, native, raw, policy, synthetic=False):
+    a, b = checked_decode(onnx, raw), checked_decode(native, raw)
+    cross = compare(a.audio, b.audio)
+    within_onnx = compare(a.audio, checked_decode(onnx, raw).audio)
+    within_native = compare(b.audio, checked_decode(native, raw).audio)
+    return dict(input_sha256=hashlib.sha256(raw.tobytes()).hexdigest(),
+        shape=list(a.audio.shape), cross=cross, within_onnx=within_onnx,
+        within_native=within_native, onnx_ms=a.decode_time_ms,
+        native_ms=b.decode_time_ms,
+        **numerical_gate(policy, cross, within_onnx, within_native, synthetic=synthetic))
+
+
+def assemble(decoder, raw, window, hop):
+    meta = decoder.metadata_for(window)
+    ola = StreamingFullOverlapAdd(hop * meta.samples_per_latent, channels=meta.channels)
+    return np.concatenate([ola.push(checked_decode(decoder, raw[i:i+window]).audio.T).T
+                           for i in range(0, len(raw)-window+1, hop)])
+
+
+def run(args):
+    protocol = json.loads(args.protocol.read_text())
+    spec = corpus_decoder_spec(args.corpus)
+    path = args.corpus / 'corpus.npz' if args.corpus.is_dir() else args.corpus
+    with np.load(path, allow_pickle=False) as data:
+        z = np.ascontiguousarray(data['Z_concat'] * data['Z_std'] + data['Z_mean'], dtype=np.float32)
+        offsets = data['file_offsets'].copy()
+    if offsets.ndim != 1 or offsets[0] != 0 or offsets[-1] != len(z) or np.any(np.diff(offsets) <= 0):
+        raise ValueError('Invalid corpus file boundaries')
+    torch.set_num_threads(1)
+    onnx_selection = select_decoder(selection_config(args, 'onnxruntime', 'cpu'), corpus_spec=spec)
+    # Bind the native source to the resolved artifact, even for a legacy corpus.
+    native_config = selection_config(args, 'pytorch', args.device)
+    native_config['decoder_source_identity'] = dict(onnx_selection.artifact.source)
+    native_selection = select_decoder(native_config, corpus_spec=spec)
+    policy = protocol['models'][spec['vae_id']]
+    if not args.device.startswith('cpu'):
+        policy = protocol['native_gpu'][spec['vae_id']]
+    report = evidence_context(args, spec, onnx_selection)
+    report.update(recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+        corpus=str(path.resolve()), corpus_sha256=digest(path),
+        device=normalize_device(native_selection.device), native_identity=list(native_selection.identity),
+        protocol=protocol, comparisons=[], synthetic=[], listening_pairs=[], error=None,
+        numeric_passed=False, perceptual_qualified=False,
+        validation_scope='quick_diagnostic' if args.quick else 'full',
+        historical_corpus_provenance='recorded' if 'weights_sha256' in spec else 'unknown; geometry matched')
+    onnx = native = None
+    try:
+        started = time.perf_counter()
+        onnx = create_decoder(onnx_selection)
+        report['onnx_preparation_ms'] = (time.perf_counter()-started)*1000
+        started = time.perf_counter()
+        native = create_decoder(native_selection)
+        validate_native_source(native, onnx_selection.artifact)
+        report['native_preparation_ms'] = (time.perf_counter()-started)*1000
+        windows = [w for w in (2,8,32) if w in protocol['windows']] if args.quick else protocol['windows']
+        if not set(windows).issubset(onnx.supported_windows) or not set(windows).issubset(native.supported_windows):
+            raise ValueError('Protocol windows are not supported by both decoders')
+        maximum = max(windows)
+        starts = [(index, int(a+(b-a-maximum)*fraction))
+            for index, (a,b) in enumerate(zip(offsets[:-1], offsets[1:])) if b-a >= maximum
+            for fraction in protocol['positions_per_file']]
+        report['excluded_short_files'] = [i for i,(a,b) in enumerate(zip(offsets[:-1], offsets[1:])) if b-a < maximum]
+        if not starts:
+            raise ValueError('No complete real corpus probes')
+        if args.quick:
+            starts = starts[:1]
+        seed_count = 1 if args.quick else protocol['synthetic_seeds']
+        ola_frames = 32 if args.quick else 128
+        report['coverage'] = dict(windows=windows, real_positions=len(starts),
+            synthetic_seeds=seed_count if args.synthetic else 0, ola_frames=ola_frames,
+            ola_files=1 if args.quick else len(offsets)-1)
+        for window in windows:
+            for file_index, start in starts:
+                report['comparisons'].append(dict(window=window, start=start, file_index=file_index,
+                    **probe(onnx, native, z[start:start+window], policy)))
+            if args.synthetic:
+                for seed in range(seed_count):
+                    raw = np.random.default_rng(window*1000+seed).normal(0,.05,(window,z.shape[1])).astype(np.float32)
+                    report['synthetic'].append(dict(window=window, seed=seed,
+                        **probe(onnx, native, raw, policy, synthetic=True)))
+            print(f'T{window}: comparisons complete', flush=True)
+        args.audio_dir.mkdir(parents=True, exist_ok=True)
+        window, hop = protocol['ola_window'], protocol['ola_hop']
+        meta = onnx.metadata_for(window)
+        for index,(start,stop) in enumerate(zip(offsets[:-1],offsets[1:])):
+            if args.quick and index != starts[0][0]:
+                continue
+            raw = z[int(start):min(int(stop),int(start)+ola_frames)]
+            if len(raw) < window:
+                continue
+            outputs, repeats, files = {}, {}, {}
+            for name, decoder in (('onnx',onnx), ('native',native)):
+                outputs[name] = assemble(decoder, raw, window, hop)
+                repeats[name] = compare(outputs[name], assemble(decoder, raw, window, hop))
+                filename = args.audio_dir / f'file{index}_{name}.wav'
+                sf.write(filename, outputs[name], meta.sample_rate, subtype='FLOAT')
+                files[name] = dict(path=str(filename.resolve()), sha256=digest(filename))
+            cross = compare(outputs['onnx'], outputs['native'])
+            report['listening_pairs'].append(dict(file_index=index, start_frame=int(start),
+                input_sha256=hashlib.sha256(raw.tobytes()).hexdigest(), window=window, hop=hop,
+                sample_rate=meta.sample_rate, samples=len(outputs['onnx']),
+                tail='One emitted hop per window; unflushed OLA tail omitted',
+                comparison_after_ola=cross, within_onnx=repeats['onnx'], within_native=repeats['native'],
+                files=files, peaks={k:float(np.max(np.abs(v))) for k,v in outputs.items()},
+                listening_review='pending',
+                **numerical_gate(policy, cross, repeats['onnx'], repeats['native'])))
+        report['numeric_passed'] = bool(report['listening_pairs']) and all(
+            row['passed'] for group in ('comparisons','synthetic','listening_pairs') for row in report[group])
+        print(f'{report["validation_scope"]}: numerical gate {"passed" if report["numeric_passed"] else "failed"}', flush=True)
+    except Exception as exc:
+        report['error'] = f'{type(exc).__name__}: {exc}'
+    finally:
+        for decoder in (native,onnx):
+            if decoder is not None:
+                try:
+                    decoder.close()
+                except Exception as exc:
+                    report['error'] = f'Cleanup failed: {exc}'
+                    report['numeric_passed'] = False
+        write_report(args.output, report)
+    if not report['numeric_passed']:
+        raise SystemExit('Numerical validation failed or pending; inspect report')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus', type=Path, required=True)
-    parser.add_argument('--device', required=True)
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--audio-dir', type=Path, required=True)
+    parser.add_argument('--synthetic', action='store_true')
+    parser.add_argument('--quick', action='store_true', help='Diagnostic only: T2/T8/T32, one real position, one synthetic seed and one 32-frame OLA clip; does not qualify the full campaign')
+    add_selection_arguments(parser)
     args = parser.parse_args()
-    path = validate_same_s_corpus(args.corpus)
-    with np.load(path, allow_pickle=False) as data:
-        z = (data['Z_concat'] * data['Z_std'] + data['Z_mean']).astype(np.float32)
-        offsets = data['file_offsets'].copy()
-    starts = [int(a + (b-a-32)*fraction) for a,b in zip(offsets[:-1], offsets[1:])
-              if b-a >= 32 for fraction in (0., .25, .5, .75)]
-    if not starts: raise SystemExit('Corpus needs at least one file of 32 frames')
-    torch.set_num_threads(1)
-    onnx = load_same_s_app_decoder()
-    native = None
-    rows, clips = [], []
     try:
-        native = SameSTorchDecoder(device=args.device)
-        for window in native.supported_windows:
-            for start in starts:
-                raw = z[start:start+window]
-                a, b = onnx.decode(raw), native.decode(raw)
-                cross = compare(a.audio, b.audio)
-                within_onnx = compare(a.audio, onnx.decode(raw).audio)
-                within_native = compare(b.audio, native.decode(raw).audio)
-                limit = 3*max(within_onnx['rmse'], within_native['rmse'], 1e-7)
-                rows.append({'window':window, 'start':start, 'cross':cross,
-                    'within_onnx':within_onnx, 'within_native':within_native,
-                    'rmse_limit':limit, 'passed':cross['rmse'] <= limit,
-                    'onnx_ms':a.decode_time_ms, 'native_ms':b.decode_time_ms})
-            print(f'T{window}: corpus comparisons complete', flush=True)
-        args.audio_dir.mkdir(parents=True, exist_ok=True)
-        for file_index,(a,b) in enumerate(zip(offsets[:-1], offsets[1:])):
-            start = int(a)
-            stop = min(int(b), start+128)
-            if stop-start < 8: continue
-            outputs = {}
-            for name,decoder in (('onnx',onnx), ('native',native)):
-                assembler = StreamingFullOverlapAdd(4*4096, channels=2)
-                output = np.concatenate([assembler.push(decoder.decode(z[i:i+8]).audio.T).T
-                    for i in range(start,stop-7,4)])
-                if not np.isfinite(output).all(): raise RuntimeError('Non-finite assembled PCM')
-                filename = args.audio_dir / f'file{file_index}_{name}.wav'
-                sf.write(filename, output, 44100, subtype='FLOAT')
-                outputs[name] = output
-            clips.append({'file_index':file_index, 'start_frame':start,
-                'samples':len(outputs['onnx']), 'comparison_after_ola':compare(outputs['onnx'], outputs['native']),
-                'peak_onnx':float(np.max(np.abs(outputs['onnx']))),
-                'peak_native':float(np.max(np.abs(outputs['native']))),
-                'listening_review':'pending'})
-        report = {'recorded_at_utc':datetime.now(timezone.utc).isoformat(),
-            'corpus':str(path), 'corpus_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
-            'device':str(native.info.device), 'weights_sha256':native.info.model_sha256,
-            'source_revision':native.info.source_revision, 'library_revision':native.info.library_revision,
-            'protocol':'four positions per file, all even T2..32; two calls per engine; no RNG reset',
-            'threshold':'cross RMSE <= 3 * max(ONNX repeat RMSE, native repeat RMSE, 1e-7)',
-            'comparisons':rows, 'listening_pairs':clips, 'audio_directory':str(args.audio_dir),
-            'numeric_passed':all(row['passed'] for row in rows), 'perceptual_qualified':False}
-        args.output.parent.mkdir(parents=True,exist_ok=True)
-        args.output.write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
-    finally:
-        onnx.close()
-        if native is not None: native.close()
-    if not report['numeric_passed']: raise SystemExit('Corpus numeric gate failed; inspect report')
+        run(args)
+    except Exception as exc:
+        write_report(args.output, dict(schema_version=1,numeric_passed=False,error=f'{type(exc).__name__}: {exc}'))
+        raise
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()

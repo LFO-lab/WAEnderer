@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repeats": 2,
+  "synthetic_seeds": 8,
+  "windows": [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32],
+  "positions_per_file": [0.0, 0.25, 0.5, 0.75],
+  "ola_window": 8,
+  "ola_hop": 4,
+  "minimum_active_seconds": 600,
+  "models": {
+    "same_s": {"synthetic_rmse_lt": 0.005, "synthetic_snr_gt": 20, "repeat_multiplier": 3, "repeat_floor": 1e-7},
+    "stable_audio_open": {"max_abs_error": 0.0002, "rmse": 0.00002},
+    "ear_vae_44k": {"max_abs_error": 0.0001, "rmse": 0.00001},
+    "ear_vae_48k": {"max_abs_error": 0.0001, "rmse": 0.00001}
+  },
+  "native_gpu": {
+    "same_s": {"repeat_multiplier": 3, "repeat_floor": 1e-7},
+    "stable_audio_open": null,
+    "ear_vae_44k": {"max_abs_error": 0.001, "rmse": 0.0001},
+    "ear_vae_48k": {"max_abs_error": 0.001, "rmse": 0.0001}
+  },
+  "notes": "Frozen existing reference policies. Stable Audio Open GPU needs native-reference characterization before qualification. Seeds generate inputs; model RNG is not reset between decodes."
+}

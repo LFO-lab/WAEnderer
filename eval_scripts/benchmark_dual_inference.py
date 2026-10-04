@@ -24,6 +24,10 @@ from stable_audio_wanderer.runtime.decoder_transport import DecoderTransportCont
 from stable_audio_wanderer.runtime.decoder_player import DecoderPlayer
 from stable_audio_wanderer.vae.decoder_factory import select_decoder, create_decoder
 from stable_audio_wanderer.vae.corpus_decoder import corpus_decoder_spec
+from eval_scripts.multi_vae_validation_common import (
+    add_selection_arguments, selection_config, evidence_context, write_report,
+    validate_native_source,
+)
 
 
 def percentiles(values):
@@ -83,6 +87,9 @@ class ObservedPlayer(DecoderPlayer):
     def __init__(self, **kwargs):
         self.callback_times = []
         self.blocks = 0
+        self.rendered_samples = 0
+        self.scenario = None
+        self.scenario_samples = defaultdict(int)
         self.peak = 0.0
         self.sum_square = 0.0
         self.nonfinite = False
@@ -100,11 +107,16 @@ class ObservedPlayer(DecoderPlayer):
         self.callback_times.append((time.perf_counter()-before)*1000)
         self.nonfinite |= not np.isfinite(output).all()
         self.blocks += 1
+        self.rendered_samples += frames
+        if self.scenario is not None:
+            self.scenario_samples[self.scenario] += frames
         self.peak = max(self.peak, float(np.max(np.abs(output))))
         self.sum_square += float(np.sum(output.astype(np.float64)**2))
 
 
 def run(args):
+    import os
+    os.environ['HF_HUB_OFFLINE'] = '1'
     torch.set_num_threads(1)
     if args.corpus:
         spec = corpus_decoder_spec(args.corpus)
@@ -114,23 +126,45 @@ def run(args):
             offsets = np.asarray(data['file_offsets'], dtype=np.int64)
         source = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     else:
-        spec = None
-        z = np.random.default_rng(5006).normal(0, .05, (256,256)).astype(np.float32)
-        mean, std = np.zeros(256, np.float32), np.ones(256, np.float32)
+        from stable_audio_wanderer.vae.onnx_artifacts import resolve_artifact
+        artifact = resolve_artifact(args.vae_id, store_dir=args.store_dir or None,
+                                    artifact_dir=args.artifact_dir or None)
+        spec = dict(vae_id=args.vae_id, sample_rate=artifact.sample_rate,
+                    latent_hz=artifact.sample_rate/artifact.samples_per_latent,
+                    latent_dim=artifact.latent_dim)
+        z = np.random.default_rng(5006).normal(0, .05, (256,artifact.latent_dim)).astype(np.float32)
+        mean, std = np.zeros(artifact.latent_dim, np.float32), np.ones(artifact.latent_dim, np.float32)
         offsets = np.array([0,128,256])
         source = {'synthetic_seed': 5006, 'distribution': 'normal std=.05',
                   'sha256': hashlib.sha256(z.tobytes()).hexdigest()}
     file_ids = np.repeat(np.arange(len(offsets)-1), np.diff(offsets))
-    selection = select_decoder({'decoder_backend': args.backend, 'decoder_device': args.device}, corpus_spec=spec)
+    paired = select_decoder(selection_config(args, 'onnxruntime', 'cpu'), corpus_spec=spec)
+    config = selection_config(args, args.backend, args.device)
+    if args.backend == 'pytorch':
+        config['decoder_source_identity'] = dict(paired.artifact.source)
+    selection = select_decoder(config, corpus_spec=spec)
+    context = evidence_context(args, spec, selection)
+    context['corpus_sha256'] = source['sha256'] if args.corpus else None
+    if not selection.artifact:
+        paired_context = evidence_context(args, spec, paired)
+        for key in ('artifact_identity', 'artifact_files', 'model_source', 'geometry'):
+            context[key] = paired_context[key]
     started = time.perf_counter()
     decoder = MeasuredDecoder(create_decoder(selection))
+    if args.backend == 'pytorch':
+        validate_native_source(decoder, paired.artifact)
     if hasattr(decoder, "validate_corpus"):
         decoder.validate_corpus(spec)
     preparation_ms = (time.perf_counter()-started)*1000
-    sample_rate = decoder.metadata_for(decoder.default_window).sample_rate
+    meta = decoder.metadata_for(decoder.default_window)
+    sample_rate = meta.sample_rate
     # Patch only stream creation; keep production PCM buffer, callback, OLA,
     # transport scheduler, transitions and decoder implementations.
     import sounddevice as sd
+    device_info = None
+    if args.audio_device:
+        device_info = dict(sd.query_devices(args.audio_device, 'output'))
+        device_info['hostapi_name'] = sd.query_hostapis(device_info['hostapi'])['name']
     stream_factory = (functools.partial(sd.OutputStream, device=args.audio_device)
                       if args.audio_device else SilentStream)
     with patch('stable_audio_wanderer.runtime.decoder_player.sd.OutputStream', stream_factory):
@@ -168,6 +202,7 @@ def run(args):
                 step = index % 17
                 mode = ('random', 'manual', 'reorganized')[(index//17) % 3]
                 if step == 0:
+                    player.scenario = None
                     controller.stop()
                     assert controller.set_mode(mode)[0]
                     controller.set_window_controls({'mode':'fixed'})
@@ -177,6 +212,7 @@ def run(args):
                     assert controller.set_decoder_window(2*(step+1))[0]
                 else:
                     assert controller.set_window_controls({'mode':'adaptive','minimum':2,'maximum':32})[0]
+                player.scenario = f'{mode}:{"adaptive" if step == 16 else "T" + str(2*(step+1))}'
                 if pending:
                     transitions.append({**pending, 'settled_ms': None})
                 pending = {'mode':mode, 'step':step, 'requested_at':now-start,
@@ -195,6 +231,7 @@ def run(args):
                 if error: raise RuntimeError(error)
                 samples.append({'elapsed':now-start, 'underruns':player.underruns,
                     'buffer_underruns':player.buffer_underruns, 'device_underruns':player.device_underruns,
+                    'buffer_duration_seconds':player.get_state()['buffer_duration'],
                     'mps_allocated_bytes':torch.mps.current_allocated_memory() if args.device.startswith('mps') else None,
                     'cuda_allocated_bytes':torch.cuda.memory_allocated(args.device) if args.device.startswith('cuda') else None})
                 next_sample = now + 5
@@ -209,31 +246,49 @@ def run(args):
     except Exception as exc:
         failure = str(exc)
     finally:
-        controller.close()
-        decoder.close()
-    duration = time.perf_counter()-start
-    report = {'recorded_at_utc':datetime.now(timezone.utc).isoformat(),
+        duration = time.perf_counter()-start
+        cpu_seconds = time.process_time()-cpu_started
+        stream_settings = {key:getattr(player._stream,key,None) for key in ('samplerate','blocksize','channels','latency')}
+        player.scenario = None
+        try:
+            controller.close()
+        except Exception as exc:
+            failure = failure or f'Transport cleanup failed: {exc}'
+        try:
+            decoder.close()
+        except Exception as exc:
+            failure = failure or f'Decoder cleanup failed: {exc}'
+    report = {**context, 'recorded_at_utc':datetime.now(timezone.utc).isoformat(),
         'platform':platform.platform(), 'python':platform.python_version(), 'torch':torch.__version__,
-        'backend':args.backend, 'device':args.device, 'identity':selection.identity,
+        'backend':args.backend, 'device':context['device'], 'identity':selection.identity,
         'source':source, 'clock':('physical output (muted)' if args.audio_device else 'silent software callback') + f', 1024 samples at {sample_rate} Hz',
-        'audio_device':args.audio_device,
+        'audio_device':args.audio_device, 'audio_device_info':device_info,
+        'stream_settings':stream_settings,
+        'sample_rate':sample_rate, 'blocksize':1024, 'channels':meta.channels,
+        'active_audio_seconds':player.rendered_samples/sample_rate,
+        'rendered_samples':player.rendered_samples,
+        'scenario_samples':dict(player.scenario_samples),
+        'declared_scenarios':[f'{mode}:{setting}' for mode in ('random','manual','reorganized')
+            for setting in [*[f'T{w}' for w in range(2,33,2)], 'adaptive']],
+        'nonfinite_pcm':player.nonfinite, 'torch_threads':torch.get_num_threads(),
+        'provider':decoder.info.provider,
         'navigation':args.navigation,
         'requested_seconds':args.seconds, 'duration_seconds':duration, 'started_monotonic':start,
         'preparation_ms':preparation_ms, 'underruns':player.underruns,
         'buffer_underruns':player.buffer_underruns, 'device_underruns':player.device_underruns,
         'callback_ms':percentiles(player.callback_times), 'clock_lateness_ms':percentiles(lag),
-        'process_cpu_percent':100*(time.process_time()-cpu_started)/duration,
+        'process_cpu_percent':100*cpu_seconds/duration,
         'peak_rss_platform_units':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if platform.system() == 'Darwin' else 1024),
         'windows':{str(w):{'decode_ms':percentiles(v), 'hop_budget_ms':decoder.metadata_for(w).audio_hop_samples/decoder.metadata_for(w).sample_rate*1000}
                    for w,v in sorted(decoder.times.items())},
         'transitions':transitions, 'memory_samples':samples,
         'underrun_events':player.underrun_events, 'rendered_blocks':player.blocks, 'pcm_peak':player.peak,
         'pcm_rms':float(np.sqrt(player.sum_square/(player.blocks*1024*2))) if player.blocks else None,
-        'error':failure, 'sustained_10_minutes':duration >= 600 and not failure,
+        'error':failure, 'sustained_10_minutes':player.rendered_samples/sample_rate >= 600 and not failure,
         'software_buffer_gate_passed':failure is None and player.blocks > 0 and player.underruns == 0,
         'audio_device_qualified':False, 'listening_review':'pending'}
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')
+    write_report(args.output, report)
     if failure or not player.blocks: raise SystemExit(failure or 'No PCM rendered')
     if args.require_zero_underruns and player.underruns:
         raise SystemExit(f'Buffer gate failed: {player.underruns} underrun callbacks; see report')
@@ -246,6 +301,8 @@ if __name__ == '__main__':
     parser.add_argument('--seconds', type=float, default=600)
     parser.add_argument('--change-every', type=float, default=10)
     parser.add_argument('--corpus', type=Path)
+    parser.add_argument('--vae-id', default='same_s', choices=['same_s','stable_audio_open','ear_vae_44k','ear_vae_48k'], help='Synthetic model; corpus selects its own VAE')
+    add_selection_arguments(parser)
     parser.add_argument('--initial-mode', choices=['random','manual','reorganized'], default='random')
     parser.add_argument('--navigation', choices=['replay','production'], default='replay')
     parser.add_argument('--require-zero-underruns', action='store_true', help='Exit nonzero if any buffer or device underrun occurs')
@@ -254,4 +311,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.seconds <= 0 or args.change_every <= 0: parser.error('Durations must be positive')
     if args.navigation == 'production' and not args.corpus: parser.error('Production navigation requires --corpus')
-    run(args)
+    try:
+        run(args)
+    except Exception as exc:
+        write_report(args.output, dict(schema_version=1,backend=args.backend,device=args.device,
+            error=f'{type(exc).__name__}: {exc}',audio_device_qualified=False))
+        raise

@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "protocol": "multi_vae_phase5_protocol.json",
+  "claims": [
+    {
+      "vae_id": "same_s",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "same_s_cpu_numerical.json",
+      "runtime_report": "same_s_onnxruntime_cpu_runtime.json",
+      "lifecycle_report": "same_s_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "same_s",
+      "backend": "pytorch",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "same_s_cpu_numerical.json",
+      "runtime_report": "same_s_pytorch_cpu_runtime.json",
+      "lifecycle_report": "same_s_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "same_s",
+      "backend": "pytorch",
+      "device": "mps",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "same_s_mps_numerical.json",
+      "runtime_report": "same_s_pytorch_mps_runtime.json",
+      "lifecycle_report": "same_s_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "stable_audio_open_cpu_numerical.json",
+      "runtime_report": "stable_audio_open_onnxruntime_cpu_runtime.json",
+      "lifecycle_report": "stable_audio_open_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "pytorch",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "stable_audio_open_cpu_numerical.json",
+      "runtime_report": "stable_audio_open_pytorch_cpu_runtime.json",
+      "lifecycle_report": "stable_audio_open_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "stable_audio_open",
+      "backend": "pytorch",
+      "device": "mps",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "stable_audio_open_mps_numerical.json",
+      "runtime_report": "stable_audio_open_pytorch_mps_runtime.json",
+      "lifecycle_report": "stable_audio_open_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_44k_cpu_numerical.json",
+      "runtime_report": "ear_vae_44k_onnxruntime_cpu_runtime.json",
+      "lifecycle_report": "ear_vae_44k_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "pytorch",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_44k_cpu_numerical.json",
+      "runtime_report": "ear_vae_44k_pytorch_cpu_runtime.json",
+      "lifecycle_report": "ear_vae_44k_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_44k",
+      "backend": "pytorch",
+      "device": "mps",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_44k_mps_numerical.json",
+      "runtime_report": "ear_vae_44k_pytorch_mps_runtime.json",
+      "lifecycle_report": "ear_vae_44k_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "onnxruntime",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_48k_cpu_numerical.json",
+      "runtime_report": "ear_vae_48k_onnxruntime_cpu_runtime.json",
+      "lifecycle_report": "ear_vae_48k_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "pytorch",
+      "device": "cpu",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_48k_cpu_numerical.json",
+      "runtime_report": "ear_vae_48k_pytorch_cpu_runtime.json",
+      "lifecycle_report": "ear_vae_48k_lifecycle.json",
+      "listening": []
+    },
+    {
+      "vae_id": "ear_vae_48k",
+      "backend": "pytorch",
+      "device": "mps",
+      "availability": "not_checked",
+      "claim_realtime": false,
+      "numerical_report": "ear_vae_48k_mps_numerical.json",
+      "runtime_report": "ear_vae_48k_pytorch_mps_runtime.json",
+      "lifecycle_report": "ear_vae_48k_lifecycle.json",
+      "listening": []
+    }
+  ],
+  "untested_hardware": [
+    "CUDA: not measured on NVIDIA hardware"
+  ]
+}
