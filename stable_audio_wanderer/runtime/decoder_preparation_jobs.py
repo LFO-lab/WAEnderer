@@ -110,7 +110,6 @@ class PreparationJobs:
             self._update(status='already_valid',artifact_identity=artifact.identity,artifact_dir=str(artifact.root),detail='Existing artifact verified and runtime checked'); return
         if self.closed: raise RuntimeError('Preparation interrupted')
         interpreter=self.interpreters.get(request['vae_id'],sys.executable)
-        project=Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory(prefix='waenderer-job-') as temp:
             temp=Path(temp); request_path=temp/'request.json'; output=temp/'artifact'
             request_path.write_text(json.dumps(request))
@@ -118,8 +117,8 @@ class PreparationJobs:
             env=dict(os.environ,HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',PYTHONDONTWRITEBYTECODE='1')
             with self.lock:
                 if self.closed: raise RuntimeError('Preparation interrupted')
-                self.process=subprocess.Popen([interpreter,'-m','bin.decoder_preparation_worker','--request',str(request_path),'--output',str(output)],
-                    cwd=project,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+                self.process=subprocess.Popen([interpreter,'-m','stable_audio_wanderer.cli.decoder_preparation_worker','--request',str(request_path),'--output',str(output)],
+                    cwd=temp,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
                 process=self.process
             result=None
             try:
@@ -138,7 +137,7 @@ class PreparationJobs:
                 process.stdout.close()
                 if process.poll() is None: process.kill(); process.wait()
                 with self.lock: self.process=None
-            if code or not result: raise RuntimeError(f'Exporter exited {code}; see job log')
+            if code or not result: raise RuntimeError(f'Exporter exited {code}; ensure its interpreter has this application installed; see job log')
             if result['status']!='staged': self._update(**result); return
             if input_snapshot(request)!=snapshot: raise ValueError('Inputs changed during export; retry with current source')
             artifact=read_artifact(output,expected_vae=request['vae_id'],expected_source=snapshot['source'])

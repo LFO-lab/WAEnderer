@@ -83,6 +83,25 @@ uv run python bin/check_release_compliance.py \
 - [ ] Inspect the final wheel/source archive and conference bundle—not only the
   source checkout—for the complete license payload.
 
+## Multi-VAE delivery
+
+See [Phase 6 delivery and debugging](docs/MULTI_VAE_ONNX_PHASE6.md).
+
+- [ ] Build ordinary source/wheel profiles without local model binaries; inspect
+  both using `waenderer-model-bundle inspect /path/to/archive`.
+- [ ] For `SAW_RELEASE_BUILD=1`, inspect both outputs with `--model-bearing`.
+- [ ] Select additional decoder artifacts explicitly, including exact source-bound
+  notices, full license texts, graphs, external tensors and parity reports.
+- [ ] Check the assembled bundle with `waenderer-model-bundle check /path/to/bundle`.
+- [ ] Install the ordinary wheel non-editably in a fresh runtime environment,
+  run `python -m pip check`, and run `waenderer-check-delivery --bundle /path/to/bundle`.
+- [ ] Retain archive checksums, selected model inventory, resolved environment and
+  source-bound qualification reports. Do not include corpus audio or listening WAVs.
+- [ ] Review local evidence paths in immutable reports before public delivery;
+  hashes must stay intact. No public distribution is performed by these checks.
+- [ ] Keep missing EAR/native prerequisites and unqualified real-time profiles
+  visible; a packaging smoke check does not extend Phase 5 qualification.
+
 ## Dual inference qualification
 
 Use [DUAL_INFERENCE_RELEASE.md](docs/DUAL_INFERENCE_RELEASE.md) for installation,

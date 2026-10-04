@@ -1,0 +1,489 @@
+{
+  "archives": [
+    {
+      "file_count": 101,
+      "kind": "wheel",
+      "models": [],
+      "name": "stable_audio_wanderer-0.1.0-py3-none-any.whl",
+      "profile": "ordinary",
+      "sha256": "e055612ad71f699c8c2b343aabb267cf82d0ad8b48bd0da16511a3d3fdd7addd"
+    },
+    {
+      "file_count": 272,
+      "kind": "source",
+      "models": [],
+      "name": "stable_audio_wanderer-0.1.0.tar.gz",
+      "profile": "ordinary",
+      "sha256": "999a1920e483616e3bfbcbfe4f3449bd081b9f06d12776e599d4b65bf66735b2"
+    },
+    {
+      "file_count": 104,
+      "kind": "wheel",
+      "models": [
+        "stable_audio_wanderer/resources/same_s/same_s_decoder_dynamic.onnx"
+      ],
+      "name": "stable_audio_wanderer-0.1.0-py3-none-any.whl",
+      "profile": "same-s",
+      "sha256": "4ae4aeeac253579729e787fed333ebc0f0d5336c037a0369245cf14df46b1a30"
+    },
+    {
+      "file_count": 275,
+      "kind": "source",
+      "models": [
+        "stable_audio_wanderer/resources/same_s/same_s_decoder_dynamic.onnx"
+      ],
+      "name": "stable_audio_wanderer-0.1.0.tar.gz",
+      "profile": "same-s",
+      "sha256": "5efc0a2923d983256d98227c967f35cd9b038d2a2eddccc14af1f42baccc43eb"
+    }
+  ],
+  "bundle_inventory": {
+    "files": {
+      "ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/decoder.json": "a735c1426b0f9688c1ca7bebf6f5ab6d4e6391e394999c665aa3314b94b30c48",
+      "ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/decoder_dynamic.onnx": "80a0ebf7ff85e78cf8d1a71f59cb937f894a82504fc730ad88a83b23c4eeb060",
+      "ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/decoder_dynamic.onnx.data": "bdaa06375d60c1c07ae34b91e6929d15324cc011c59b72a4c13fba7f9a983766",
+      "ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/parity.json": "fd495192ce3f31e3e6f8bc76242a5f29f764b5c21bad014312a3749ee117f2fc",
+      "ear_vae_44k/current.json": "58ca3c95b03763353cb436fbfbee0cda5d61ccba44ea0281cf95657447c0367c",
+      "ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder.json": "e5f0225841ce7a48964224f8562d9f040321c0117e3ef6592821f7a52c1b3a9b",
+      "ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx": "520fe5c9759b965af38fbe5ccea8ac041e9315496e6eac86b06963213c46705c",
+      "ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx.data": "a4e3622fe15c690e9e4a839b5563b2d91ea29e077dbfcf2c8d6bd42755b38dd4",
+      "ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/parity.json": "a199c3c9b4d161cb6dee86fcb085d15ccc6c36831100f628f0568f7ae1da1179",
+      "ear_vae_48k/current.json": "83fb8705c48e747859af9eade1af3dc784995c7b24c8fd12b505808fd94042b1",
+      "notices/ear_vae_44k/EAR_LICENSE.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "notices/ear_vae_44k/MODEL_NOTICE.md": "4751ec10209ad9a62f344a628181278e44125b723d089aec003acacbf0197441",
+      "notices/ear_vae_44k/UPSTREAM_README.md": "b53c18e908a4613e8a6cbe8734677fe96dc1f023edc6022ec5e075bbc168c5b7",
+      "notices/ear_vae_48k/EAR_LICENSE.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "notices/ear_vae_48k/MODEL_NOTICE.md": "398f2c6ed5c867294dd2d8768cf142ae99e70e3db1715befce282fc37c3c243e",
+      "notices/ear_vae_48k/UPSTREAM_README.md": "b53c18e908a4613e8a6cbe8734677fe96dc1f023edc6022ec5e075bbc168c5b7",
+      "notices/same_s/GEMMA_TERMS_OF_USE.md": "3b65bc46747423037f7ca57af25b885a7be421948d7a81ca02b0cb038177ec3d",
+      "notices/same_s/MODEL_NOTICE.md": "5acd741542bc2b40248c5f9d260c2880777d3a50d833f94dbe7e321a4f5b2611",
+      "notices/same_s/STABILITY_AI_COMMUNITY_LICENSE.md": "0bb4b5e635903088dbb5bbcc3c104e1298cc12f1989a4ff1b172f33893609b33",
+      "notices/same_s/UPSTREAM_NOTICE.txt": "66f856d7da72797f528fca46b7c80634ab481f917bfe020960e123d84b19f75f",
+      "notices/stable_audio_open/MODEL_NOTICE.md": "5fd99ec0b3ab7a0d2411f19ea563ce99f05c41ca1e1b500d7a37c282336a5b57",
+      "notices/stable_audio_open/STABILITY_AI_COMMUNITY_LICENSE.md": "0bb4b5e635903088dbb5bbcc3c104e1298cc12f1989a4ff1b172f33893609b33",
+      "same_s/current.json": "53830f8f46b668ff214bb31298512b174403bc021273b604bf71f46961a33841",
+      "same_s/d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9/decoder.json": "7575ef014e7dad8a2582ea1cd594c7b01ca3670ba2d4ff457f99d65488531913",
+      "same_s/d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9/decoder_parity.json": "295698fbe3832d9430ec3720c837cdd0ddab6c7e67baa75cdcbe02c14f863d9f",
+      "same_s/d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9/even_window_validation.json": "b1e9955dc1c19897e76cfc4c0fff44a6da7fab67cad78fb250125c7f12bac0e6",
+      "same_s/d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9/same_s_decoder_dynamic.onnx": "333dc948f52fa59e9a80a066ffd2ca801d3a54b2fb07c93aa87cac845c547872",
+      "stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder.json": "6cd7cb4db0c4257fd1630c616002689ca7c2719b4d1b25094bd0efb0302ecb51",
+      "stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder_dynamic.onnx": "d2abf24bb91f9dccc56395eb58568b72c0916d084094ad9efef884f071f9c57f",
+      "stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/parity.json": "07275c6df23cd05442fec88056cc4ea384b3ab09ce0d2d537cc5e94e8c7ceff8",
+      "stable_audio_open/current.json": "22e85ecc8a20e7c5e20f37c7c79f0237900bd3db3ece46b58da7ecef440cf645"
+    },
+    "format_version": "waenderer.model_distribution.v1",
+    "models": [
+      {
+        "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+        "compliance": {
+          "conversion_description": "Audio decoder exported to ONNX; original checkpoint/configuration identities preserved.",
+          "files": {
+            "GEMMA_TERMS_OF_USE.md": "3b65bc46747423037f7ca57af25b885a7be421948d7a81ca02b0cb038177ec3d",
+            "MODEL_NOTICE.md": "5acd741542bc2b40248c5f9d260c2880777d3a50d833f94dbe7e321a4f5b2611",
+            "STABILITY_AI_COMMUNITY_LICENSE.md": "0bb4b5e635903088dbb5bbcc3c104e1298cc12f1989a4ff1b172f33893609b33",
+            "UPSTREAM_NOTICE.txt": "66f856d7da72797f528fca46b7c80634ab481f917bfe020960e123d84b19f75f"
+          },
+          "license": "Stability AI Community License",
+          "source": {
+            "config_sha256": "c329dd0a6f61d0b3ea4f23930059a6c00437005692fed4310924eb286253303a",
+            "model": "stabilityai/SAME-S",
+            "revision": "fbeb3dcf53a326e5682f38e22e7f740202d44232",
+            "weights_sha256": "c19698ce3a0b462acb967ee495e9eb7945221f236968c50206cce8cf22b3d305"
+          },
+          "source_url": "https://huggingface.co/stabilityai/SAME-S/tree/fbeb3dcf53a326e5682f38e22e7f740202d44232"
+        },
+        "manifest_sha256": "7575ef014e7dad8a2582ea1cd594c7b01ca3670ba2d4ff457f99d65488531913",
+        "vae_id": "same_s"
+      },
+      {
+        "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "compliance": {
+          "conversion_description": "Audio decoder exported to ONNX; original checkpoint/configuration identities preserved.",
+          "files": {
+            "MODEL_NOTICE.md": "5fd99ec0b3ab7a0d2411f19ea563ce99f05c41ca1e1b500d7a37c282336a5b57",
+            "STABILITY_AI_COMMUNITY_LICENSE.md": "0bb4b5e635903088dbb5bbcc3c104e1298cc12f1989a4ff1b172f33893609b33"
+          },
+          "license": "Stability AI Community License",
+          "source": {
+            "config_sha256": "858b6cce27aa1b2d1e8d331734d2d9690d9ea1dad2fb1e6bd23ee67a61058ad9",
+            "model": "stabilityai/stable-audio-open-1.0",
+            "revision": "f21265c1e2710b3bd2386596943f0007f55f802e",
+            "weights_sha256": "2131cdb52020b2473707465449d8bdb4f6cca61c93150a947baca02bc58ffd7b"
+          },
+          "source_url": "https://huggingface.co/stabilityai/stable-audio-open-1.0/tree/f21265c1e2710b3bd2386596943f0007f55f802e"
+        },
+        "manifest_sha256": "6cd7cb4db0c4257fd1630c616002689ca7c2719b4d1b25094bd0efb0302ecb51",
+        "vae_id": "stable_audio_open"
+      },
+      {
+        "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+        "compliance": {
+          "conversion_description": "Audio decoder exported to ONNX; original checkpoint/configuration identities preserved.",
+          "files": {
+            "EAR_LICENSE.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            "MODEL_NOTICE.md": "4751ec10209ad9a62f344a628181278e44125b723d089aec003acacbf0197441",
+            "UPSTREAM_README.md": "b53c18e908a4613e8a6cbe8734677fe96dc1f023edc6022ec5e075bbc168c5b7"
+          },
+          "license": "Apache-2.0",
+          "source": {
+            "code_sha256": "85cefc7ff647004085529aef775a9d63b68874b33754d65c857979eb326b5787",
+            "config_sha256": "ef19bcb81717fe1c924316419fc5a7040651e8e3ca47b6e17e29241b6bb36303",
+            "effective_config_sha256": "edfaa0bfc72b0bed8599d038e370fc6df9e995d2624099a94925b31a986113ba",
+            "model": "earlab/EAR_VAE",
+            "reconciliation": "checkpoint-transformer-keys-v1",
+            "revision": "4ce37867bc09af11e691e72708f14996eb38a85b",
+            "transformer": "present",
+            "weights_sha256": "0362dc7e96566869747dbe079b0a6d71c090b0a3a5d5077779e7be17c096d9d5"
+          },
+          "source_url": "https://huggingface.co/earlab/EAR_VAE/tree/4ce37867bc09af11e691e72708f14996eb38a85b"
+        },
+        "manifest_sha256": "a735c1426b0f9688c1ca7bebf6f5ab6d4e6391e394999c665aa3314b94b30c48",
+        "vae_id": "ear_vae_44k"
+      },
+      {
+        "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "compliance": {
+          "conversion_description": "Audio decoder exported to ONNX; original checkpoint/configuration identities preserved.",
+          "files": {
+            "EAR_LICENSE.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            "MODEL_NOTICE.md": "398f2c6ed5c867294dd2d8768cf142ae99e70e3db1715befce282fc37c3c243e",
+            "UPSTREAM_README.md": "b53c18e908a4613e8a6cbe8734677fe96dc1f023edc6022ec5e075bbc168c5b7"
+          },
+          "license": "Apache-2.0",
+          "source": {
+            "code_sha256": "85cefc7ff647004085529aef775a9d63b68874b33754d65c857979eb326b5787",
+            "config_sha256": "7797e3d5e7560487690987a0a52e3b2c715ba44dad6caca61ff8d920b93b8ba8",
+            "effective_config_sha256": "df921922a6c49bf0a7900bce61f2b8574accf54f86379de437f93a2345751b65",
+            "model": "earlab/EAR_VAE",
+            "reconciliation": "checkpoint-transformer-keys-v1",
+            "revision": "4ce37867bc09af11e691e72708f14996eb38a85b",
+            "transformer": "absent",
+            "weights_sha256": "cc53f3f043aaae01307ffe1439b3a1c9d9e019652e6c13e089cd18d6037c2d3f"
+          },
+          "source_url": "https://huggingface.co/earlab/EAR_VAE/tree/4ce37867bc09af11e691e72708f14996eb38a85b"
+        },
+        "manifest_sha256": "e5f0225841ce7a48964224f8562d9f040321c0117e3ef6592821f7a52c1b3a9b",
+        "vae_id": "ear_vae_48k"
+      }
+    ]
+  },
+  "dependency_checks": {
+    "all_locked_versions_unchanged": true,
+    "compatibility_native_effective_dependencies_unchanged": true,
+    "license_policy": "passed",
+    "lock_check": "passed",
+    "native_model_libraries_absent": true,
+    "pip_check": "passed",
+    "working_environments_unchanged": true
+  },
+  "evidence_reuse": "Offline decoding/restart/reuse and server checks used the same graph/manifest identities. The final bundle additionally retains legacy supplemental window evidence; final envelope validation and installation were checked separately without repeating inference.",
+  "final_bundle_installation": {
+    "files": 31,
+    "models": [
+      {
+        "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+        "vae_id": "same_s"
+      },
+      {
+        "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "vae_id": "stable_audio_open"
+      },
+      {
+        "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+        "vae_id": "ear_vae_44k"
+      },
+      {
+        "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "vae_id": "ear_vae_48k"
+      }
+    ],
+    "passed": true
+  },
+  "format_version": "waenderer.phase6_delivery.v1",
+  "installed_runtime": {
+    "cli_reuse": true,
+    "format_version": "waenderer.delivery_checks.v1",
+    "installed_from_wheel": true,
+    "installed_worker_preflight": true,
+    "offline_application_import": true,
+    "offline_server_http": true,
+    "packages": {
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.3",
+      "cffi": "2.1.1",
+      "faiss-cpu": "1.15.0",
+      "filelock": "3.32.3",
+      "flatbuffers": "25.12.19",
+      "fsspec": "2026.7.0",
+      "joblib": "1.5.3",
+      "llvmlite": "0.49.0",
+      "ml_dtypes": "0.6.0",
+      "mpmath": "1.3.0",
+      "narwhals": "2.24.0",
+      "networkx": "3.6.1",
+      "numba": "0.67.0",
+      "numpy": "2.5.2",
+      "onnx": "1.22.0",
+      "onnxruntime": "1.28.0",
+      "packaging": "26.3",
+      "pip": "25.0.1",
+      "protobuf": "7.35.1",
+      "pycparser": "3.0",
+      "pynndescent": "0.6.0",
+      "python-osc": "1.10.2",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "setuptools": "84.0.0",
+      "sounddevice": "0.5.5",
+      "soundfile": "0.14.0",
+      "stable-audio-wanderer": "0.1.0",
+      "sympy": "1.14.0",
+      "threadpoolctl": "3.6.0",
+      "torch": "2.13.0",
+      "torchaudio": "2.11.0",
+      "tqdm": "4.70.0",
+      "typing_extensions": "4.16.0",
+      "umap-learn": "0.5.12",
+      "websockets": "17.0.1"
+    },
+    "platform": "darwin",
+    "probes": [
+      {
+        "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": false,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          8192,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "same_s",
+        "window": 2
+      },
+      {
+        "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": true,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          8192,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "same_s",
+        "window": 2
+      },
+      {
+        "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": false,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          4096,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "stable_audio_open",
+        "window": 2
+      },
+      {
+        "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": true,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          4096,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "stable_audio_open",
+        "window": 2
+      },
+      {
+        "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": false,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights",
+          "invalid_native_source"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          2048,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "ear_vae_44k",
+        "window": 2
+      },
+      {
+        "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": true,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights",
+          "invalid_native_source"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          2048,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "ear_vae_44k",
+        "window": 2
+      },
+      {
+        "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": false,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights",
+          "invalid_native_source"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          1920,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "ear_vae_48k",
+        "window": 2
+      },
+      {
+        "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+        "dtype": "float32",
+        "export_imports": false,
+        "finite": true,
+        "fresh_restart": true,
+        "native_cpu_reasons": [
+          "missing_dependencies",
+          "missing_weights",
+          "invalid_native_source"
+        ],
+        "native_cpu_selectable": false,
+        "native_cpu_visible": true,
+        "native_model_imports": false,
+        "offline": true,
+        "output_shape": [
+          1920,
+          2
+        ],
+        "provider": "CPUExecutionProvider",
+        "reuse": "already_valid",
+        "vae_id": "ear_vae_48k",
+        "window": 2
+      }
+    ],
+    "python": "3.12.13",
+    "scope": "Functional synthetic PCM and reuse; no parity, listening or real-time qualification",
+    "web_assets_present": true
+  },
+  "limitations": [
+    "Physical audio-device and browser/manual integration remain user checks.",
+    "GPU listening and physical qualification remain Phase 5 work; CUDA is untested here.",
+    "Immutable historical parity reports retain local evidence paths; no audio is included.",
+    "The development environment has pre-existing native SAME-S/Torch version conflicts and was not modified.",
+    "Release approval gates in RELEASE_CHECKLIST.md remain independent; no public distribution was performed."
+  ],
+  "recorded_on": "2026-10-04",
+  "release_evidence": {
+    "licenses.json": "5a437ccc66cdec3c32c3bd2c341d0df50365e94ac339d942a542e8618c42324d",
+    "sbom.cdx.json": "12ce0f26646ad4288666c0056e0b635b7411035c69d2bda90c5a9b8cb81032be"
+  },
+  "reused_phase5_evidence": {
+    "docs/multi_vae_phase5_checks.json": "c7e6e77dba7d88af69355abd7317f805f1f6256c67355697cd96627c7a171d6d",
+    "docs/multi_vae_phase5_listening.json": "b9ccc05d229bbe53c778b4b53afd8ecc295c272dd8660ef1dc0ffc20e954416f",
+    "docs/multi_vae_phase5_protocol.json": "093e652c83f6de9b0f15cd9e78e9028aeac0cd711343206646829c68e87cd549"
+  },
+  "scope": "Packaging and installed CPU functionality only; no new parity, listening or real-time qualification",
+  "source_files": {
+    "MANIFEST.in": "493ab4acff310326b91db6398571e3f0a6565f858f83141f6973b4f2c4328d69",
+    "pyproject.toml": "567349dba2fea60295e07fa80642306b53ac6eff322bad0014ec827e945260b4",
+    "requirements-ear-native.txt": "d5c1298f8773f7970bfc3088b335525d17293a92c1f04b444970f8b7cf37a06a",
+    "requirements-runtime.txt": "9d63a7d3288d42e09fa788bf259f8ee9e9767496018ac665bbdbee6271e27f66",
+    "requirements-same-s-native.txt": "f31513df227c8bd59e5e09d19ac5d3e88b3d3af68d32298c5978a669d27277be",
+    "requirements.txt": "e175ee448326ee1cbf19cc3f32f0d1f1fcd57f5dd0dec2e1dc92bd6b1d3033b7",
+    "setup.py": "85e2cb21032e95de341413d4ee75e8cd79f5561c28e8f5d4a9c5c55fc6c3d67b",
+    "stable_audio_wanderer/assets.py": "cd9a7fc5760a7a19e786332b15e1c9273f47986ad1a947f208f9b0127f8304b3",
+    "stable_audio_wanderer/delivery_checks.py": "c846c008b11d3c7f343c9caaa2a9071c6b1cf4ecaf3e2e01e303d755af879517",
+    "stable_audio_wanderer/model_distribution.py": "60d64bd8eaa5f6544579d6b27996beedef04463fd229af2437900c56eed3ccd7",
+    "stable_audio_wanderer/runtime/decoder_preparation_jobs.py": "cc1b5a293acdcff9d285f62276461f9bab54ae1e29385b2d61e9cfe6cec01563",
+    "uv.lock": "8be5f8b6b4b7435461d50b2d26a9f14eb332cdae33709b12f98009f557069b11"
+  },
+  "status": "passed",
+  "tests": {
+    "passed": 49,
+    "selection": [
+      "test_model_distribution",
+      "test_release_compliance",
+      "test_decoder_preparation",
+      "test_export_web_decoder",
+      "test_dual_inference_release",
+      "test_pipeline_onnx",
+      "test_native_runtime"
+    ]
+  }
+}

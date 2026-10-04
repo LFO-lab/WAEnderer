@@ -33,15 +33,14 @@ dependencies = [
   "websockets>=12.0",
   "tqdm>=4.66",
   "umap-learn>=0.5.6",
-  "diffusers==0.35.1",
-  "transformers>=4.43",
-  "accelerate>=0.33",
-  "safetensors>=0.4",
   "onnxruntime>=1.26",
   "onnx>=1.21",  # Runtime artifact/external-weight validation; export also uses onnxscript.
 ]
 
 [project.optional-dependencies]
+native-stable-audio-open = [
+  "diffusers==0.35.1", "transformers>=4.43", "accelerate>=0.33", "safetensors>=0.4",
+]
 export = ["onnxscript>=0.7"]
 same-s-helpers = ["einops-exts", "huggingface-hub>=1.7.1"]
 dev = ["build>=1.2", "pytest>=8"]
@@ -51,11 +50,18 @@ release = ["build>=1.2", "cyclonedx-bom", "pip-licenses"]
 Homepage = "https://lfo-lab.github.io/WAEnderer/"
 Repository = "https://github.com/LFO-lab/WAEnderer"
 
+[project.scripts]
+waenderer-serve = "stable_audio_wanderer.cli.serve:main"
+waenderer-prepare = "stable_audio_wanderer.cli.prepare_decoders:main"
+waenderer-model-bundle = "stable_audio_wanderer.model_distribution:main"
+waenderer-check-delivery = "stable_audio_wanderer.delivery_checks:main"
+
 [tool.setuptools.packages.find]
 include = ["stable_audio_wanderer*"]
 
 [tool.setuptools.package-data]
-"stable_audio_wanderer.resources.same_s" = ["*.onnx", "*.json", "*.md", "*.txt"]
+"stable_audio_wanderer.resources" = ["**/*.onnx", "**/*.data", "**/*.json", "**/*.md", "**/*.txt"]
+"stable_audio_wanderer.resources.same_s" = ["*.onnx", "*.data", "*.json", "*.md", "*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,6 +1,6 @@
 # Compatibility entrypoint: pyproject.toml owns dependency declarations.
 # Includes the ONNX exporter. Native model profiles are explicit below.
-.[export]
+.[export,native-stable-audio-open]
 # SAME-S: python -m pip install -r requirements-same-s-native.txt
 # EAR: python -m pip install -r requirements-ear-native.txt
 # Both: python -m pip install -r requirements-native.txt

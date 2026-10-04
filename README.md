@@ -16,12 +16,20 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 
 ## Installation
 
-Requires Python 3.11+. The packaged Web decoder requires ONNX Runtime 1.26 or
+Requires Python 3.11+. The ONNX Web decoder requires ONNX Runtime 1.26 or
 newer, whose supported Python range sets this project minimum.
 
 ```bash
 pip install -r requirements.txt
 ```
+
+That compatibility profile includes export tooling and Stable Audio Open native libraries. For runtime installation
+from source use `python -m pip install -r requirements-runtime.txt`; for an
+installed distribution use `python -m pip install /path/to/application.whl`.
+Installed commands are `waenderer-serve`, `waenderer-prepare` and
+`waenderer-model-bundle`. Ordinary wheels contain application assets and notices;
+model binaries are selected explicitly. See [packaging, decoder installation and
+recovery](docs/MULTI_VAE_ONNX_PHASE6.md). Existing checkout commands remain supported.
 
 For a reproducible development environment, install from the project metadata
 and committed lockfile instead:
@@ -45,9 +53,9 @@ and the Stop Perform → select → Start Perform workflow.
 |----------|----------|
 | Core | `torch`, `torchaudio`, `numpy`, `soundfile` |
 | Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
-| Runtime | `sounddevice`, `python-osc`, `websockets`, `onnxruntime` |
-| VAE (Stable Audio Open) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
-| ONNX export extra | `onnx`, `onnxscript` |
+| Runtime | `sounddevice`, `python-osc`, `websockets`, `onnxruntime`, `onnx` (artifact validation) |
+| Native Stable Audio Open extra (`native-stable-audio-open`) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
+| ONNX export extra | `onnxscript` |
 
 ### Using Other VAEs
 
@@ -267,11 +275,12 @@ If reorganized units are missing/invalid, reorganized mode is unavailable while 
 
 #### Unified Web performance (corpus-selected VAE)
 
-The unified Web server defaults to an app-owned SAME-S ONNX realtime decoder.
+The unified Web server selects the corpus VAE and prefers an already verified
+ONNX CPU artifact when there is no saved explicit backend choice.
 Pipeline configuration also supports the native decoder; see the
 [selection and lifecycle protocol](docs/DUAL_INFERENCE_PHASE3.md).
 SAME-S is the default encoder in the Web UI, while the other encoder
-choices also work in Perform through their existing PyTorch adapters: Stable Audio Open, EAR 44.1 kHz and EAR 48 kHz. Stable Audio Open additionally supports a locally prepared ONNX CPU decoder. The corpus determines the VAE; the selector offers compatible execution devices. EAR requires its local `.pyt` path in Perform and the EAR repository/dependencies. These paths do not use the SAME-S ONNX graph.
+choices also work in Perform through their existing PyTorch adapters: Stable Audio Open, EAR 44.1 kHz and EAR 48 kHz. All four VAEs support a prepared ONNX CPU decoder. The corpus determines the VAE; the selector offers compatible execution devices. Native EAR and EAR export require the matching local checkpoint, repository and dependencies; an existing EAR ONNX artifact runs without them. These paths use the corpus model's own graph.
 
 Prepare the untracked release resource once from local SAME-S weights:
 

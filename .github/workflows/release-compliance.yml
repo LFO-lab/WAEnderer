@@ -21,9 +21,12 @@ jobs:
       - name: Check licensing and attribution
         run: uv run python bin/check_release_compliance.py
       - name: Run release compliance tests
-        run: uv run python -m pytest tests/test_release_compliance.py tests/test_export_web_decoder.py
+        run: uv run python -m pytest tests/test_release_compliance.py tests/test_export_web_decoder.py tests/test_model_distribution.py
       - name: Build source and wheel distributions
         run: uv build
+      - name: Inspect delivered archives
+        run: |
+          uv run python -c "from pathlib import Path; from stable_audio_wanderer.model_distribution import inspect_archive; [print(p.name, inspect_archive(p)) for p in Path('dist').iterdir() if p.suffix in ('.whl', '.gz')]"
       - name: Generate environment evidence
         run: uv run python bin/generate_release_evidence.py
       - name: Enforce dependency license policy

@@ -49,8 +49,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_model_release(project_root: Path) -> None:
+def validate_model_release(project_root: Path, *, model_bundle: Path | None = None) -> None:
     """Fail closed when a model-bearing distribution lacks license evidence."""
+
+    if model_bundle is not None:
+        from .model_distribution import validate_bundle
+        validate_bundle(model_bundle)
+        return
 
     resource_dir = project_root / "stable_audio_wanderer" / "resources" / "same_s"
     required = (

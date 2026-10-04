@@ -187,6 +187,8 @@ def test_same_s_staging_preserves_policy_and_complete_source(tmp_path,monkeypatc
 
 
 def test_discovery_correlates_same_corpus_source_edits_off_thread(tmp_path,monkeypatch):
+    # This protocol fixture must not consult a user's native interpreter registry.
+    monkeypatch.setattr('stable_audio_wanderer.vae.native_runtime.native_config',lambda *a:{})
     events=[];done=threading.Event()
     pipeline=PipelineManager(preparation_config={'store_dir':str(tmp_path/'store')})
     pipeline.set_broadcaster(SimpleNamespace(broadcast_pipeline_message=lambda x:(events.append(x),done.set())))

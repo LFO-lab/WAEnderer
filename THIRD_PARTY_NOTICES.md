@@ -34,8 +34,10 @@ Diffusers/Transformers integration code is separately Apache-2.0.
 
 EAR VAE is made available under Apache-2.0. Descript Audio Codec is MIT.
 Their pretrained files are optional and are not stored in this repository.
-Because its current protobuf constraint conflicts with the ONNX exporter,
-EAR VAE is installed in a separate environment rather than in the release lock.
+The explicit EAR installation profile pins an audio-tools revision compatible
+with the ONNX protobuf requirements. Native EAR/export libraries remain outside
+the base release environment. Decoder-only model bundles preserve the license
+and notices associated with the exact selected checkpoints and configurations.
 
 ## Browser component
 

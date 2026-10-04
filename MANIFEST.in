@@ -1,4 +1,4 @@
-include README.md RELEASE_CHECKLIST.md ROADMAP_DUAL_INFERENCE.md
+include README.md RELEASE_CHECKLIST.md ROADMAP_DUAL_INFERENCE.md ROADMAP_MULTI_VAE_ONNX.md
 include requirements*.txt requirements*.lock uv.lock
 include test_web*.js
 recursive-include bin *.py
@@ -6,8 +6,16 @@ recursive-include web *.txt *.html *.js *.css *.json *.svg *.png *.woff *.woff2
 recursive-include eval_scripts *.py
 recursive-include tests *.py
 recursive-include docs *.md *.json
+# Final archive checksums accompany releases; including them would self-reference.
+exclude docs/multi_vae_phase6_delivery.json
 prune corpus
 prune eval_out
 prune .venv
 prune .venv-native
+prune .venv-ear
+prune .venv-install-test
+prune user_audio
+prune .waenderer
+prune dist
+prune build
 global-exclude __pycache__ *.py[cod]

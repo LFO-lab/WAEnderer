@@ -7,7 +7,7 @@ from .onnx_artifacts import sha256
 
 def stage_same_s(output, *, opset=20, revision=None):
     from .same_s_weights import resolve_same_s_weights, SOURCE_MODEL, SOURCE_REVISION
-    from bin.export_web_decoder import export_web_decoder
+    from stable_audio_wanderer.cli.export_web_decoder import export_web_decoder
     from .export_common import write_json
     if revision and revision != SOURCE_REVISION:
         raise ValueError('SAME-S preparation requires the pinned revision')

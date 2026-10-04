@@ -1,0 +1,25 @@
+{
+  "format_version": "waenderer.model_selection.v1",
+  "models": [
+    {
+      "vae_id": "ear_vae_44k",
+      "artifact_dir": "/path/to/decoders/ear_vae_44k/ARTIFACT_ID",
+      "artifact_identity": "REPLACE_WITH_VERIFIED_ARTIFACT_ID",
+      "compliance": {
+        "source": {
+          "model": "earlab/EAR_VAE",
+          "revision": "COPY_EXACT_SOURCE_FROM_MANIFEST",
+          "config_sha256": "COPY_EXACT_SOURCE_FROM_MANIFEST",
+          "weights_sha256": "COPY_EXACT_SOURCE_FROM_MANIFEST"
+        },
+        "license": "REPLACE_WITH_EXACT_SOURCE_LICENSE",
+        "source_url": "https://huggingface.co/earlab/EAR_VAE/tree/EXACT_REVISION",
+        "conversion_description": "Audio decoder exported to ONNX; original source identity retained.",
+        "materials": {
+          "MODEL_NOTICE.md": {"path": "notices/MODEL_NOTICE.md", "sha256": "REPLACE_WITH_FILE_SHA256"},
+          "EAR_LICENSE.txt": {"path": "notices/EAR_LICENSE.txt", "sha256": "REPLACE_WITH_FILE_SHA256"}
+        }
+      }
+    }
+  ]
+}

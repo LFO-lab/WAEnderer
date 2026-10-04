@@ -1,6 +1,6 @@
 # Roadmap — ONNX coverage for every registered VAE
 
-Status: **phases 0–2 completed on 2 October 2026; phases 3–4 completed on 3 October 2026; phases 5–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
+Status: **phases 0–2 completed on 2 October 2026; phases 3–4 completed on 3 October 2026; phase 6 completed on 4 October 2026; phase 5 broader qualification pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
 
 This extends the SAME-S dual-inference roadmap. The current uncommitted multi-VAE PyTorch restoration is the starting point, not evidence that multi-VAE ONNX is implemented. Existing SAME-S qualification remains specific to its recorded hardware/scenarios.
 
@@ -125,14 +125,18 @@ Implementation plan: [Phase 5 plan](docs/MULTI_VAE_ONNX_PHASE5_PLAN.md). Validat
 
 ## Phase 6 — Packaging and reproducible delivery
 
-- [ ] Update package-data/distribution rules beyond the current SAME-S-only resource directory. Keep user-specific model exports in the local decoder store unless included deliberately in a model-bearing distribution.
-- [ ] Preserve each distributed model's identity and applicable notices in the existing release checks; include all external ONNX data files where used.
-- [ ] Keep native and export dependencies separate from runtime requirements; preserve the working default and native SAME-S environments.
-- [ ] Test a clean ONNX runtime load without native VAE libraries, offline startup, export reuse and recovery from missing/corrupt artifacts.
-- [ ] Document preparation commands, storage paths, cache identity, menu states, CPU functionality and measured performance limits.
-- [ ] Inspect the produced source/wheel/model bundle, not only the checkout. Include manifests/reports without redistributing corpus audio.
+Implementation plan: [Phase 6 plan](docs/MULTI_VAE_ONNX_PHASE6_PLAN.md). Delivered on 4 October 2026; see [delivery and debugging guide](docs/MULTI_VAE_ONNX_PHASE6.md) and [build/install evidence](docs/multi_vae_phase6_delivery.json).
+
+- [x] Update package-data/distribution rules beyond the current SAME-S-only resource directory. Keep user-specific model exports in the local decoder store unless included deliberately in a model-bearing distribution.
+- [x] Preserve each distributed model's identity and applicable notices in the existing release checks; include all external ONNX data files where used.
+- [x] Keep native and export dependencies separate from runtime requirements; preserve the working default and native SAME-S environments.
+- [x] Test a clean ONNX runtime load without native VAE libraries, offline startup, export reuse and recovery from missing/corrupt artifacts.
+- [x] Document preparation commands, storage paths, cache identity, menu states, CPU functionality and measured performance limits.
+- [x] Inspect the produced source/wheel/model bundle, not only the checkout. Include manifests/reports without redistributing corpus audio.
 
 **Exit:** installed VAEs have reproducible, persistent ONNX artifacts; native CPU options remain available; missing EAR is accurately represented rather than hidden or reported complete.
+
+**Result:** installed commands/workers and Web assets, explicit source-bound decoder bundles, notice retention, atomic installation/repair, runtime profiles and archive inspection are implemented. A fresh resolved Python 3.12/macOS wheel installation passes dependency checks and offline real four-VAE decoding/restart/reuse, missing-native EAR discovery, installed worker preflight and server HTTP/WebSocket startup/shutdown. 49 focused tests pass. Existing native environments and artifacts are unchanged; manual integration and Phase 5 physical/GPU qualification remain separate. Immutable historical parity reports retain local evidence paths, documented before public delivery.
 
 ## Recommended implementation order
 
@@ -140,4 +144,4 @@ Work in reviewed increments: **0 → 1 → 2 → 4 → 5 → 6 for SAME-S and St
 
 Do not implement the whole roadmap in one unchecked change. First verify SAME-S compatibility and CPU menu coverage; then complete Stable Audio Open end to end. Exporter complexity and CPU speed should be measured before estimating or promising complete EAR support.
 
-All four registered VAEs now have real validated decoder artifacts. The broader roadmap remains open for Phase 5 qualification and Phase 6 packaging.
+All four registered VAEs now have real validated decoder artifacts. Phase 6 packaging is verified; the broader roadmap remains open for Phase 5 GPU/physical qualification.

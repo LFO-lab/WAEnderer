@@ -312,7 +312,7 @@ class PipelineManager:
 
     def _preprocess_worker(self, config: dict):
         try:
-            from bin.preprocess import run_preprocess
+            from stable_audio_wanderer.cli.preprocess import run_preprocess
 
             def progress_cb(event_data):
                 self._emit({"type": "pipeline_stats", "phase": "preprocess", **event_data})
@@ -400,7 +400,7 @@ class PipelineManager:
 
     def _train_worker(self, config: dict, corpus_dir: str):
         try:
-            from bin.train_policy import run_train
+            from stable_audio_wanderer.cli.train_policy import run_train
 
             def progress_cb(event_data):
                 self._emit({"type": "pipeline_stats", "phase": "train", **event_data})
