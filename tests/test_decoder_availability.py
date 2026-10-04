@@ -33,7 +33,7 @@ def test_discovery_handles_missing_dependencies_weights_and_gpu(tmp_path, monkey
 
 def test_pipeline_exposes_discovery_without_changing_phase(monkeypatch):
     result = [{'device': 'cpu', 'validated': False}]
-    monkeypatch.setattr(discovery, 'decoder_availability', lambda _: result)
+    monkeypatch.setattr(PipelineManager, '_available_decoders', lambda self,spec,data: result)
     messages = []
     pipeline = PipelineManager()
     pipeline.set_broadcaster(SimpleNamespace(broadcast_pipeline_message=messages.append))

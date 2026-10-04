@@ -3,6 +3,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import os
 import time
 from types import MappingProxyType
 import numpy as np
@@ -19,6 +20,8 @@ class ArtifactDecoderInfo:
     device: str
     vae_id: str
     artifact_identity: str
+    intra_op_num_threads: int
+    graph_optimization: str
 
 
 class ArtifactOnnxDecoder:
@@ -34,12 +37,13 @@ class ArtifactOnnxDecoder:
         self._lock=threading.RLock()
         self._closed=False
         self._sessions=OrderedDict()
+        self._intra_op_threads=min(8, os.cpu_count() or 1)
         self._graphs={w:g for g in artifact.graphs for w in g.windows}
         self._windows=MappingProxyType({w:DecoderWindowMetadata(w,artifact.latent_dim,
             artifact.sample_rate,artifact.channels,artifact.samples_per_latent,w*artifact.samples_per_latent,
             w//2,w//2*artifact.samples_per_latent,'full_overlap_add') for w in artifact.supported_windows})
         self.info=ArtifactDecoderInfo(artifact.root,local_path(artifact.root,artifact.graphs[0].path),
-            'onnxruntime',PROVIDER,'cpu',artifact.vae_id,artifact.identity)
+            'onnxruntime',PROVIDER,'cpu',artifact.vae_id,artifact.identity,self._intra_op_threads,'all')
         try:
             # Validate all I/O contracts on load, without a full audio warm-up.
             for graph in artifact.graphs: self._session(graph)
@@ -70,9 +74,11 @@ class ArtifactOnnxDecoder:
         inspect_graph(self.artifact,graph)
         if len(self._sessions)>=2: self._sessions.popitem(last=False)
         options=self._ort.SessionOptions()
-        options.intra_op_num_threads=1
+        options.intra_op_num_threads=self._intra_op_threads
         options.inter_op_num_threads=1
-        options.graph_optimization_level=self._ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        options.graph_optimization_level=self._ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # Avoid idle spin-wait stealing CPU from navigation and the callback.
+        options.add_session_config_entry('session.intra_op.allow_spinning','0')
         session=self._ort.InferenceSession(str(local_path(self.artifact.root,graph.path)),
             sess_options=options,providers=[PROVIDER])
         a=self.artifact

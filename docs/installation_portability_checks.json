@@ -1,0 +1,11 @@
+{
+  "wheel": "build/phase5/package-portability/stable_audio_wanderer-0.1.0-py3-none-any.whl",
+  "worker_modules_included": true,
+  "packaged_worker_discovery": {
+    "module": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/build/phase5/installed-package-probe/stable_audio_wanderer/vae/native_runtime.py",
+    "worker_entries": 4,
+    "default_interpreter_matches": true
+  },
+  "combined_native_resolution_packages": 122,
+  "clean_native_install_validated": false
+}

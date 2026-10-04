@@ -1,5 +1,6 @@
 .venv
 .venv-ear
+.venv-install-test
 *.pyc
 corpus/*
 user_audio/*
@@ -31,3 +32,5 @@ __pycache__/
 stable_audio_wanderer/resources/same_s/*.onnx
 stable_audio_wanderer/resources/same_s/decoder.json
 stable_audio_wanderer/resources/same_s/decoder_parity.json
+
+/.waenderer/

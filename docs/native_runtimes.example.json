@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "models": {
+    "ear_vae_44k": {
+      "weights": "/path/to/ear_vae_44k.pyt",
+      "repo": "/path/to/EAR_VAE"
+    },
+    "ear_vae_48k": {
+      "weights": "/path/to/ear_vae_v2_48k.pyt",
+      "repo": "/path/to/EAR_VAE"
+    }
+  }
+}

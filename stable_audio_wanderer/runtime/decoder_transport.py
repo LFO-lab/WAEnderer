@@ -47,6 +47,7 @@ class _DecodeLane:
     reset_serial: int = -1
     future: object = None
     request: object = None
+    next_request: object = None
     assembler: object = None
     prepared: list = field(default_factory=list)
     prepared_samples: int = 0
@@ -734,11 +735,19 @@ class DecoderTransportController:
                     threshold = target if lane.published else ready_samples / float(self.decoder.sr)
                     busy = len(retired) + sum(bool(x and x.future) for x in (active, candidate))
                     if valid and lane.future is None and buffered < threshold and busy < 2:
-                        lane.request = self._lane_request(lane, mode)
+                        lane.request = lane.next_request or self._lane_request(lane, mode)
+                        lane.next_request = None
                         self._validate_request(lane.request)
                         with self._lock:
                             if self._running.is_set() and self._hard_generation <= lane.generation:
                                 lane.future = pool.submit(self.latent_decoder.decode, lane.request.raw_latents)
+                    # Prepare one next latent window while inference is busy.
+                    # Planning after completion leaves navigation time outside
+                    # the decode hop budget and can starve otherwise fast ORT.
+                    # A lane owns its planner; no additional inference is queued.
+                    if valid and lane.future is not None and lane.next_request is None and buffered < threshold:
+                        lane.next_request = self._lane_request(lane, mode)
+                        self._validate_request(lane.next_request)
                 time.sleep(0.002)
         except Exception as exc:
             self._latch_runtime_error(f"Decoder runtime failure ({self.latent_decoder.info.backend}): {exc}")

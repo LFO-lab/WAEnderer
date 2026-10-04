@@ -1,54 +1,7 @@
-# Compatibility requirements file. pyproject.toml is the authoritative package
-# metadata; uv.lock pins the reproducible resolver result used for releases.
-
-# Core audio model (offline encoding only)
-torch>=2.3
-torchaudio>=2.3
-
-# Audio and signal I/O
-soundfile>=0.12
-numpy>=1.25
-
-# Real-time audio synthesis
-sounddevice>=0.4.6
-
-# Latent space navigation
-scikit-learn>=1.3
-scipy>=1.11
-faiss-cpu>=1.7.4
-
-# OSC control
-python-osc>=1.8
-
-# WebSocket server for visualization
-websockets>=12.0
-
-# Optional (used during preprocessing / local dev)
-tqdm>=4.66
-umap-learn>=0.5.6
-
-# VAE encoding + decoding (Stable Audio Open)
-diffusers==0.35.1
-transformers>=4.43
-accelerate>=0.33
-safetensors>=0.4
-
-# VST bundle decoder export + parity validation
-onnx>=1.21
-onnxscript>=0.7
-onnxruntime>=1.26
-
-# Optional: SAME-S support (https://huggingface.co/stabilityai/SAME-S)
-# Install the Stable Audio 3 library if using the SAME-S adapter.
-# Its pyproject currently pins torch==2.7.1/torchaudio==2.7.1, which may not
-# have wheels for newer Python versions. In this repo's venv, keep the already
-# installed torch/torchaudio and install Stable Audio 3 without resolving deps:
-#   pip install --no-deps git+https://github.com/Stability-AI/stable-audio-3.git
-# Then add any missing non-Torch runtime deps reported by import errors, e.g.:
-#   pip install einops-exts "huggingface-hub>=1.7.1"
-
-# Optional: EAR VAE support (https://huggingface.co/earlab/EAR_VAE)
-# Install these if using the EAR VAE adapter:
-#   pip install descript-audio-codec
-# You also need to clone the EAR_VAE repo locally:
-#   git clone https://huggingface.co/earlab/EAR_VAE
+# Compatibility entrypoint: pyproject.toml owns dependency declarations.
+# Includes the ONNX exporter. Native model profiles are explicit below.
+.[export]
+# SAME-S: python -m pip install -r requirements-same-s-native.txt
+# EAR: python -m pip install -r requirements-ear-native.txt
+# Both: python -m pip install -r requirements-native.txt
+# Always run python -m pip check; do not bypass dependency resolution.

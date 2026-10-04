@@ -11,7 +11,34 @@
       "numerical_report": "same_s_cpu_numerical.json",
       "runtime_report": "same_s_onnxruntime_cpu_runtime.json",
       "lifecycle_report": "same_s_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "same_s",
@@ -22,7 +49,34 @@
       "numerical_report": "same_s_cpu_numerical.json",
       "runtime_report": "same_s_pytorch_cpu_runtime.json",
       "lifecycle_report": "same_s_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "same_s",
@@ -33,7 +87,34 @@
       "numerical_report": "same_s_mps_numerical.json",
       "runtime_report": "same_s_pytorch_mps_runtime.json",
       "lifecycle_report": "same_s_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "stable_audio_open",
@@ -44,7 +125,34 @@
       "numerical_report": "stable_audio_open_cpu_numerical.json",
       "runtime_report": "stable_audio_open_onnxruntime_cpu_runtime.json",
       "lifecycle_report": "stable_audio_open_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "stable_audio_open",
@@ -55,7 +163,34 @@
       "numerical_report": "stable_audio_open_cpu_numerical.json",
       "runtime_report": "stable_audio_open_pytorch_cpu_runtime.json",
       "lifecycle_report": "stable_audio_open_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "stable_audio_open",
@@ -66,7 +201,34 @@
       "numerical_report": "stable_audio_open_mps_numerical.json",
       "runtime_report": "stable_audio_open_pytorch_mps_runtime.json",
       "lifecycle_report": "stable_audio_open_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_44k",
@@ -77,7 +239,34 @@
       "numerical_report": "ear_vae_44k_cpu_numerical.json",
       "runtime_report": "ear_vae_44k_onnxruntime_cpu_runtime.json",
       "lifecycle_report": "ear_vae_44k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_44k",
@@ -88,7 +277,34 @@
       "numerical_report": "ear_vae_44k_cpu_numerical.json",
       "runtime_report": "ear_vae_44k_pytorch_cpu_runtime.json",
       "lifecycle_report": "ear_vae_44k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_44k",
@@ -99,7 +315,34 @@
       "numerical_report": "ear_vae_44k_mps_numerical.json",
       "runtime_report": "ear_vae_44k_pytorch_mps_runtime.json",
       "lifecycle_report": "ear_vae_44k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_48k",
@@ -110,7 +353,34 @@
       "numerical_report": "ear_vae_48k_cpu_numerical.json",
       "runtime_report": "ear_vae_48k_onnxruntime_cpu_runtime.json",
       "lifecycle_report": "ear_vae_48k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_48k",
@@ -121,7 +391,34 @@
       "numerical_report": "ear_vae_48k_cpu_numerical.json",
       "runtime_report": "ear_vae_48k_pytorch_cpu_runtime.json",
       "lifecycle_report": "ear_vae_48k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     },
     {
       "vae_id": "ear_vae_48k",
@@ -132,7 +429,34 @@
       "numerical_report": "ear_vae_48k_mps_numerical.json",
       "runtime_report": "ear_vae_48k_pytorch_mps_runtime.json",
       "lifecycle_report": "ear_vae_48k_lifecycle.json",
-      "listening": []
+      "listening": [],
+      "qualification_profile": "compact",
+      "realtime_profile": {
+        "windows": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22,
+          24,
+          26,
+          28,
+          30,
+          32
+        ],
+        "modes": [
+          "random",
+          "manual",
+          "reorganized"
+        ],
+        "adaptive": true
+      }
     }
   ],
   "untested_hardware": [

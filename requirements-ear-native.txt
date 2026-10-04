@@ -1,0 +1,7 @@
+# Install from the repository's Python root. No virtual-environment name required.
+-e .[export]
+descript-audio-codec==1.0.0
+# This pinned revision relaxes the obsolete protobuf<3.20 requirement.
+descript-audiotools @ https://github.com/descriptinc/audiotools/archive/348ebf2034ce24e2a91a553e3171cb00c0c71678.tar.gz
+einops>=0.8.2
+protobuf>=4.25.1,<5

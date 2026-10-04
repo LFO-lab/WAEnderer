@@ -1,0 +1,4 @@
+# Combined native profile; SAME-S supplies its upstream Torch/Torchaudio pins.
+# Python 3.12 is the existing SAME-S reference platform; other hosts need validation.
+-r requirements-same-s-native.txt
+-r requirements-ear-native.txt

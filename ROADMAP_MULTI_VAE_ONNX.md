@@ -110,16 +110,16 @@ Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (impleme
 
 ## Phase 5 — Numerical, audio and runtime validation
 
-Implementation plan: [Phase 5 plan](docs/MULTI_VAE_ONNX_PHASE5_PLAN.md). Validation tooling implemented on 4 October 2026; see [the code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md). Full numerical/runtime campaigns and listening qualification remain pending; the checkboxes below describe evidence gates, not tool availability.
+Implementation plan: [Phase 5 plan](docs/MULTI_VAE_ONNX_PHASE5_PLAN.md). Validation tooling implemented on 4 October 2026; see [the code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md). Compact CPU qualification now passes for all four VAEs (full EAR 48k evidence reused), with source-bound EAR probes and the four existing CPU listening reviews. GPU qualification and physical campaigns remain pending; the checkboxes below describe evidence gates, not tool availability.
 
 - [x] Freeze per-model numerical tolerances from reference behavior before evaluating exported graphs. Preserve stochastic behavior and measure within-engine variability where present; do not require SAME-S bitwise equality. CPU/installed MPS policies recorded; Stable Audio Open native CPU/MPS characterization and its separately frozen GPU protocol added on 4 October. CUDA remains untested.
 - [ ] Compare identical raw latent windows, output shapes, sample counts and assembled OLA audio on synthetic data and representative real corpora.
-- [ ] Use BurntMemory for SAME-S and Rack for Stable Audio Open. EAR needs representative data encoded with the supplied checkpoint(s), in addition to synthetic contract probes.
-- [ ] Keep functional decoding results separate from real-time qualification. CPU functionality can pass despite missed audio deadlines.
+- [x] Use BurntMemory for SAME-S and Rack for Stable Audio Open. EAR CPU comparisons use checkpoint-bound inputs: verified EAR 44k fixture and receipt-backed EAR 48k corpus, in addition to synthetic probes. Content coverage remains narrow.
+- [x] Keep functional decoding results separate from real-time qualification. CPU functionality can pass despite missed audio deadlines.
 - [ ] Measure decode p50/p95/p99, preparation, command transitions, memory, CPU usage, buffer underruns and device underruns for every backend/device being claimed as real-time capable.
-- [ ] Run at least ten minutes per claimed real-time scenario, covering Random/Manual/Reorganized, fixed/adaptive windows, restarts and engine changes on the actual audio device.
-- [ ] Obtain comparative listening feedback for new ONNX outputs. Never transfer SAME-S listening approval to another VAE.
-- [ ] Keep failed tests and performance limits explicit. ONNX export success alone is not proof of sufficient CPU throughput.
+- [ ] Run at least ten minutes of steady PCM per claimed combined backend/device/hardware profile, covering Random/Manual/Reorganized, fixed/adaptive windows, restarts and engine changes on the actual audio device.
+- [x] Obtain comparative listening feedback for new ONNX CPU outputs: the user reported no audible degradation for one exact CPU pair per VAE. GPU pairs remain pending; approval is never transferred between models or renders.
+- [x] Keep failed tests and performance limits explicit. ONNX export success alone is not proof of sufficient CPU throughput.
 
 **Exit:** a per-VAE/backend/window matrix distinguishes functional support, measured real-time support, missing models and untested hardware. No available PyTorch CPU option is removed solely for failing the real-time gate.
 

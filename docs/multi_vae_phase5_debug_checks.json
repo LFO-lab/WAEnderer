@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-04",
+  "checks": [
+    {
+      "report": "build/phase5/sao_onnx_options.json",
+      "sha256": "cbf0783991a819eb2558e263a1ac4d3ffeb69f3159f478b1b14569f25820b724",
+      "scope": "short diagnostic"
+    },
+    {
+      "report": "build/phase5/sao_onnx_8threads.json",
+      "sha256": "075a40e080093ee6506c312258605339ea8f67b34453098b0b44af841dca52b5",
+      "scope": "short diagnostic"
+    },
+    {
+      "report": "build/phase5/sao_onnx_optimized_parity.json",
+      "sha256": "6d443e0729d8aaaf27987fcdc97bf4beca33c2fcbce1f11c58830d948a2f630e",
+      "scope": "short diagnostic",
+      "threads": 8,
+      "window": 8,
+      "max_abs": 1.2665987014770508e-07,
+      "rmse": 3.0840315190516776e-08,
+      "finite": true
+    },
+    {
+      "report": "build/phase5/rack_onnx_optimized_smoke.json",
+      "sha256": "72e0272aeb131ac92734e6cc1fb53784a85b634ac5e70ca32b6019b7dbb51254",
+      "scope": "short diagnostic",
+      "error": null,
+      "active_audio_seconds": 8.196643990929704,
+      "buffer_underruns": 54,
+      "device_underruns": 0,
+      "windows": {
+        "8": {
+          "decode_ms": {
+            "count": 45,
+            "median": 161.3237919518724,
+            "p95": 170.14778337907046,
+            "p99": 176.84145849663764
+          },
+          "hop_budget_ms": 185.75963718820861
+        }
+      }
+    },
+    {
+      "report": "build/phase5/rack_onnx_prefetch_smoke.json",
+      "sha256": "8190fafc3871d5bc12f3b5ae3dad995cd92c75da62fb7cd3b055ed68c7c7b909",
+      "scope": "short diagnostic",
+      "error": null,
+      "active_audio_seconds": 9.520181405895691,
+      "buffer_underruns": 0,
+      "device_underruns": 0,
+      "windows": {
+        "8": {
+          "decode_ms": {
+            "count": 54,
+            "median": 160.74568749172613,
+            "p95": 168.13482884899713,
+            "p99": 170.33398456173018
+          },
+          "hop_budget_ms": 185.75963718820861
+        }
+      }
+    },
+    {
+      "report": "build/phase5/ear_44k_process_mps_smoke.json",
+      "sha256": "524a0c9a64b7fc939a392bf3089cae79ac7abfe60e5e2b475ed3218c15c0362c",
+      "scope": "short diagnostic",
+      "passed": true,
+      "rows": [
+        {
+          "window": 8,
+          "shape": [
+            8192,
+            2
+          ],
+          "finite": true,
+          "ms": 33.07962499093264
+        },
+        {
+          "window": 30,
+          "shape": [
+            30720,
+            2
+          ],
+          "finite": true,
+          "ms": 106.73762497026473
+        },
+        {
+          "window": 8,
+          "shape": [
+            8192,
+            2
+          ],
+          "finite": true,
+          "ms": 29.92849994916469
+        }
+      ]
+    }
+  ],
+  "same_s": "CPU PCM (8192,2) finite through .venv while parent uses .venv-ear; availability selectable from configured interpreter.",
+  "manual_retest": "Rack ONNX audio, BurntMemory PyTorch availability, EAR MPS T8/T30 with real navigation/audio; no physical qualification claimed.",
+  "installation_portability": {
+    "combined_native_profile": "requirements-native.txt",
+    "resolver": "uv pip compile --python-version 3.12",
+    "packages": 122,
+    "torch": "2.7.1",
+    "torchaudio": "2.7.1",
+    "protobuf": "4.25.9",
+    "clean_install_validated": false,
+    "current_main_environment_pip_check": "fails: Stable Audio 3 pins differ from installed Torch/Torchaudio; not upgraded in this task",
+    "runtime_default": "sys.executable; no predefined environment names or checkout working directory"
+  }
+}

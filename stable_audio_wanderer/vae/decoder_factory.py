@@ -18,6 +18,8 @@ class DecoderSelection:
     adapter_repo: str = ""
     adapter_config: str = ""
     adapter_source: tuple = ()
+    worker_python: str = ""
+    worker_request: str = field(default="", compare=False, repr=False)
     artifact: object = field(default=None, compare=False, repr=False)
 
 
@@ -57,6 +59,17 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
             artifact.validate_corpus(corpus_spec)
         return DecoderSelection(backend, "cpu", artifact.cache_key, artifact.root,
                                 vae_id=vae_id, artifact=artifact)
+    if config.get('decoder_python'):
+        import json
+        from .native_runtime import request_once, local_path
+        local_config = dict(config)
+        python = local_config.pop('decoder_python')
+        payload = dict(config=local_config, corpus_spec=corpus_spec)
+        fields = request_once(python, 'select', payload)
+        fields['identity'] = tuple(fields['identity']) + ('native-interpreter', str(local_path(python,python=True)))
+        fields['adapter_source'] = tuple(tuple(pair) for pair in fields['adapter_source'])
+        fields.update(worker_python=str(local_path(python,python=True)), worker_request=json.dumps(payload))
+        return DecoderSelection(**fields)
     if vae_id != "same_s":
         return _select_adapter(config, vae_id, backend, corpus_spec)
     if backend == "pytorch":
@@ -77,6 +90,9 @@ def select_decoder(config: dict, *, resource_dir=None, corpus_spec=None) -> Deco
 
 def create_decoder(selection: DecoderSelection):
     """Prepare one decoder. The pipeline validates the corpus on every start."""
+    if selection.worker_python:
+        from .process_decoder import ProcessNativeDecoder
+        return ProcessNativeDecoder(selection)
     if selection.backend == "onnxruntime":
         from .artifact_decoder import load_artifact_decoder
         from .onnx_artifacts import read_artifact

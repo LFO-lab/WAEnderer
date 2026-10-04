@@ -62,15 +62,14 @@ The pipeline supports pluggable VAE backends. The default is [Stable Audio Open]
    git clone https://huggingface.co/earlab/EAR_VAE /path/to/EAR_VAE
    ```
 
-2. **Install its dependency**:
+2. **Install the EAR profile with normal dependency resolution**:
    ```bash
-   pip install descript-audio-codec
+   python -m pip install -r requirements-ear-native.txt
+   python -m pip check
    ```
 
-   Install EAR VAE in a dedicated environment. Its current audio-tools chain
-   requires `protobuf<3.20`, while the ONNX export toolchain requires a modern
-   protobuf release, so it is intentionally not exposed as a co-installable
-   project extra.
+   The profile pins the audio-tools revision compatible with the ONNX protobuf
+   requirements. The EAR repository and checkpoint remain explicit model assets.
 
 3. **Select in the GUI**: Choose "EAR VAE (48k)" or "EAR VAE (44.1k)" from the VAE dropdown in the Preprocess panel, then provide the path to the `.pyt` weight file (e.g. `/path/to/EAR_VAE/pretrained_weight/ear_vae_v2_48k.pyt`).
 
@@ -83,12 +82,14 @@ The pipeline supports pluggable VAE backends. The default is [Stable Audio Open]
 
 The corpus records which VAE was used (`vae_id`), so train and perform phases automatically load the correct adapter and parameters.
 
-[SAME-S](https://huggingface.co/stabilityai/SAME-S) is also available as a 44.1 kHz stereo adapter with 256D latents and a 4096x temporal compression ratio. Install the Stable Audio 3 library without dependency resolution so this project keeps its existing Torch/Torchaudio build:
+[SAME-S](https://huggingface.co/stabilityai/SAME-S) is also available as a 44.1 kHz stereo adapter with 256D latents and a 4096x temporal compression ratio. Install its pinned native profile, honoring upstream Torch/Torchaudio requirements:
 
 ```bash
-pip install --no-deps git+https://github.com/Stability-AI/stable-audio-3.git
-pip install einops-exts "huggingface-hub>=1.7.1"
+python -m pip install -r requirements-same-s-native.txt
+python -m pip check
 ```
+
+For both SAME-S and EAR, use `requirements-native.txt` in a fresh Python 3.12 environment. Environment names and locations are unrestricted. The combined source profile resolves successfully for Python 3.12; it still needs clean-install/runtime validation; the existing macOS SAME-S lock and EAR export lock record separate historical reference environments.
 
 Then select "SAME-S (44.1k)" in the GUI or use:
 
@@ -317,7 +318,9 @@ or training, that corpus remains selected. **Start Perform** is enabled after co
 
 All four VAEs now share model-specific decoder choices, visible unavailability reasons, and explicit **Prepare ONNX decoder / Retry** controls. A verified ONNX CPU artifact is the default for a new corpus; explicit backend choices persist across refresh/reconnect/reload. Preparation never starts playback or changes the selected backend. Use `python -m bin.prepare_decoders --all-installed` for batch preparation/reuse. See [Phase 4 configuration, lifecycle and verification](docs/MULTI_VAE_ONNX_PHASE4.md) for separate exporter environments and the server configuration file.
 
-Phase 5 validation tools now compare identical corpus latents and assembled audio across all four VAEs, record physical runtime measurements, and check a source-bound qualification matrix. Full campaigns and listening reviews remain pending. See [the Phase 5 code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md) for short diagnostics, manual checks and the relevant functions to debug.
+Phase 5 validation tools now compare identical corpus latents and assembled audio across all four VAEs, record physical runtime measurements, and check a source-bound qualification matrix. Compact qualification reduces inference work while retaining all windows and frozen tolerances; CPU listening reviews are recorded. GPU listening and physical qualification remain pending. See [the Phase 5 code walkthrough and shared testing guide](docs/MULTI_VAE_ONNX_PHASE5.md) for short diagnostics, manual checks and the relevant functions to debug.
+
+Native playback uses a persistent decoder process so its interpreter and GPU runtime are independent of the Web server. The current interpreter is used by default. Optional source/interpreter overrides live in the user configuration directory or a file selected by `WAENDERER_NATIVE_RUNTIMES`, using [the example](docs/native_runtimes.example.json). Relative paths resolve against the configuration file’s directory. The registry is checked on discovery and Start; availability reports include the actual interpreter. See [native runtime debugging](docs/NATIVE_DECODER_RUNTIMES.md).
 
 Prepare EAR explicitly with `python -m bin.prepare_ear_onnx --vae-id ear_vae_44k --weights /path/to/ear_vae_44k.pyt --repo /path/to/EAR_VAE` in the EAR export environment; use `ear_vae_48k` with its matching checkpoint for 48 kHz. Both support even windows T2–T32. See [EAR preparation, validation and measured limits](docs/MULTI_VAE_ONNX_PHASE3.md). Restart an existing server after updating the code.
 

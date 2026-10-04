@@ -88,7 +88,8 @@ class ObservedPlayer(DecoderPlayer):
         self.callback_times = []
         self.blocks = 0
         self.rendered_samples = 0
-        self.scenario = None
+        self.generation_scenarios = {}
+        self.excluded_samples = 0
         self.scenario_samples = defaultdict(int)
         self.peak = 0.0
         self.sum_square = 0.0
@@ -99,6 +100,7 @@ class ObservedPlayer(DecoderPlayer):
     def _callback(self, output, frames, time_info, status):
         before = time.perf_counter()
         previous = self.underruns
+        state_before = self.get_state()
         super()._callback(output, frames, time_info, status)
         if self.underruns != previous:
             self.underrun_events.append({'monotonic':before,
@@ -108,8 +110,17 @@ class ObservedPlayer(DecoderPlayer):
         self.nonfinite |= not np.isfinite(output).all()
         self.blocks += 1
         self.rendered_samples += frames
-        if self.scenario is not None:
-            self.scenario_samples[self.scenario] += frames
+        state_after = self.get_state()
+        scenario = self.generation_scenarios.get(state_before['generation'])
+        # Mixed transitions, empty queues and underrun callbacks cannot prove
+        # steady playback for either the old or newly requested setting.
+        if (scenario is not None and self.underruns == previous and
+                state_before['generation'] == state_after['generation'] and
+                state_before['transition_status'] != 'crossfading' and
+                state_after['transition_status'] != 'crossfading'):
+            self.scenario_samples[scenario] += frames
+        else:
+            self.excluded_samples += frames
         self.peak = max(self.peak, float(np.max(np.abs(output))))
         self.sum_square += float(np.sum(output.astype(np.float64)**2))
 
@@ -141,6 +152,8 @@ def run(args):
     paired = select_decoder(selection_config(args, 'onnxruntime', 'cpu'), corpus_spec=spec)
     config = selection_config(args, args.backend, args.device)
     if args.backend == 'pytorch':
+        from stable_audio_wanderer.vae.native_runtime import native_config
+        config = native_config(spec['vae_id'], config)
         config['decoder_source_identity'] = dict(paired.artifact.source)
     selection = select_decoder(config, corpus_spec=spec)
     context = evidence_context(args, spec, selection)
@@ -192,33 +205,39 @@ def run(args):
     start = time.perf_counter()
     deadline = start
     next_change, next_sample, next_progress = start, start, start
-    index = ('random','manual','reorganized').index(args.initial_mode)*17
+    profile = dict(windows=args.windows, modes=args.modes, adaptive=not args.no_adaptive)
+    settings = [*[f'T{w}' for w in args.windows], *(['adaptive'] if profile['adaptive'] else [])]
+    schedule = [(mode,step,setting) for mode in args.modes for step,setting in enumerate(settings)]
+    index = args.modes.index(args.initial_mode)*len(settings) if args.initial_mode in args.modes else 0
     failure = None
     try:
         while time.perf_counter()-start < args.seconds:
             now = time.perf_counter()
             if now >= next_change:
-                # 16 fixed windows, then adaptive bounds, across all three modes.
-                step = index % 17
-                mode = ('random', 'manual', 'reorganized')[(index//17) % 3]
-                if step == 0:
-                    player.scenario = None
+                mode, step, setting = schedule[index % len(schedule)]
+                if step == 0 or setting == 'adaptive':
                     controller.stop()
                     assert controller.set_mode(mode)[0]
-                    controller.set_window_controls({'mode':'fixed'})
-                    controller.set_decoder_window(2)
+                    assert controller.set_window_controls({'mode':'adaptive' if setting == 'adaptive' else 'fixed',
+                        'minimum':min(args.windows),'maximum':max(args.windows)})[0]
+                    assert controller.set_decoder_window(args.windows[0])[0]
                     assert controller.start()[0]
-                elif step < 16:
-                    assert controller.set_decoder_window(2*(step+1))[0]
-                else:
-                    assert controller.set_window_controls({'mode':'adaptive','minimum':2,'maximum':32})[0]
-                player.scenario = f'{mode}:{"adaptive" if step == 16 else "T" + str(2*(step+1))}'
+                elif setting != 'adaptive':
+                    assert controller.set_decoder_window(int(setting[1:]))[0]
+                scenario = f'{mode}:{setting}'
+                player.generation_scenarios[controller._requested_generation] = scenario
                 if pending:
                     transitions.append({**pending, 'settled_ms': None})
-                pending = {'mode':mode, 'step':step, 'requested_at':now-start,
+                pending = {'mode':mode, 'step':step, 'scenario':scenario, 'requested_at':now-start,
                            'generation':controller._requested_generation}
                 index += 1
                 next_change = now + args.change_every
+            # Adaptive changes create generations inside the scheduler. Keep
+            # previous generations' labels immutable until their PCM drains.
+            with controller._lock:
+                adaptive_generation = controller._adaptive_generation
+            if setting == 'adaptive' and adaptive_generation is not None:
+                player.generation_scenarios.setdefault(adaptive_generation, scenario)
             if player._stream.active:
                 if not args.audio_device:
                     player._callback(output, len(output), None, SimpleNamespace(output_underflow=False))
@@ -249,7 +268,8 @@ def run(args):
         duration = time.perf_counter()-start
         cpu_seconds = time.process_time()-cpu_started
         stream_settings = {key:getattr(player._stream,key,None) for key in ('samplerate','blocksize','channels','latency')}
-        player.scenario = None
+        if pending:
+            transitions.append({**pending, 'settled_ms':None})
         try:
             controller.close()
         except Exception as exc:
@@ -265,13 +285,18 @@ def run(args):
         'audio_device':args.audio_device, 'audio_device_info':device_info,
         'stream_settings':stream_settings,
         'sample_rate':sample_rate, 'blocksize':1024, 'channels':meta.channels,
-        'active_audio_seconds':player.rendered_samples/sample_rate,
+        'active_audio_seconds':sum(player.scenario_samples.values())/sample_rate,
+        'callback_audio_seconds':player.rendered_samples/sample_rate,
+        'excluded_samples':player.excluded_samples,
+        'sample_attribution':'stable_pcm_generation_without_underrun',
+        'realtime_profile':profile,
         'rendered_samples':player.rendered_samples,
         'scenario_samples':dict(player.scenario_samples),
-        'declared_scenarios':[f'{mode}:{setting}' for mode in ('random','manual','reorganized')
-            for setting in [*[f'T{w}' for w in range(2,33,2)], 'adaptive']],
+        'declared_scenarios':[f'{mode}:{setting}' for mode,step,setting in schedule],
         'nonfinite_pcm':player.nonfinite, 'torch_threads':torch.get_num_threads(),
         'provider':decoder.info.provider,
+        'decoder_settings':{key:getattr(decoder.info,key,None) for key in
+            ('intra_op_num_threads','graph_optimization','runtime_python')},
         'navigation':args.navigation,
         'requested_seconds':args.seconds, 'duration_seconds':duration, 'started_monotonic':start,
         'preparation_ms':preparation_ms, 'underruns':player.underruns,
@@ -285,7 +310,7 @@ def run(args):
         'transitions':transitions, 'memory_samples':samples,
         'underrun_events':player.underrun_events, 'rendered_blocks':player.blocks, 'pcm_peak':player.peak,
         'pcm_rms':float(np.sqrt(player.sum_square/(player.blocks*1024*2))) if player.blocks else None,
-        'error':failure, 'sustained_10_minutes':player.rendered_samples/sample_rate >= 600 and not failure,
+        'error':failure, 'sustained_10_minutes':sum(player.scenario_samples.values())/sample_rate >= 600 and not failure,
         'software_buffer_gate_passed':failure is None and player.blocks > 0 and player.underruns == 0,
         'audio_device_qualified':False, 'listening_review':'pending'}
     write_report(args.output, report)
@@ -303,12 +328,17 @@ if __name__ == '__main__':
     parser.add_argument('--corpus', type=Path)
     parser.add_argument('--vae-id', default='same_s', choices=['same_s','stable_audio_open','ear_vae_44k','ear_vae_48k'], help='Synthetic model; corpus selects its own VAE')
     add_selection_arguments(parser)
+    parser.add_argument('--windows', nargs='+', type=int, default=list(range(2,33,2)), help='Fixed windows in the claimed combined profile')
+    parser.add_argument('--modes', nargs='+', choices=['random','manual','reorganized'], default=['random','manual','reorganized'])
+    parser.add_argument('--no-adaptive', action='store_true', help='Restrict profile to its fixed windows')
     parser.add_argument('--initial-mode', choices=['random','manual','reorganized'], default='random')
     parser.add_argument('--navigation', choices=['replay','production'], default='replay')
     parser.add_argument('--require-zero-underruns', action='store_true', help='Exit nonzero if any buffer or device underrun occurs')
     parser.add_argument('--audio-device', help='Explicit output device name; muted hardware callback instead of software clock')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if not args.windows or len(set(args.windows)) != len(args.windows) or any(w not in range(2,33,2) for w in args.windows): parser.error('Windows must be distinct even T2..T32 values')
+    if len(set(args.modes)) != len(args.modes): parser.error('Modes must be distinct')
     if args.seconds <= 0 or args.change_every <= 0: parser.error('Durations must be positive')
     if args.navigation == 'production' and not args.corpus: parser.error('Production navigation requires --corpus')
     try:

@@ -140,10 +140,23 @@ def evaluate_multi_vae_campaign(manifest_path):
         coverage = {(r.get('file_index'),r.get('start')) for r in rows}
         if any({(r.get('file_index'),r.get('start')) for r in rows if r.get('window') == w} != coverage for w in policy['windows']):
             return False
-        if len(coverage) < len(policy['positions_per_file']):
+        compact = claim.get('qualification_profile') == 'compact'
+        if claim.get('qualification_profile', 'full') not in ('full','compact'):
             return False
-        expected = {(w,s) for w in policy['windows'] for s in range(policy['synthetic_seeds'])}
-        if {(r.get('window'),r.get('seed')) for r in synthetic} != expected:
+        if report.get('validation_scope') == 'compact_qualification' and not compact:
+            return False
+        if claim['vae_id'].startswith('ear_'):
+            fixture = report.get('real_input_fixture')
+            recorded = report.get('corpus_spec',{}).get('weights_sha256')
+            if not (recorded and recorded == report.get('model_source',{}).get('weights_sha256') or
+                    fixture and fixture.get('sha256') and fixture.get('audio_sha256') and
+                    fixture.get('source') == report.get('model_source')):
+                return False
+        if len(coverage) < (1 if compact else len(policy['positions_per_file'])):
+            return False
+        seeds = 1 if compact and claim['vae_id'] != 'same_s' else policy['synthetic_seeds']
+        expected = {(w,s) for w in policy['windows'] for s in range(seeds)}
+        if not expected.issubset({(r.get('window'),r.get('seed')) for r in synthetic}):
             return False
         for group, is_synthetic in ((rows,False),(synthetic,True),(clips,False)):
             for row in group:
@@ -165,9 +178,10 @@ def evaluate_multi_vae_campaign(manifest_path):
         row = {k:claim[k] for k in ('vae_id','backend','device')}
         row.update(availability=claim.get('availability','installed'), functional='pending',
                    numerical='pending', realtime='not_tested', listening='pending', lifecycle='pending', reasons=[])
-        row['reports'] = {k:claim.get(k) for k in ('numerical_report','runtime_report','lifecycle_report')}
+        row['reports'] = {k:claim.get(k) for k in ('numerical_report','runtime_report','lifecycle_report','listening_report')}
         row['protocol'] = str(policy_path)
         row['windows'] = list(policy['windows'])
+        row['qualification_profile'] = claim.get('qualification_profile','full')
         numeric = read(claim.get('numerical_report'))
         correct_device = numeric and (claim['backend'] == 'onnxruntime' and claim['device'] == 'cpu' and str(numeric.get('device','')).startswith('cpu') or
             claim['backend'] == 'pytorch' and claim['device'] == numeric.get('device'))
@@ -197,14 +211,30 @@ def evaluate_multi_vae_campaign(manifest_path):
                 reasons.append('Insufficient rendered samples')
             if runtime.get('error') or runtime.get('nonfinite_pcm') is not False or any(type(runtime.get(k)) is not int or runtime[k] != 0 for k in ('underruns','buffer_underruns','device_underruns')):
                 reasons.append('Runtime error, nonfinite PCM or underruns')
-            expected = {f'{mode}:{setting}' for mode in ('random','manual','reorganized')
-                for setting in [*[f'T{w}' for w in policy['windows']], 'adaptive']}
-            if set(runtime.get('declared_scenarios',[])) != expected or any(not _at_least(runtime.get('scenario_samples',{}).get(s), 1) for s in expected):
-                reasons.append('Incomplete fixed/adaptive scenario coverage')
-            settled = {(r.get('mode'),r.get('step')) for r in runtime.get('transitions',[]) if _at_least(r.get('settled_ms'),0)}
-            if not {(m,i) for m in ('random','manual','reorganized') for i in range(17)}.issubset(settled):
+            profile = claim.get('realtime_profile', dict(windows=policy['windows'],
+                modes=['random','manual','reorganized'], adaptive=True))
+            windows, modes = profile.get('windows',[]), profile.get('modes',[])
+            valid_profile = (bool(windows) and len(set(windows)) == len(windows) and
+                set(windows).issubset(policy['windows']) and bool(modes) and
+                len(set(modes)) == len(modes) and set(modes).issubset({'random','manual','reorganized'}) and
+                type(profile.get('adaptive')) is bool)
+            if not valid_profile or runtime.get('realtime_profile') != profile:
+                reasons.append('Runtime profile does not match explicit claim')
+            expected = {f'{mode}:{setting}' for mode in modes
+                for setting in [*[f'T{w}' for w in windows], *(['adaptive'] if profile.get('adaptive') else [])]}
+            counts = runtime.get('scenario_samples',{})
+            if set(runtime.get('declared_scenarios',[])) != expected or any(not _at_least(counts.get(s), sr or 1) for s in expected):
+                reasons.append('Incomplete scenario coverage (one steady second per member required)')
+            if (runtime.get('sample_attribution') != 'stable_pcm_generation_without_underrun' or
+                    not all(_at_least(v,0) for v in counts.values()) or
+                    not _at_least(sum(v for v in counts.values() if _at_least(v,0)), policy['minimum_active_seconds'] * (sr or 1)) or
+                    sum(v for v in counts.values() if _at_least(v,0)) > runtime.get('rendered_samples',0)):
+                reasons.append('Insufficient or invalid steady PCM generation attribution')
+            settled = {r.get('scenario') for r in runtime.get('transitions',[]) if _at_least(r.get('settled_ms'),0)}
+            if not expected.issubset(settled):
                 reasons.append('Unsettled command transitions')
-            for w in policy['windows']:
+            row['realtime_profile'] = profile
+            for w in windows:
                 timing = runtime.get('windows',{}).get(str(w),{}).get('decode_ms',{})
                 if not _at_least(timing.get('count'),1) or any(not _at_least(timing.get(k),0) for k in ('median','p95','p99')):
                     reasons.append(f'Missing T{w} decode timings')
@@ -221,10 +251,14 @@ def evaluate_multi_vae_campaign(manifest_path):
             ok = ok and (claim['backend'],claim['device']) in choices and len(choices) >= 2
             row['lifecycle'] = 'passed' if ok else 'failed'
         reviews = claim.get('listening', [])
+        if reviews:
+            row['listening'] = 'failed'
         # Listening remains independent of full numerical coverage: a reviewed
         # diagnostic pair is useful evidence, but cannot qualify the campaign.
-        if reviews and numeric and correct_device and bound(numeric,claim) and not numeric.get('error'):
-            pairs = {r['file_index']:r['files'] for r in numeric['listening_pairs']}
+        listening_report = read(claim.get('listening_report')) if claim.get('listening_report') else numeric
+        listening_device = listening_report and (claim['device'] == listening_report.get('device'))
+        if reviews and listening_report and listening_device and bound(listening_report,claim,numeric) and not listening_report.get('error'):
+            pairs = {r['file_index']:r['files'] for r in listening_report['listening_pairs']}
             ok = all(r.get('reviewer') and r.get('date') and r.get('observation') and
                 r.get('new_engine_regression') is False and r.get('files') == pairs.get(r.get('file_index')) for r in reviews)
             row['listening'] = 'passed' if ok else 'failed'

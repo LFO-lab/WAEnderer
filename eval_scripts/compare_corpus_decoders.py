@@ -59,6 +59,21 @@ def run(args):
     native_config = selection_config(args, 'pytorch', args.device)
     native_config['decoder_source_identity'] = dict(onnx_selection.artifact.source)
     native_selection = select_decoder(native_config, corpus_spec=spec)
+    fixture_receipt = None
+    if args.fixture:
+        with np.load(args.fixture, allow_pickle=False) as fixture:
+            source = json.loads(str(fixture['source_identity'].item()))
+            if (str(fixture['vae_id'].item()) != spec['vae_id'] or
+                    int(fixture['sample_rate']) != onnx_selection.artifact.sample_rate or
+                    source != dict(onnx_selection.artifact.source)):
+                raise ValueError('Fixture source/model does not match selected artifact')
+            raw = fixture['raw_latents']
+            if raw.ndim != 3 or raw.shape[1] != z.shape[1] or raw.dtype != np.float32 or not np.isfinite(raw).all():
+                raise ValueError('Invalid source-bound fixture latents')
+            z = np.ascontiguousarray(raw.transpose(0,2,1).reshape(-1,raw.shape[1]))
+            offsets = np.arange(len(raw)+1) * raw.shape[2]
+            fixture_receipt = dict(path=str(args.fixture.resolve()), sha256=digest(args.fixture),
+                source=source, audio_sha256=str(fixture['audio_sha256'].item()))
     policy = protocol['models'][spec['vae_id']]
     if not args.device.startswith('cpu'):
         policy = protocol['native_gpu'][spec['vae_id']]
@@ -68,8 +83,9 @@ def run(args):
         device=normalize_device(native_selection.device), native_identity=list(native_selection.identity),
         protocol=protocol, comparisons=[], synthetic=[], listening_pairs=[], error=None,
         numeric_passed=False, perceptual_qualified=False,
-        validation_scope='quick_diagnostic' if args.quick else 'full',
+        validation_scope='quick_diagnostic' if args.quick else 'compact_qualification' if args.compact else 'full',
         historical_corpus_provenance='recorded' if 'weights_sha256' in spec else 'unknown; geometry matched')
+    report['real_input_fixture'] = fixture_receipt
     onnx = native = None
     try:
         started = time.perf_counter()
@@ -89,13 +105,13 @@ def run(args):
         report['excluded_short_files'] = [i for i,(a,b) in enumerate(zip(offsets[:-1], offsets[1:])) if b-a < maximum]
         if not starts:
             raise ValueError('No complete real corpus probes')
-        if args.quick:
+        if args.quick or args.compact:
             starts = starts[:1]
-        seed_count = 1 if args.quick else protocol['synthetic_seeds']
-        ola_frames = 32 if args.quick else 128
+        seed_count = 1 if (args.quick or (args.compact and spec['vae_id'] != 'same_s')) else protocol['synthetic_seeds']
+        ola_frames = 32 if args.quick or args.compact else 128
         report['coverage'] = dict(windows=windows, real_positions=len(starts),
             synthetic_seeds=seed_count if args.synthetic else 0, ola_frames=ola_frames,
-            ola_files=1 if args.quick else len(offsets)-1)
+            ola_files=1 if args.quick or args.compact else len(offsets)-1)
         for window in windows:
             for file_index, start in starts:
                 report['comparisons'].append(dict(window=window, start=start, file_index=file_index,
@@ -110,7 +126,7 @@ def run(args):
         window, hop = protocol['ola_window'], protocol['ola_hop']
         meta = onnx.metadata_for(window)
         for index,(start,stop) in enumerate(zip(offsets[:-1],offsets[1:])):
-            if args.quick and index != starts[0][0]:
+            if (args.quick or args.compact) and index != starts[0][0]:
                 continue
             raw = z[int(start):min(int(stop),int(start)+ola_frames)]
             if len(raw) < window:
@@ -156,7 +172,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--audio-dir', type=Path, required=True)
     parser.add_argument('--synthetic', action='store_true')
-    parser.add_argument('--quick', action='store_true', help='Diagnostic only: T2/T8/T32, one real position, one synthetic seed and one 32-frame OLA clip; does not qualify the full campaign')
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--compact', action='store_true', help='Qualification with all windows, one real position, one deterministic seed (eight SAME-S seeds), one 32-frame OLA clip')
+    parser.add_argument('--fixture', type=Path, help='Source-bound real input fixture; preserves original navigation corpus identity')
+    scope.add_argument('--quick', action='store_true', help='Diagnostic only: T2/T8/T32, one real position, one synthetic seed and one 32-frame OLA clip; does not qualify the full campaign')
     add_selection_arguments(parser)
     args = parser.parse_args()
     try:

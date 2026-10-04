@@ -8,7 +8,7 @@ L’application Web est livrée dans le dépôt ou l’archive source (`sdist`),
 
 Le parcours existant ONNX CPU garde les dépendances de `pyproject.toml` / `uv.lock`. Torch reste requis par les composants historiques de navigation/prétraitement ; ONNX n’exige pas la bibliothèque native `stable-audio-3` ni ses poids. Le graphe applicatif SAME-S doit être préparé/livré selon le README et la checklist existante.
 
-Pour le GPU natif, la décision de livraison est de conserver **un environnement séparé**, défini par `requirements-same-s-native.txt` et son verrou `requirements-same-s-native-macos.lock`. Aucun extra mélangeant des versions Torch incompatibles n’est ajouté au verrou principal. Aucun changement des dépendances n’est nécessaire pour les phases 5/6.
+Pour le GPU natif, la décision de livraison est de conserver **un environnement séparé**, défini par `requirements-same-s-native.txt` et son verrou `requirements-same-s-native-macos.lock`. Aucun extra mélangeant des versions Torch incompatibles n’est ajouté au verrou principal. Ce profil décrit la qualification historique. Le contrat d’installation actuel et le profil natif combiné sont décrits dans [INSTALLATION_PROFILES.md](INSTALLATION_PROFILES.md).
 
 Profil macOS arm64 / Python 3.12 déjà vérifié :
 

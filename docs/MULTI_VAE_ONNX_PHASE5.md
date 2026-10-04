@@ -1,6 +1,6 @@
 # Phase 5 — outillage livré, qualification à réaliser ensemble
 
-Implémentation du 4 octobre 2026. Les outils couvrent les quatre VAEs ; la campagne complète et l'écoute ne sont pas déclarées terminées. À la demande de l'utilisateur, cette livraison privilégie le code explicable, quelques vérifications ciblées et des essais manuels partagés. Aucun essai audio physique de dix minutes n'a été lancé pour cette livraison.
+Implémentation du 4 octobre 2026. Les outils couvrent les quatre VAEs ; la qualification physique et l’écoute GPU restent à réaliser. À la demande de l'utilisateur, cette livraison privilégie le code explicable, quelques vérifications ciblées et des essais manuels partagés. Aucun essai audio physique de dix minutes n'a été lancé pour cette livraison.
 
 ## Comment fonctionne le code
 
@@ -18,7 +18,7 @@ Le JSON `multi_vae_phase5_protocol.json` fige les tolérances existantes. Son ha
 
 ## Un premier essai numérique
 
-Pour déboguer rapidement, ajouter `--quick` à la commande ci-dessous et utiliser un autre nom de rapport ainsi qu'un autre dossier audio. Ce mode conserve les tolérances et les deux appels par moteur, mais réduit la couverture à T2/T8/T32, une position réelle, une graine synthétique si demandée et un seul extrait OLA de 32 frames. Avec `--synthetic`, cela représente environ 52 décodages plutôt que 1 652 pour la campagne complète EAR 48k actuelle. Le rapport indique `validation_scope: quick_diagnostic` ; il ne remplace pas la campagne complète. À 48 kHz EAR, le rendu OLA court dure environ 0,56 seconde et sert surtout au diagnostic numérique ; conserver les rendus complets pour une écoute utile.
+Pour déboguer rapidement, ajouter `--quick` à la commande ci-dessous et utiliser un autre nom de rapport ainsi qu'un autre dossier audio. Ce mode conserve les tolérances et les deux appels par moteur, mais réduit la couverture à T2/T8/T32, une position réelle, une graine synthétique si demandée et un seul extrait OLA de 32 frames. Avec `--synthetic`, cela représente environ 52 décodages plutôt que 1 652 pour la campagne complète EAR 48k actuelle. Le rapport indique `validation_scope: quick_diagnostic` ; il ne remplace pas la qualification. À 48 kHz EAR, le rendu OLA court dure environ 0,56 seconde et sert surtout au diagnostic numérique ; conserver les rendus complets pour une écoute utile.
 
 Commandes depuis la racine du projet Python. Exemple EAR 48 kHz utilisant le corpus déjà préparé :
 
@@ -43,6 +43,14 @@ Sans `--synthetic`, le script permet un essai plus court sur le corpus et les WA
 
 Le corpus sélectionne le modèle. Les sources natives sont liées à l'artifact choisi ; une contradiction échoue. Les anciens corpora sans provenance exacte restent indiqués comme tels. Les extraits EAR actuels couvrent le clavecin : cela ne représente pas tous les contenus audio.
 
+## Qualification numérique compacte
+
+`--compact --synthetic` couvre toutes les fenêtres T2–T32, une position réelle, une graine par fenêtre pour les modèles déterministes et huit graines pour SAME-S, puis un extrait OLA de 32 frames. Cela représente 156 décodages pour les modèles déterministes et 604 pour SAME-S, toujours avec deux appels par moteur et les mêmes tolérances. Le manifeste indique `qualification_profile: "compact"`. Le rapport complet EAR 48k CPU déjà fourni satisfait ce profil et n’est pas relancé. `--quick` reste uniquement un diagnostic.
+
+Pour EAR 44k, ajouter `--fixture build/phase3/ear_vae_44k_probes.npz` : ses latents proviennent d’un encodeur dont la source est vérifiée contre l’artifact. Le rapport conserve le hash du corpus de navigation et enregistre séparément le hash/source de la fixture. Cela ne certifie pas la provenance historique du corpus clavecin.
+
+Si les nouveaux rendus diffèrent des WAV déjà écoutés, le claim utilise `listening_report` pour désigner le rapport d’origine. Les avis existants restent attachés aux fichiers exacts ; ils ne sont pas transférés à de nouveaux rendus.
+
 ## Mesurer le transport à ton rythme
 
 Commencer par l'interface : sélectionner le corpus, choisir ONNX CPU, démarrer, changer Random/Manual/Reorganized et les fenêtres, arrêter, sélectionner PyTorch CPU puis MPS et redémarrer. Vérifier aussi le retour au choix explicite après un refresh/reconnect. Si un comportement étonne, conserver le corpus, le moteur, la fenêtre et la commande qui le déclenche : ce sont les entrées utiles pour déboguer ensemble.
@@ -56,11 +64,11 @@ Le banc peut ensuite enregistrer les mêmes familles de transitions. Diagnostic 
   --seconds 20 --output build/phase5/ear_48k_diagnostic.json
 ```
 
-Pour une mesure physique de qualification, utiliser `--navigation production --audio-device "Haut-parleurs MacBook Pro" --seconds 620 --require-zero-underruns`. Le nom doit correspondre au périphérique local. La sortie physique est muette : elle mesure le callback, pas l'écoute. Les 620 secondes laissent une marge pour les arrêts/repréparations ; seul le total de samples rendus doit dépasser 600 secondes. Si ce total reste insuffisant, le rapport échoue sans effacer les mesures. Faire les runs un par un. Une session contient les trois modes, les 16 fenêtres et l'adaptatif ; elle ne prouve pas dix minutes indépendantes sur chaque fenêtre.
+Pour une mesure physique de qualification, utiliser `--navigation production --audio-device "Haut-parleurs MacBook Pro" --seconds 620 --require-zero-underruns`. Le nom doit correspondre au périphérique local. La sortie physique est muette : elle mesure le callback, pas l'écoute. Les 620 secondes laissent une marge pour les arrêts/repréparations ; seul le total de samples attribués à une génération PCM stable doit dépasser 600 secondes. Si ce total reste insuffisant, le rapport échoue sans effacer les mesures. Faire les runs un par un. Une session contient les trois modes, les 16 fenêtres et l'adaptatif ; elle ne prouve pas dix minutes indépendantes sur chaque fenêtre.
 
 Pour un moteur EAR natif, utiliser `.venv-ear`, `--backend pytorch --device cpu` ou `mps`, et les mêmes `--weights`/`--repo` que ci-dessus. Les CPU restent utilisables si le rapport relève des underruns ; on distingue fonctionnalité et temps réel.
 
-Les réactions de commande mesurent l'activation de génération PCM, pas la latence au haut-parleur. Les samples par scénario sont attribués au réglage demandé, avec les transitions actives consignées séparément. Le coût de préparation inclut le warm-up du constructeur natif ; le RSS couvre le processus entier, navigation comprise. Les p99 ont leur nombre d'observations ; quelques appels ne constituent pas une estimation robuste.
+Les réactions de commande mesurent l'activation de génération PCM, pas la latence au haut-parleur. Les samples par scénario sont attribués à la génération PCM effectivement rendue. Les transitions mélangées, les générations non attribuées et les callbacks avec underrun sont exclus. `callback_audio_seconds` conserve le temps total du callback ; `active_audio_seconds` mesure uniquement le temps attribué. Le coût de préparation inclut le warm-up du constructeur natif ; le RSS couvre le processus entier, navigation comprise. Les p99 ont leur nombre d'observations ; quelques appels ne constituent pas une estimation robuste.
 
 Pour vérifier les changements de moteur et le reload offline sans audio :
 
@@ -71,6 +79,8 @@ Pour vérifier les changements de moteur et le reload offline sans audio :
   --repo /Users/dthibault/Documents/GitHub/EAR_VAE --gpu mps \
   --output build/phase5/ear_vae_48k_lifecycle.json
 ```
+
+Pour restreindre une session, ajouter par exemple `--windows 8 16 --modes manual --no-adaptive`. Le claim correspondant déclare `realtime_profile: {"windows": [8, 16], "modes": ["manual"], "adaptive": false}`. Sans ces options, le profil inclut toutes les fenêtres, les trois modes et l’adaptatif. L’adaptatif utilise toutes les fenêtres supportées entre les bornes min/max du profil et commence par Stop/Start. Les 600 secondes portent sur le profil combiné, avec au moins une seconde stable par membre, et non sur chaque réglage individuellement.
 
 ## Écoute et matrice finale
 
@@ -102,10 +112,18 @@ La matrice réelle en cours est dans `build/phase5/qualification.json`. Les diag
 
 ## Vérifications effectuées pour cette livraison
 
-La poursuite du 4 octobre couvre maintenant les quatre modèles : diagnostics numériques courts CPU et MPS réussis, puis changements arrêtés ONNX CPU → PyTorch CPU → MPS → ONNX CPU et rechargement dans un processus neuf hors réseau réussis. Les anciens runs CPU seuls sont conservés. La qualification physique SAME-S historique passe son checker et reste séparée des nouveaux rapports. Cinq tests ciblés du vérificateur passent ; la suite complète n'a pas été relancée. Aucun nouveau run physique long n'a été lancé.
+Les 29 tests ciblés passent et couvrent les gates historiques, les profils compacts/restreints, la provenance EAR, les rapports d’écoute séparés et l’attribution PCM au passage d’une génération à l’autre. La suite complète n’est pas relancée, car les interfaces de production restent inchangées.
 
-Le retour utilisateur « Pas de dégradation audible » est enregistré pour une paire ONNX CPU/PyTorch CPU de chacun des quatre VAEs, dans [la fiche d'écoute](multi_vae_phase5_listening.json), avec les hashes exacts des WAV. Les durées sont 2,5 secondes pour EAR 48k, 1,3 seconde pour Stable Audio Open, 0,65 seconde pour EAR 44k et 2,6 secondes pour SAME-S. Cette validation concerne uniquement ces courts extraits CPU. Les rendus GPU, la couverture numérique complète des nouvelles campagnes et les nouvelles qualifications physiques restent en attente.
+Les quatre modèles disposent de diagnostics CPU/MPS réussis et de changements arrêtés ONNX CPU → PyTorch CPU → MPS → ONNX CPU, suivis d’un reload dans un processus neuf hors réseau. La qualification physique SAME-S historique reste séparée et passe son ancien checker.
 
-Le 4 octobre, le rapport complet EAR 48k CPU produit par l'utilisateur a été réutilisé : 192/192 probes réelles, 128/128 synthétiques et 3/3 paires OLA passent. Le nouveau contrôle MPS avec `--quick` passe ses 3 probes réelles, 3 synthétiques et sa paire OLA. MPS était invisible dans le sandbox ; la relance autorisée hors sandbox a réussi. Ces résultats et les hashes des rapports locaux sont consignés dans [le relevé des contrôles](multi_vae_phase5_checks.json). Quatre tests ciblés du vérificateur passent, dont le rejet explicite d'un diagnostic court comme preuve de campagne complète. Aucune session physique longue n'a été ajoutée lors de ce contrôle.
+Le retour utilisateur « Pas de dégradation audible » est enregistré pour une paire ONNX CPU/PyTorch CPU par VAE dans [la fiche d’écoute](multi_vae_phase5_listening.json), avec les hashes exacts. Durées : EAR 48k 2,5 s, Stable Audio Open 1,3 s, EAR 44k 0,65 s, SAME-S 2,6 s. Le verdict concerne uniquement ces extraits CPU. Les rendus GPU restent à écouter.
 
-19 tests ciblés ont passé : les gates historiques et trois nouveaux cas portant sur l'underrun CPU, l'identité/durée physique et l'attribution des WAV d'écoute. Les entrées CLI se chargent. Une probe réelle EAR 48k CPU/ONNX à T8 a passé : 7 680 samples stéréo, RMSE 8.93e-8, erreur maximale 6.56e-7. Un smoke logiciel de deux secondes du banc a généré le nouveau rapport : 1,28 seconde de callback actif et 55 underruns buffer sur EAR ONNX CPU. Il confirme le format des mesures et conserve cet échec de performance, sans en déduire une qualification. Ces contrôles ne qualifient ni temps réel ni écoute. La suite complète, les longs runs, les changements physiques de moteur et la revue d'écoute restent à réaliser selon les besoins rencontrés avec l'utilisateur.
+Le rapport complet EAR 48k CPU fourni par l’utilisateur est conservé : 192 probes réelles, 128 synthétiques et trois paires OLA réussies. Les trois qualifications compactes CPU passent : SAME-S 16 probes réelles + 128 synthétiques + une OLA ; Stable Audio Open et EAR 44k chacun 16 réelles + 16 synthétiques + une OLA. Les huit claims CPU passent avec leurs lifecycle et écoutes. La livraison ajoute ces qualifications compactes pour les autres CPU ; les rapports et leurs hashes sont recensés dans [le relevé des contrôles](multi_vae_phase5_checks.json). La fixture EAR 44k fournit les entrées numériques à provenance vérifiée ; l’écoute existante porte toujours sur l’ancien extrait du corpus.
+
+La matrice locale est `build/phase5/qualification.json` ; `build/phase5/qualification_cpu.json` isole les huit claims CPU réussis sans claim temps réel. Les diagnostics GPU courts restent `diagnostic_passed`, avec fonctionnement `observed`, jusqu’à leur qualification numérique complète. Les lifecycle restent indépendants du protocole numérique. Aucune nouvelle session physique longue n’est lancée ; les résultats physiques manquants restent `not_tested`.
+
+Un ancien smoke logiciel EAR 48k de deux secondes avait compté 55 underruns buffer. Cette limite est conservée comme diagnostic historique ; son schéma ne permet pas une qualification actuelle. Le nouvel essai logiciel de quatre secondes, Manual T8/T16, rend 3,22 s de callback mais seulement 0,47 s de PCM attribué, avec 129 underruns buffer et la transition T16 non finalisée. Il vérifie le parcours du banc et conserve cet échec de performance, sans qualification physique.
+
+## Corrections après les essais manuels
+
+Les observations utilisateur ont conduit à activer le parallélisme CPU et les optimisations ORT, puis à préparer une fenêtre latente suivante pendant l’inférence. Le court run logiciel Rack T8 avec navigation de production passe maintenant sans underrun ; il ne remplace pas l’écoute ni la qualification physique. Le décodage natif utilise un processus persistant séparé et un registre générique de sources et d’overrides facultatifs. Le runtime utilise l’interpréteur courant par défaut ; les dépendances natives viennent des profils d’installation déclarés et isole le runtime Metal du décodeur de celui de la navigation. Le check EAR MPS T8→T30→T8 passe. Voir [les chemins, l’ownership et le protocole de retest](NATIVE_DECODER_RUNTIMES.md).

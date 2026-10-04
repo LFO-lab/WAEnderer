@@ -207,6 +207,91 @@
       },
       "max_abs_error": 3.5371631383895874e-06,
       "max_rmse": 3.06058182344779e-07
+    },
+    {
+      "report": "build/phase5/same_s_cpu_compact.json",
+      "sha256": "9dabdfea13c8aaadeb4bb93d5248e50062d57e1d6aa18c6dcd1fa78ce68c9c16",
+      "vae_id": "same_s",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "compact_qualification",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 16,
+        "synthetic": 128,
+        "listening_pairs": 1
+      },
+      "real_input_fixture": null
+    },
+    {
+      "report": "build/phase5/stable_audio_open_cpu_compact.json",
+      "sha256": "961cf887453e27ce09f9e498fb7124a3f710a210e6b812225d0c471638dc286b",
+      "vae_id": "stable_audio_open",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "compact_qualification",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 16,
+        "synthetic": 16,
+        "listening_pairs": 1
+      },
+      "real_input_fixture": null
+    },
+    {
+      "report": "build/phase5/ear_vae_44k_cpu_compact.json",
+      "sha256": "d760027af5705ee4aebe4012fcbd7777c7ec30780eace438dc786a9db6f4bbab",
+      "vae_id": "ear_vae_44k",
+      "device": "cpu",
+      "error": null,
+      "validation_scope": "compact_qualification",
+      "numeric_passed": true,
+      "counts": {
+        "comparisons": 16,
+        "synthetic": 16,
+        "listening_pairs": 1
+      },
+      "real_input_fixture": {
+        "path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/build/phase3/ear_vae_44k_probes.npz",
+        "sha256": "c99eac5d914634056a2accf87a08025c427a2e52b4d56ea1c0e32017c7c7efde",
+        "source": {
+          "code_sha256": "85cefc7ff647004085529aef775a9d63b68874b33754d65c857979eb326b5787",
+          "config_sha256": "ef19bcb81717fe1c924316419fc5a7040651e8e3ca47b6e17e29241b6bb36303",
+          "effective_config_sha256": "edfaa0bfc72b0bed8599d038e370fc6df9e995d2624099a94925b31a986113ba",
+          "model": "earlab/EAR_VAE",
+          "reconciliation": "checkpoint-transformer-keys-v1",
+          "revision": "4ce37867bc09af11e691e72708f14996eb38a85b",
+          "transformer": "present",
+          "weights_sha256": "0362dc7e96566869747dbe079b0a6d71c090b0a3a5d5077779e7be17c096d9d5"
+        },
+        "audio_sha256": "9bdcef8251bc0e60a9fb07d7588fe4297c6394bb7855e3beefa46d557f171e93"
+      }
+    },
+    {
+      "report": "build/phase5/ear_vae_48k_profile_smoke.json",
+      "sha256": "cfdd6908c978397b2a1a96355926f0dd21f277b1df90dc48905830749133e04b",
+      "vae_id": "ear_vae_48k",
+      "device": "cpu",
+      "error": null,
+      "realtime_profile": {
+        "windows": [
+          8,
+          16
+        ],
+        "modes": [
+          "manual"
+        ],
+        "adaptive": false
+      },
+      "active_audio_seconds": 0.4693333333333333,
+      "callback_audio_seconds": 3.2213333333333334,
+      "scenario_samples": {
+        "manual:T8": 22528
+      },
+      "excluded_samples": 132096,
+      "buffer_underruns": 129,
+      "device_underruns": 0,
+      "qualification": "software diagnostic only"
     }
   ],
   "listening": "No audible degradation reported by the user for one ONNX/native CPU pair per VAE; GPU pairs not reviewed.",
@@ -215,7 +300,8 @@
     "CPU full report was supplied by the user and reused without rerunning.",
     "MPS quick diagnostic was run outside the sandbox after the restricted environment reported MPS unavailable.",
     "SAME-S, Stable Audio Open and EAR 44k CPU quick diagnostics passed; all four models passed stopped ONNX/native CPU/ONNX lifecycle and fresh offline reload. Historical SAME-S qualification is preserved separately, not converted into new reports.",
-    "All four models passed CPU and MPS quick diagnostics and CPU/MPS/ONNX lifecycle with fresh offline reload. Stable Audio Open native CPU/MPS reference passed all even windows on real and synthetic probes before its ONNX/MPS evaluation; its separate frozen GPU protocol preserves the original CPU report digests."
+    "All four models passed CPU and MPS quick diagnostics and CPU/MPS/ONNX lifecycle with fresh offline reload. Stable Audio Open native CPU/MPS reference passed all even windows on real and synthetic probes before its ONNX/MPS evaluation; its separate frozen GPU protocol preserves the original CPU report digests.",
+    "Compact CPU qualification passed for SAME-S (16 real, 128 synthetic, one OLA), Stable Audio Open and source-bound EAR 44k (16 real, 16 synthetic, one OLA each). Full EAR 48k CPU evidence reused. Earlier reviewed CPU WAVs remain bound to their original reports. All eight CPU claims pass; GPU and physical evidence remain pending."
   ],
   "historical_same_s_qualification_passed": true,
   "campaign_matrix": "build/phase5/qualification.json",
@@ -224,21 +310,23 @@
       "vae_id": "same_s",
       "backend": "onnxruntime",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "same_s",
       "backend": "pytorch",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "same_s",
@@ -248,27 +336,30 @@
       "numerical": "diagnostic_passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "pending"
+      "listening": "pending",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "stable_audio_open",
       "backend": "onnxruntime",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "stable_audio_open",
       "backend": "pytorch",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "stable_audio_open",
@@ -278,27 +369,30 @@
       "numerical": "diagnostic_passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "pending"
+      "listening": "pending",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_44k",
       "backend": "onnxruntime",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_44k",
       "backend": "pytorch",
       "device": "cpu",
-      "functional": "observed",
-      "numerical": "diagnostic_passed",
+      "functional": "passed",
+      "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_44k",
@@ -308,7 +402,8 @@
       "numerical": "diagnostic_passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "pending"
+      "listening": "pending",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_48k",
@@ -318,7 +413,8 @@
       "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_48k",
@@ -328,7 +424,8 @@
       "numerical": "passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "passed"
+      "listening": "passed",
+      "qualification_profile": "compact"
     },
     {
       "vae_id": "ear_vae_48k",
@@ -338,7 +435,11 @@
       "numerical": "diagnostic_passed",
       "realtime": "not_tested",
       "lifecycle": "passed",
-      "listening": "pending"
+      "listening": "pending",
+      "qualification_profile": "compact"
     }
-  ]
+  ],
+  "cpu_campaign_passed": true,
+  "cpu_campaign_matrix": "build/phase5/qualification_cpu.json",
+  "targeted_tests_passed": 29
 }

@@ -136,8 +136,29 @@ class PipelineManager:
             "server_namespace": self._server_namespace,
         })
 
-    def _list_decoders(self, data):
+    def _available_decoders(self, spec, data):
         from ..vae.decoder_availability import decoder_availability
+        from ..vae.native_runtime import native_config, request_once
+        native = native_config(spec['vae_id'], data)
+        entries = decoder_availability(self._decoder_resource_dir, corpus_spec=spec,
+            weight_path=native.get('vae_weight_path',''), repo_path=native.get('vae_repo_path',''),
+            config_path=native.get('vae_config_path',''), store_dir=self._preparation.store)
+        if native.get('decoder_python'):
+            try:
+                remote = request_once(native['decoder_python'], 'availability', dict(
+                    corpus_spec=spec, weight_path=native.get('vae_weight_path',''),
+                    repo_path=native.get('vae_repo_path',''), config_path=native.get('vae_config_path',''),
+                    store_dir=str(self._preparation.store)))
+                entries = [entry for entry in entries if entry['backend']=='onnxruntime'] + [
+                    dict(entry, runtime_python=native['decoder_python'],
+                        detail=entry['detail']+' Interpreter: '+native['decoder_python']) for entry in remote if entry['backend']=='pytorch']
+            except Exception as exc:
+                for entry in entries:
+                    if entry['backend']=='pytorch':
+                        entry.update(selectable=False, detail=str(exc), reason_codes=['native_runtime_unavailable'])
+        return entries
+
+    def _list_decoders(self, data):
         corpus_dir = data.get('corpus_dir')
         response = {'type': 'pipeline_decoder_list'}
         if data.get('request_id'):
@@ -145,13 +166,11 @@ class PipelineManager:
                             server_namespace=self._server_namespace, preparation_supported=True)
         try:
             if not corpus_dir:
-                response['decoders'] = decoder_availability(self._decoder_resource_dir)
+                response['decoders'] = self._available_decoders({'vae_id':'same_s'}, data)
             else:
                 from ..vae.corpus_decoder import corpus_decoder_spec
                 spec = corpus_decoder_spec(corpus_dir, validate=False)
-                entries = decoder_availability(self._decoder_resource_dir, corpus_spec=spec,
-                    weight_path=data.get('vae_weight_path',''), repo_path=data.get('vae_repo_path',''),
-                    config_path=data.get('vae_config_path',''), store_dir=self._preparation.store)
+                entries = self._available_decoders(spec, data)
                 failure = self._runtime_failure
                 if failure and failure['corpus_dir'] == corpus_dir:
                     for entry in entries:
@@ -519,7 +538,9 @@ class PipelineManager:
                 decoder_window = 8
             self._perform_attempt = dict(corpus_dir=corpus_dir,backend=config.get('decoder_backend','onnxruntime'),
                 device=config.get('decoder_device','cpu'),model_identity=config.get('decoder_model_identity'))
-            selection = select_decoder({"decoder_store_dir": str(self._preparation.store), **config}, resource_dir=self._decoder_resource_dir, corpus_spec=corpus_spec)
+            from ..vae.native_runtime import native_config
+            decoder_config = native_config((corpus_spec or {}).get('vae_id','same_s'), config)
+            selection = select_decoder({"decoder_store_dir": str(self._preparation.store), **decoder_config}, resource_dir=self._decoder_resource_dir, corpus_spec=corpus_spec)
             self._perform_error = None
             self.phase = "preparing"
             self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
