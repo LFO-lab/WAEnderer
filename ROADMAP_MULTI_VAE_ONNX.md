@@ -1,6 +1,6 @@
 # Roadmap — ONNX coverage for every registered VAE
 
-Status: **phases 0–2 completed on 2 October 2026; phase 3 completed on 3 October 2026; phases 4–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
+Status: **phases 0–2 completed on 2 October 2026; phases 3–4 completed on 3 October 2026; phases 5–6 pending**. See [phase 0 findings](docs/MULTI_VAE_ONNX_PHASE0.md) and [recorded inventory](docs/multi_vae_phase0_inventory.json).
 
 This extends the SAME-S dual-inference roadmap. The current uncommitted multi-VAE PyTorch restoration is the starting point, not evidence that multi-VAE ONNX is implemented. Existing SAME-S qualification remains specific to its recorded hardware/scenarios.
 
@@ -94,17 +94,19 @@ The user supplied both EAR checkpoints, verified on disk in phase 0: `/Users/dth
 
 ## Phase 4 — Consistent “Decode with” choices and preparation flow
 
-Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (3 October 2026; implementation pending).
+Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (implemented and validated on 3 October 2026).
 
-- [ ] For the selected corpus, list `ONNX · CPU · <VAE>`, `PyTorch · CPU · <VAE>`, and relevant GPU choices. SAME-S gets the same explicit model labels and CPU entry.
-- [ ] Keep unavailable options visible with their reason: missing native weights, missing ONNX artifact, missing runtime/library, unavailable hardware, or failed validation.
-- [ ] Separate native-weight presence from ONNX-artifact presence. An existing ONNX graph may be usable even when native export dependencies are absent.
-- [ ] Expose explicit preparation, progress, failure and retry through the common CLI/job implementation. Block preparation/reconfiguration that would replace a model in active use.
-- [ ] Preserve the user's explicit backend choice across refresh/reconnect and for the same model identity. Never silently change PyTorch CPU to ONNX or GPU because of performance.
-- [ ] For a new corpus with no saved choice, prefer an already validated ONNX CPU artifact; otherwise present available choices without starting an implicit export or playback.
-- [ ] Test corpus changes, stale discovery responses, missing EAR, reload, stop/change/start, failed preparation and current-model display.
+- [x] For the selected corpus, list `ONNX · CPU · <VAE>`, `PyTorch · CPU · <VAE>`, and relevant GPU choices. SAME-S gets the same explicit model labels and CPU entry.
+- [x] Keep unavailable options visible with their reason: missing native weights, missing ONNX artifact, missing runtime/library, unavailable hardware, or failed validation.
+- [x] Separate native-weight presence from ONNX-artifact presence. An existing ONNX graph may be usable even when native export dependencies are absent.
+- [x] Expose explicit preparation, progress, failure and retry through the common CLI/job implementation. Block preparation/reconfiguration that would replace a model in active use.
+- [x] Preserve the user's explicit backend choice across refresh/reconnect and for the same model identity. Never silently change PyTorch CPU to ONNX or GPU because of performance.
+- [x] For a new corpus with no saved choice, prefer an already validated ONNX CPU artifact; otherwise present available choices without starting an implicit export or playback.
+- [x] Test corpus changes, stale discovery responses, missing EAR, reload, stop/change/start, failed preparation and current-model display.
 
 **Exit:** each supported execution option is visible for the correct VAE, availability is understandable, and SAME-S ONNX/CPU-native options do not disappear through stale frontend state. PyTorch CPU remains selectable after successful preparation even if it underruns.
+
+**Result:** consistent availability and model labels, shared offline CLI/Web preparation jobs, safe publication/lifecycle ownership, explicit CPU preference persistence and correlated discovery are implemented. Real four-VAE offline server/reconnect/playback checks and a fresh EAR export passed. See [Phase 4 delivery and evidence](docs/MULTI_VAE_ONNX_PHASE4.md).
 
 ## Phase 5 — Numerical, audio and runtime validation
 
@@ -132,8 +134,8 @@ Implementation plan: [Phase 4 plan](docs/MULTI_VAE_ONNX_PHASE4_PLAN.md) (3 Octob
 
 ## Recommended implementation order
 
-Work in reviewed increments: **0 → 1 → 2 → 4 → 5 → 6 for SAME-S and Stable Audio Open**. Phase 3 has now passed its EAR numerical/export gates. Continue phases 4–6 across all four registered VAEs.
+Work in reviewed increments: **0 → 1 → 2 → 4 → 5 → 6 for SAME-S and Stable Audio Open**. Phase 3 has now passed its EAR numerical/export gates. Phase 4 now provides the common preparation and selection flow. Continue phases 5–6 across all four registered VAEs.
 
 Do not implement the whole roadmap in one unchecked change. First verify SAME-S compatibility and CPU menu coverage; then complete Stable Audio Open end to end. Exporter complexity and CPU speed should be measured before estimating or promising complete EAR support.
 
-All four registered VAEs now have real validated decoder artifacts. The broader roadmap remains open for Phase 4 preparation/UI flow, Phase 5 qualification and Phase 6 packaging.
+All four registered VAEs now have real validated decoder artifacts. The broader roadmap remains open for Phase 5 qualification and Phase 6 packaging.

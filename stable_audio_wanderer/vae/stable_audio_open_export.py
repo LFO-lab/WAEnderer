@@ -57,7 +57,7 @@ def validate_graph(wrapper, path, samples):
     return export_common.validate_graph(wrapper, path, samples, ratio=2048, channels=2, tolerances=TOLERANCES)
 
 
-def prepare(corpus, *, store_dir=None, revision=SOURCE_REVISION, opset=18, force=False):
+def prepare(corpus, *, store_dir=None, revision=SOURCE_REVISION, opset=18, force=False, publish_fn=None):
     import torch
     torch.set_num_threads(1)
     from .corpus_decoder import corpus_decoder_spec
@@ -100,4 +100,4 @@ def prepare(corpus, *, store_dir=None, revision=SOURCE_REVISION, opset=18, force
         settings=settings, tolerances=TOLERANCES, store_dir=store_dir,
         evidence=dict(corpus=str(Path(corpus).resolve()),
             corpus_sha256=sha256(Path(corpus)/'corpus.npz' if Path(corpus).is_dir() else Path(corpus))),
-        export_fn=export_graph, validate_fn=validate_graph, publish_fn=publish_artifact)
+        export_fn=export_graph, validate_fn=validate_graph, publish_fn=publish_fn or publish_artifact)

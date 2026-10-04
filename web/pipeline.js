@@ -20,9 +20,63 @@ let decoderInitialWindow = 2;
 let decoderCommandPending = false;
 let pipelineConnectionReady = true;
 let activePipelineDecoder = null;
+let decoderRequestNumber = 0;
+let decoderLatestRequest = null;
+let decoderFingerprint = null;
+let decoderModelIdentity = null;
+let decoderServerNamespace = 'legacy';
+let decoderVae = null;
+let preparationSupported = false;
+let preparationJob = null;
+let preparationRequestPending = false;
+let decoderSourceTimer = null;
+const decoderClientId = Math.random().toString(36).slice(2);
+const decoderPreferences = new Map();
+
+function decoderSources() {
+    const value = id => document.getElementById(id)?.value.trim() || '';
+    return {vae_weight_path:value('perform-vae-weight-path'), vae_repo_path:value('perform-vae-repo-path'),
+        vae_config_path:value('perform-vae-config-path')};
+}
+function currentDecoderFingerprint() {
+    return JSON.stringify({corpus_dir:pipelineCorpusDir,...decoderSources()});
+}
+function decoderPreferenceKey() {
+    return decoderModelIdentity ? `waenderer.decoder.v1:${decoderServerNamespace}:${pipelineCorpusDir}:${decoderModelIdentity}` : null;
+}
+function savedDecoderPreference() {
+    const key = decoderPreferenceKey();
+    if (!key) return null;
+    try { return localStorage.getItem(key) || decoderPreferences.get(key); }
+    catch (_) { return decoderPreferences.get(key); }
+}
+function saveDecoderPreference() {
+    const key=decoderPreferenceKey();
+    const value=document.getElementById('perform-decoder-engine')?.value;
+    if (!key || !value) return;
+    decoderPreferences.set(key,value);
+    try { localStorage.setItem(key,value); } catch (_) {}
+}
+function preparationBusy() {
+    return preparationRequestPending || preparationJob?.status === 'running';
+}
+function onPreparationJob(job) {
+    if (!job) return;
+    if ((job.generation || 0) < (preparationJob?.generation || 0)) return;
+    if (preparationJob?.job_id === job.job_id && job.sequence <= preparationJob.sequence) return;
+    const changed=preparationJob?.job_id !== job.job_id || preparationJob?.status !== job.status;
+    preparationJob=job;
+    preparationRequestPending=false;
+    const element=document.getElementById('perform-prepare-status');
+    const statusLabels={running:'Preparing',prepared:'Ready',already_valid:'Ready',failed:'Failed',missing_weights:'Weights required',missing_dependencies:'Export dependencies required',missing_inputs:'Inputs required',busy:'Busy'};
+    if (element) element.textContent=`${job.vae_id}: ${statusLabels[job.status] || job.status} · ${job.detail || ''}`;
+    if (changed && job.status !== 'running' && pipelineCorpusDir) requestDecoderAvailability();
+    updateDecoderControls();
+}
+
 
 function selectedDecoderChoice() {
-    const value = document.getElementById('perform-decoder-engine')?.value || 'onnxruntime|cpu';
+    const value = document.getElementById('perform-decoder-engine')?.value ?? '';
     const [backend, device] = value.split('|');
     return {backend, device};
 }
@@ -32,11 +86,20 @@ function updateDecoderAvailability() {
     const selected = selectedDecoderChoice();
     const choice = decoderChoices?.find(item => item.backend === selected.backend && item.device === selected.device);
     if (element) element.textContent = choice
-        ? `Hardware: ${choice.hardware ? 'detected' : 'unavailable'} · Dependencies: ${choice.dependencies ? 'present' : 'missing'} · Weights: ${choice.weights ? 'present' : 'missing'}. ${choice.detail}`
-        : 'Availability not checked. Validation runs on Start Perform.';
+        ? `Native source: ${choice.native_source_present ?? choice.weights ? 'present' : 'missing'} · ONNX artifact: ${choice.artifact_verified ? 'verified' : 'unavailable'}. ${choice.detail}`
+        : 'Choose a decoder after checking availability.';
 }
 
 function onDecoderList(data) {
+    if (data.corpus_dir && data.corpus_dir !== pipelineCorpusDir) return;
+    if (data.request_id && (data.request_id !== decoderLatestRequest || data.fingerprint !== currentDecoderFingerprint())) return;
+    if (data.server_namespace) decoderServerNamespace=data.server_namespace;
+    if ('preparation_supported' in data) preparationSupported=data.preparation_supported;
+    const identityChanged=decoderModelIdentity !== (data.model_identity || null);
+    decoderModelIdentity=data.model_identity || null;
+    decoderVae=data.vae_id || 'same_s';
+    const modelLabel=document.getElementById('perform-decoder-model');
+    if (modelLabel) modelLabel.textContent=`Corpus VAE: ${decoderVae}`;
     if (data.corpus_dir && data.corpus_dir !== pipelineCorpusDir) return;
     if (pipelineCorpusDir && !data.corpus_dir && decoderChoiceCorpus) return;
     const corpusChanged = Boolean(data.corpus_dir && data.corpus_dir !== decoderChoiceCorpus);
@@ -51,16 +114,24 @@ function onDecoderList(data) {
     const select = document.getElementById('perform-decoder-engine');
     if (select) {
         let previous = select.value || 'onnxruntime|cpu';
-        if (corpusChanged && pipelinePhase !== 'perform' && data.vae_id !== 'same_s') {
-            const preferred = decoderChoices.find(c => c.selectable && c.device !== 'cpu') || decoderChoices.find(c => c.selectable);
-            if (preferred) previous = `${preferred.backend}|${preferred.device}`;
-        } else if (corpusChanged && pipelinePhase !== 'perform') previous = 'onnxruntime|cpu';
+        if (pipelinePhase !== 'perform') {
+            const saved=savedDecoderPreference();
+            if (saved) previous=saved;
+            else if (corpusChanged || identityChanged || !previous) {
+                const preferred=decoderChoices.find(c => c.backend === 'onnxruntime' && c.device === 'cpu' && c.selectable && c.artifact_verified !== false);
+                previous=preferred ? 'onnxruntime|cpu' : '';
+            }
+        }
         select.innerHTML = '';
+        const placeholder=document.createElement('option');
+        placeholder.value=''; placeholder.textContent='Choose a decoder'; placeholder.disabled=true;
+        select.appendChild(placeholder);
         decoderChoices.forEach(choice => {
             const option = document.createElement('option');
             option.value = `${choice.backend}|${choice.device}`;
             option.textContent = choice.label + (choice.selectable ? '' : ' — unavailable');
             option.disabled = !choice.selectable;
+            option.title=choice.detail || '';
             select.appendChild(option);
         });
         // Never silently replace a requested or active device with another one.
@@ -71,6 +142,16 @@ function onDecoderList(data) {
         }
         select.value = previous;
     }
+    const unavailable=document.getElementById('perform-decoder-unavailable');
+    if (unavailable) {
+        unavailable.innerHTML='';
+        decoderChoices.filter(c=>!c.selectable).forEach(choice=>{
+            const row=document.createElement('li');
+            row.textContent=`${choice.label}: ${choice.detail}`;
+            unavailable.appendChild(row);
+        });
+    }
+    try { if (pipelineCorpusDir) localStorage.setItem(`waenderer.corpus.v1:${decoderServerNamespace}`,pipelineCorpusDir); } catch (_) {}
     updateDecoderAvailability();
     if (data.error) setDecoderStatus(`Error: ${data.error}`, 'error');
     updateDecoderControls();
@@ -81,6 +162,7 @@ function pipelineDisconnected() {
     decoderCommandPending = false;
     decoderWindowControlsAvailable = false;
     activePipelineDecoder = null;
+    preparationRequestPending=false;
     if (typeof updateDecoderRuntimeDisplay === 'function') updateDecoderRuntimeDisplay({});
     setDecoderStatus('Disconnected — active decoder unknown. Reconnect before changing it.', 'error');
     updateDecoderControls();
@@ -102,7 +184,7 @@ function applyDecoderPhase(data) {
             }
             select.value = value;
         }
-        setDecoderStatus(`Active: ${decoder.backend} · ${device} · preparation validated`, 'ok');
+        setDecoderStatus(`Active: ${decoder.vae_id || decoderVae || ''} · ${decoder.backend} · ${device} · runtime validated`, 'ok');
     } else if (pipelinePhase === 'preparing') {
         setDecoderStatus('Loading and warming decoder… No active performance.');
     } else if (pipelinePhase === 'stopping') {
@@ -227,9 +309,23 @@ function updateDecoderControls() {
     });
     const requested = selectedDecoderChoice();
     const available = decoderChoices?.find(item => item.backend === requested.backend && item.device === requested.device);
-    const ready = pipelineConnectionReady && !decoderCommandPending;
+    const ready = pipelineConnectionReady && !decoderCommandPending && !preparationBusy();
+    for (const id of ['pp-start-btn','train-start-btn','pp-use-corpus-btn']) {
+        const button=document.getElementById(id);
+        if (button) button.disabled=!ready || pipelinePhase !== 'idle' || (id === 'train-start-btn' && !pipelineCorpusDir);
+    }
     const engine = document.getElementById('perform-decoder-engine');
     if (engine) engine.disabled = !ready || pipelinePhase !== 'idle';
+    for (const id of ['perform-vae-repo-path','perform-vae-config-path']) {
+        const field=document.getElementById(id);
+        if (field) field.disabled=!ready || pipelinePhase !== 'idle';
+    }
+    const prepare=document.getElementById('perform-prepare-btn');
+    if (prepare) {
+        prepare.disabled=!ready || pipelinePhase !== 'idle' || !pipelineCorpusDir || !decoderVae || !decoderChoices?.length || !preparationSupported;
+        prepare.textContent=preparationJob && !['running','prepared','already_valid'].includes(preparationJob.status) ? 'Retry ONNX preparation' : 'Prepare ONNX decoder';
+        prepare.title=preparationSupported ? '' : 'Reconnect to an updated server to prepare decoders';
+    }
     const weights = document.getElementById('perform-vae-weight-path');
     if (weights) weights.disabled = !ready || pipelinePhase !== 'idle';
     const stopPerform = document.getElementById('perform-stop-btn');
@@ -315,12 +411,22 @@ function handlePipelineMessage(data) {
     const type = data.type;
     pipelineServerSeen = true;
 
-    if (type === 'pipeline_decoder_list') {
+    if (type === 'pipeline_preparation') {
+        onPreparationJob(data.job);
+    } else if (type === 'pipeline_decoder_list') {
         onDecoderList(data);
     } else if (type === 'pipeline_state') {
+        if ('preparation_supported' in data) preparationSupported=data.preparation_supported;
+        if (data.server_namespace) decoderServerNamespace=data.server_namespace;
+        if (data.preparation) onPreparationJob(data.preparation);
+        if (data.error) preparationRequestPending=false;
         pipelinePhase = data.phase || 'idle';
         if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
-        setPipelineCorpusDir(data.corpus_dir);
+        let restoredCorpus=data.corpus_dir;
+        if (!restoredCorpus && !pipelineCorpusDir && pipelinePhase === 'idle') {
+            try { restoredCorpus=localStorage.getItem(`waenderer.corpus.v1:${decoderServerNamespace}`); } catch (_) {}
+        }
+        setPipelineCorpusDir(restoredCorpus);
         applyDecoderPhase(data);
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
@@ -587,7 +693,7 @@ function onTrainComplete(data) {
 
 function setupPipelineControls() {
     populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
-    setDecoderStatus('No active decoder. ONNX · CPU selected.');
+    setDecoderStatus('No active decoder. Select a corpus and choose a decoder.');
     // Tab click handlers
     ['preprocess', 'train', 'perform'].forEach(tab => {
         const el = document.getElementById(`phase-${tab}`);
@@ -718,11 +824,30 @@ function setupPipelineControls() {
     }
 
     document.getElementById('perform-decoder-engine')?.addEventListener('change', () => {
+        saveDecoderPreference();
         updateDecoderAvailability();
         updateDecoderControls();
     });
+    for (const id of ['perform-vae-weight-path','perform-vae-repo-path','perform-vae-config-path']) {
+        document.getElementById(id)?.addEventListener('input', () => {
+            decoderChoices=[];
+            decoderModelIdentity=null;
+            updateDecoderControls();
+            if (decoderSourceTimer) clearTimeout(decoderSourceTimer);
+            decoderSourceTimer=setTimeout(requestDecoderAvailability,200);
+        });
+    }
+    document.getElementById('perform-prepare-btn')?.addEventListener('click', () => {
+        if (!preparationSupported || preparationBusy() || pipelinePhase !== 'idle') return;
+        const source=decoderSources();
+        const request={vae_id:decoderVae};
+        if (decoderVae?.startsWith('ear_')) Object.assign(request, {weights:source.vae_weight_path,repo:source.vae_repo_path,config:source.vae_config_path});
+        preparationRequestPending=sendPipelineMessage({type:'pipeline_prepare_decoder',corpus_dir:pipelineCorpusDir,
+            fingerprint:currentDecoderFingerprint(),request});
+        updateDecoderControls();
+    });
     document.getElementById('perform-decoder-refresh')?.addEventListener('click', () => {
-        requestDecoderAvailability();
+        requestDecoderAvailability(true);
     });
     document.getElementById('perform-stop-btn')?.addEventListener('click', () => {
         if (decoderCommandPending || !['perform', 'error'].includes(pipelinePhase)) return;
@@ -748,7 +873,8 @@ function setupPipelineControls() {
                     decoder_window: decoderWindow,
                     decoder_backend: choice.backend,
                     decoder_device: choice.device,
-                    vae_weight_path: document.getElementById('perform-vae-weight-path')?.value.trim() || '',
+                    ...decoderSources(),
+                    decoder_model_identity: decoderModelIdentity,
                 },
             });
             if (sent) {
@@ -849,7 +975,11 @@ if (document.readyState === 'loading') {
 }
 
 
-function requestDecoderAvailability() {
-    sendPipelineMessage({type: 'pipeline_list_decoders', corpus_dir: pipelineCorpusDir,
-        vae_weight_path: document.getElementById('perform-vae-weight-path')?.value.trim() || ''});
+function requestDecoderAvailability(retryValidation=false) {
+    decoderLatestRequest=`${decoderClientId}:${++decoderRequestNumber}`;
+    decoderFingerprint=currentDecoderFingerprint();
+    decoderChoices=[];
+    sendPipelineMessage({type:'pipeline_list_decoders',corpus_dir:pipelineCorpusDir,
+        request_id:decoderLatestRequest,fingerprint:decoderFingerprint,retry_validation:retryValidation,...decoderSources()});
+    updateDecoderControls();
 }

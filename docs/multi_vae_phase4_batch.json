@@ -1,0 +1,50 @@
+[
+  {
+    "job_id": "fa1ca716bfe14b67853290af865dd0e7",
+    "generation": 5,
+    "sequence": 3,
+    "status": "already_valid",
+    "stage": "checking_reuse",
+    "vae_id": "ear_vae_44k",
+    "context": {},
+    "detail": "Existing artifact verified and runtime checked",
+    "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+    "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+  },
+  {
+    "job_id": "2c868b23fb1c4b4d86b80520f4d2b3e3",
+    "generation": 6,
+    "sequence": 3,
+    "status": "already_valid",
+    "stage": "checking_reuse",
+    "vae_id": "ear_vae_48k",
+    "context": {},
+    "detail": "Existing artifact verified and runtime checked",
+    "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+    "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+  },
+  {
+    "job_id": "b3fde674fc0f4af09748dfedb1754cce",
+    "generation": 7,
+    "sequence": 3,
+    "status": "already_valid",
+    "stage": "checking_reuse",
+    "vae_id": "same_s",
+    "context": {},
+    "detail": "Existing artifact verified and runtime checked",
+    "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+    "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+  },
+  {
+    "job_id": "7e6b13913d3b42338af0ab723f77f3c2",
+    "generation": 8,
+    "sequence": 3,
+    "status": "already_valid",
+    "stage": "checking_reuse",
+    "vae_id": "stable_audio_open",
+    "context": {},
+    "detail": "Existing artifact verified and runtime checked",
+    "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+    "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+  }
+]

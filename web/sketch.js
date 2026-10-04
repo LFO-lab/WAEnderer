@@ -13,7 +13,10 @@ function setDrawMode(mode) {
 // WebSocket connection
 let ws = null;
 let wsConnected = false;
-const WS_URL = 'ws://127.0.0.1:8765';
+// Keep browser inspection and alternate local servers isolated from the default server.
+const requestedWsPort = typeof location === 'undefined' ? 8765 : Number(new URLSearchParams(location.search).get('ws_port') || 8765);
+const wsPort = Number.isInteger(requestedWsPort) && requestedWsPort > 0 && requestedWsPort <= 65535 ? requestedWsPort : 8765;
+const WS_URL = `ws://127.0.0.1:${wsPort}`;
 
 // Track which controls are currently being adjusted by the user
 let activeControls = new Set();

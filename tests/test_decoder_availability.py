@@ -16,9 +16,9 @@ def test_discovery_reports_presence_separately_without_loading_models(tmp_path, 
         try_to_load_from_cache=lambda *a, **kw: '/cached/weight'))
     choices = discovery.decoder_availability(tmp_path)
     assert [c['device'] for c in choices] == ['cpu', 'cpu', 'mps', 'cuda:0', 'cuda:1']
-    assert all(c['selectable'] and not c['validated'] for c in choices)
-    # Deliberately invalid ONNX is present, not falsely declared validated.
-    assert choices[0]['weights'] is True
+    assert all(c['selectable'] and not c['validated'] for c in choices[1:])
+    assert not choices[0]['selectable']
+    assert 'failed_validation' in choices[0]['reason_codes']
 
 
 def test_discovery_handles_missing_dependencies_weights_and_gpu(tmp_path, monkeypatch):
@@ -52,8 +52,9 @@ def test_all_registered_vaes_keep_native_cpu_without_gpu(tmp_path, monkeypatch):
         try_to_load_from_cache=lambda *a, **kw: '/cached/weight'))
     weight = tmp_path / 'ear.pyt'
     weight.write_bytes(b'presence-only')
+    monkeypatch.setattr('stable_audio_wanderer.vae.ear_weights.file_identity', lambda *a,**k: {'weights_sha256':'custom', 'config_sha256':'custom'})
     for vae_id in ('same_s', 'stable_audio_open', 'ear_vae_44k', 'ear_vae_48k'):
-        choices = discovery.decoder_availability(tmp_path, corpus_spec={'vae_id':vae_id}, weight_path=str(weight))
+        choices = discovery.decoder_availability(tmp_path, corpus_spec={'vae_id':vae_id}, weight_path=str(weight), config_path=str(weight))
         cpu = next(c for c in choices if (c['backend'],c['device']) == ('pytorch','cpu'))
         assert cpu['hardware'] and cpu['selectable'] and not cpu['validated']
         assert not any(c['selectable'] for c in choices if c['device'] != 'cpu')
@@ -71,3 +72,26 @@ def test_ear_presence_is_not_checkpoint_validation(tmp_path, monkeypatch):
         path.write_bytes(b'not a checkpoint')
         present = discovery.decoder_availability(corpus_spec={'vae_id':name},weight_path=str(path))
         assert all(c['weights'] and not c['validated'] for c in present if c['backend']=='pytorch')
+
+
+def test_explicit_ear_checkpoint_conflict_cannot_leave_onnx_selectable(tmp_path,monkeypatch):
+    weight=tmp_path/'selected.pyt';weight.write_bytes(b'another checkpoint')
+    from stable_audio_wanderer.vae.onnx_artifacts import sha256
+    monkeypatch.setattr(discovery,'find_spec',lambda _:object())
+    monkeypatch.setattr('stable_audio_wanderer.vae.onnx_artifacts.resolve_artifact',lambda *a,**k:
+        SimpleNamespace(source=(('weights_sha256','a'*64),),graphs=(),identity='old'))
+    choices=discovery.decoder_availability(corpus_spec={'vae_id':'ear_vae_44k','weights_sha256':'a'*64},weight_path=str(weight))
+    assert not choices[0]['selectable']
+    assert 'conflicts' in choices[0]['detail']
+
+
+def test_native_model_identity_survives_onnx_removal(monkeypatch):
+    from stable_audio_wanderer.vae.stable_audio_open_weights import SOURCE_MODEL,SOURCE_REVISION,CONFIG_SHA256,WEIGHTS_SHA256
+    artifact=SimpleNamespace(source=tuple(dict(model=SOURCE_MODEL,revision=SOURCE_REVISION,config_sha256=CONFIG_SHA256,weights_sha256=WEIGHTS_SHA256).items()),graphs=(),identity='export-a')
+    monkeypatch.setattr('stable_audio_wanderer.vae.onnx_artifacts.resolve_artifact',lambda *a,**k:artifact)
+    before=discovery.decoder_availability(corpus_spec={'vae_id':'stable_audio_open'})
+    def missing(*a,**k):raise FileNotFoundError('removed ONNX')
+    monkeypatch.setattr('stable_audio_wanderer.vae.onnx_artifacts.resolve_artifact',missing)
+    after=discovery.decoder_availability(corpus_spec={'vae_id':'stable_audio_open'})
+    assert before[1]['model_identity']==after[1]['model_identity']
+    assert before[0]['artifact_verified'] and not after[0]['artifact_verified']

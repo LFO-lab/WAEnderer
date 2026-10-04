@@ -271,15 +271,15 @@ def resolve_artifact(vae_id, *, artifact_dir=None, store_dir=None, artifact_id=N
     if vae_id not in VAE_IDS: raise ArtifactError('Unknown VAE')
     if artifact_dir is not None:
         root=Path(artifact_dir)
-    elif vae_id=='same_s' and artifact_id is None:
-        root=Path(str(resources.files('stable_audio_wanderer.resources.same_s')))
     else:
         store=Path(store_dir).expanduser() if store_dir is not None else Path.home()/'.cache/waenderer/decoders'
+        if vae_id == 'same_s' and artifact_id is None and not (store/vae_id/'current.json').exists():
+            return read_artifact(Path(str(resources.files('stable_audio_wanderer.resources.same_s'))), expected_vae=vae_id, expected_source=expected_source)
         identity=artifact_id or read_json(store/vae_id/'current.json').get('artifact_id')
         _digest(identity)
         root=local_path(store, f'{vae_id}/{identity}')
     result=read_artifact(root,expected_vae=vae_id,expected_source=expected_source)
-    if artifact_dir is None and not (vae_id=='same_s' and artifact_id is None) and result.identity!=identity:
+    if artifact_dir is None and result.identity!=identity:
         raise ArtifactError('Stored artifact identity does not match its directory')
     return result
 

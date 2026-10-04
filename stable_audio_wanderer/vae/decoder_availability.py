@@ -1,110 +1,133 @@
-"""Read-only discovery. Presence is not successful model validation."""
+"""Read-only, model-specific capability discovery; never load native models."""
+import hashlib
+import json
 from importlib.util import find_spec
-from importlib import resources
 from pathlib import Path
 
+SOURCE_FIELDS = ('config_sha256', 'weights_sha256', 'revision', 'effective_config_sha256', 'code_sha256')
 
-def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path=""):
-    if corpus_spec and corpus_spec["vae_id"] != "same_s":
-        entries = _adapter_availability(corpus_spec["vae_id"], weight_path)
-        if corpus_spec['vae_id'] in ('stable_audio_open', 'ear_vae_44k', 'ear_vae_48k'):
-            from .onnx_artifacts import resolve_artifact
-            ready, detail = False, 'Prepare this VAE ONNX decoder first.'
+
+def installed(name):
+    try:
+        return find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path='', repo_path='', config_path='', store_dir=None):
+    from .onnx_artifacts import resolve_artifact
+    spec = corpus_spec or {'vae_id': 'same_s'}
+    vae = spec['vae_id']
+    if vae not in ('same_s', 'stable_audio_open', 'ear_vae_44k', 'ear_vae_48k'):
+        raise ValueError('Unknown corpus VAE')
+    source = {k: spec[k] for k in SOURCE_FIELDS if k in spec}
+    native_present, native_error = False, ''
+    required = ('torch', 'torchaudio', 'stable_audio_3', 'safetensors', 'huggingface_hub') if vae == 'same_s' else (
+        ('torch', 'diffusers', 'safetensors', 'huggingface_hub') if vae == 'stable_audio_open' else ('torch', 'dac', 'audiotools', 'einops'))
+    selected_error = ''
+    if vae.startswith('ear_'):
+        native_present = bool(weight_path and Path(weight_path).expanduser().is_file())
+        if weight_path:
+            source_selected = False
             try:
-                artifact = resolve_artifact(corpus_spec['vae_id'], expected_source={
-                    k:corpus_spec[k] for k in ('config_sha256','weights_sha256','revision','effective_config_sha256','code_sha256') if k in corpus_spec})
-                if corpus_spec['vae_id'].startswith('ear_') and weight_path:
-                    from .ear_weights import selected_file_identity
-                    selected = selected_file_identity(corpus_spec['vae_id'], weight_path)
-                    if any(dict(artifact.source).get(k)!=v for k,v in selected.items()):
-                        raise ValueError('Selected EAR files do not match the ONNX artifact')
-                if 'latent_dim' in corpus_spec:
-                    artifact.validate_corpus(corpus_spec)
-                ready, detail = True, 'Artifact verified; runtime checked on Start Perform.'
+                from .ear_weights import selected_file_identity, file_identity, VARIANTS
+                selected = selected_file_identity(vae, weight_path, repo_path, config_path)
+                if any(k in source and source[k] != v for k,v in selected.items()):
+                    raise ValueError('Selected EAR source conflicts with corpus provenance')
+                source.update(selected)
+                source_selected = True
+                native = file_identity(vae, weight_path, repo_path, config_path)
+                known = next((v for v in VARIANTS.values() if v['weights_sha256'] == native['weights_sha256']), None)
+                if known and known != VARIANTS[vae]:
+                    raise ValueError('EAR checkpoint belongs to another sample-rate variant')
+                if known and known['config_sha256'] != native['config_sha256']:
+                    raise ValueError('EAR configuration does not match checkpoint')
+                if not known and not config_path:
+                    raise ValueError('Custom EAR checkpoint requires an explicit configuration')
             except (ValueError, OSError) as exc:
-                detail = str(exc)
-            try:
-                deps = find_spec('onnxruntime') is not None and find_spec('onnx') is not None
-            except (ImportError, ValueError):
-                deps = False
-            entries.insert(0, dict(backend='onnxruntime', device='cpu', vae_id=corpus_spec['vae_id'],
-                label=f"ONNX · CPU · {corpus_spec['vae_id']}", hardware=True, dependencies=deps,
-                weights=ready, validated=False, selectable=ready and deps, detail=detail))
-        return entries
-    root = Path(resource_dir) if resource_dir else Path(str(resources.files('stable_audio_wanderer.resources.same_s')))
-    def installed(name):
-        try:
-            return find_spec(name) is not None
-        except (ImportError, ValueError):
-            return False
-    onnx_deps = installed('onnxruntime') and installed('onnx')
-    onnx_files = (root / 'decoder.json').is_file() and any(root.glob('*.onnx'))
-    entries = [dict(backend='onnxruntime', device='cpu', label='ONNX · CPU',
-                    hardware=True, dependencies=onnx_deps, weights=onnx_files,
-                    validated=False, selectable=onnx_deps and onnx_files,
-                    detail='Validated when Perform loads.' if onnx_deps and onnx_files else
-                    'Install ONNX Runtime, the ONNX validator and the packaged SAME-S decoder.')]
-    native_deps = all(installed(name) for name in ('torch', 'torchaudio', 'stable_audio_3', 'safetensors', 'huggingface_hub'))
-    weights = False
-    try:
-        from huggingface_hub import try_to_load_from_cache
-        from .same_s_weights import SOURCE_MODEL, SOURCE_REVISION
-        weights = all(isinstance(try_to_load_from_cache(SOURCE_MODEL, name, revision=SOURCE_REVISION), str)
-                      for name in ('model_config.json', 'model.safetensors'))
-    except Exception:
-        pass
-    devices = [('mps', False), ('cuda:0', False)]
-    hardware_error = ''
-    try:
-        import torch
-        devices = [('mps', bool(torch.backends.mps.is_available()))]
-        devices += [(f'cuda:{i}', True) for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else [('cuda:0', False)]
-    except Exception as exc:
-        hardware_error = str(exc)
-    for device, hardware in [('cpu', True), *devices]:
-        missing = []
-        if not hardware: missing.append('GPU unavailable' + (f': {hardware_error}' if hardware_error else ''))
-        if not native_deps: missing.append('Install native SAME-S dependencies (see phase 2 setup)')
-        if not weights: missing.append('Cache the pinned SAME-S weights (see phase 2 setup)')
-        entries.append(dict(backend='pytorch', device=device,
-                            label='PyTorch · CPU' if device == 'cpu' else f'PyTorch · GPU · {device.upper()}', hardware=hardware,
-                            dependencies=native_deps, weights=weights, validated=False,
-                            selectable=hardware and native_deps and weights,
-                            detail=('; '.join(missing) or 'Present; weights, compatibility and warm-up checked on Start Perform.')
-                            + (' CUDA hardware qualification pending.' if device.startswith('cuda') else '')))
-    return entries
-
-
-def _adapter_availability(vae_id, weight_path):
-    def installed(name):
-        try:
-            return find_spec(name) is not None
-        except (ImportError, ValueError):
-            return False
-    dependencies = installed('torch') and (installed('diffusers') if vae_id == 'stable_audio_open' else installed('dac'))
-    weights = False
-    if vae_id == 'stable_audio_open':
+                native_error = str(exc)
+                # A standalone checkpoint still binds ONNX without a native repository.
+                if not source_selected:
+                    selected_error = native_error
+        else:
+            native_error = 'Set the local EAR checkpoint, repository and configuration.'
+    else:
         try:
             from huggingface_hub import try_to_load_from_cache
-            from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION
-            weights = all(isinstance(try_to_load_from_cache(SOURCE_MODEL, name, revision=SOURCE_REVISION), str)
-                for name in ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors'))
+            if vae == 'same_s':
+                from .same_s_weights import SOURCE_MODEL, SOURCE_REVISION
+                names = ('model_config.json', 'model.safetensors')
+            else:
+                from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION
+                names = ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors')
+            native_present = all(isinstance(try_to_load_from_cache(SOURCE_MODEL, n, revision=SOURCE_REVISION), str) for n in names)
         except Exception:
             pass
+    artifact, artifact_error = None, ''
+    artifact_present = False
+    artifact_reason = 'missing_artifact'
+    if resource_dir:
+        artifact_present = (Path(resource_dir)/'decoder.json').is_file()
     else:
-        weights = Path(weight_path).expanduser().is_file() if weight_path else False
-    devices = [('cpu', True)]
+        store=Path(store_dir).expanduser() if store_dir else Path.home()/'.cache/waenderer/decoders'
+        try:
+            pointer=json.loads((store/vae/'current.json').read_text())
+            artifact_present=(store/vae/pointer['artifact_id']/'decoder.json').is_file()
+        except (OSError,ValueError,KeyError,TypeError):
+            if vae == 'same_s':
+                from importlib import resources
+                artifact_present=(Path(str(resources.files('stable_audio_wanderer.resources.same_s')))/'decoder.json').is_file()
+    try:
+        if selected_error:
+            raise ValueError(selected_error)
+        artifact_reason = 'failed_validation'
+        artifact = resolve_artifact(vae, artifact_dir=resource_dir, store_dir=store_dir, expected_source=source)
+        artifact_present = True
+        if 'latent_dim' in spec:
+            artifact.validate_corpus(spec)
+        # Full graph/external-data validation when the validator is available.
+        if installed('onnx'):
+            from .onnx_artifacts import inspect_graph
+            for graph in artifact.graphs:
+                inspect_graph(artifact, graph)
+    except Exception as exc:
+        artifact_error, artifact = str(exc), None
+        if isinstance(exc,FileNotFoundError) or isinstance(exc.__cause__,FileNotFoundError): artifact_reason='missing_artifact'
+    identity_source = dict(artifact.source) if artifact else {}
+    if not identity_source and vae in ('same_s','stable_audio_open'):
+        if vae == 'same_s':
+            from .same_s_weights import SOURCE_REVISION,CONFIG_SHA256,WEIGHTS_SHA256
+        else:
+            from .stable_audio_open_weights import SOURCE_REVISION,CONFIG_SHA256,WEIGHTS_SHA256
+        identity_source.update(revision=SOURCE_REVISION,config_sha256=CONFIG_SHA256,weights_sha256=WEIGHTS_SHA256)
+    identity_source.update(source)
+    # Stable across ONNX presence and exporter settings. EAR's raw source/code
+    # hashes determine effective configuration without importing its model.
+    identity_keys = ('weights_sha256','config_sha256','code_sha256') if vae.startswith('ear_') else ('weights_sha256','config_sha256','revision')
+    identity_source = {k:identity_source[k] for k in identity_keys if k in identity_source}
+    token = hashlib.sha256(json.dumps({'vae_id': vae, 'source': identity_source}, sort_keys=True).encode()).hexdigest() if identity_source else None
+    devices = [('cpu', True), ('mps', False), ('cuda:0', False)]
     try:
         import torch
-        devices += [('mps', bool(torch.backends.mps.is_available()))]
+        devices = [('cpu', True), ('mps', bool(torch.backends.mps.is_available()))]
         devices += [(f'cuda:{i}', True) for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else [('cuda:0', False)]
     except Exception:
         pass
-    return [dict(backend='pytorch', device=device, vae_id=vae_id,
-        label=f'PyTorch · {device.upper()} · {vae_id}', hardware=hardware,
-        dependencies=dependencies, weights=weights, validated=False,
-        selectable=hardware and dependencies and (weights or vae_id.startswith('ear_')),
-        detail=('Set the local EAR .pyt weight path in Perform. Repository/configuration checked at startup.'
-                if vae_id.startswith('ear_') else 'Uses the pinned cached Stable Audio Open VAE.')
-               + ' Windows are validated at startup; real-time performance depends on this VAE/device.')
-        for device, hardware in devices]
+    entries = []
+    for backend, device, hardware in [('onnxruntime', 'cpu', True), *(('pytorch',d,h) for d,h in devices)]:
+        onnx = backend == 'onnxruntime'
+        missing = [n for n in (('onnxruntime','onnx') if onnx else required) if not installed(n)]
+        reasons = []
+        if missing: reasons.append(('missing_dependencies', 'Install: '+', '.join(missing)))
+        if not hardware: reasons.append(('unavailable_hardware', f'{device.upper()} hardware unavailable'))
+        if onnx and not artifact: reasons.append((artifact_reason, artifact_error or 'Prepare ONNX decoder first'))
+        if not onnx and not native_present: reasons.append(('missing_weights', 'Native checkpoint is missing'))
+        if not onnx and native_error: reasons.append(('invalid_native_source', native_error))
+        entries.append(dict(backend=backend, device=device, vae_id=vae,
+            choice_key=f'{vae}|{backend}|{device}', label=f'{"ONNX" if onnx else "PyTorch"} · {device.upper()} · {vae}',
+            hardware=hardware, dependencies=not missing, weights=bool(artifact) if onnx else native_present,
+            native_source_present=native_present, artifact_present=artifact_present, artifact_verified=bool(artifact),
+            artifact_identity=artifact.identity if artifact else None, model_identity=token,
+            validated=False, selectable=not reasons, reason_codes=[r[0] for r in reasons],
+            detail='; '.join(r[1] for r in reasons) or 'Available; runtime checked on Start Perform. Real-time performance is not implied.'))
+    return entries

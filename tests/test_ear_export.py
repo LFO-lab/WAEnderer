@@ -139,7 +139,7 @@ def test_fixture_source_and_geometry_are_checked(tmp_path):
 def test_onnx_discovery_survives_missing_ear_dependencies(monkeypatch):
     from stable_audio_wanderer.vae import decoder_availability as discovery
     monkeypatch.setattr(discovery,'find_spec',lambda name: object() if name in ('onnx','onnxruntime') else None)
-    artifact=SimpleNamespace(source=(),validate_corpus=lambda spec:None)
+    artifact=SimpleNamespace(source=(),graphs=(),identity='verified-artifact',validate_corpus=lambda spec:None)
     monkeypatch.setattr('stable_audio_wanderer.vae.onnx_artifacts.resolve_artifact',lambda *a,**k:artifact)
     entries=discovery.decoder_availability(corpus_spec={'vae_id':'ear_vae_48k'})
     assert entries[0]['backend']=='onnxruntime' and entries[0]['selectable']

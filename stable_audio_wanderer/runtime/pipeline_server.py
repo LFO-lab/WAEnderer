@@ -26,7 +26,7 @@ class PipelineManager:
     PHASES = ("idle", "preprocess", "train", "preparing", "perform", "stopping", "error", "closed")
 
     def __init__(self, pretrained: str = "stabilityai/stable-audio-open-1.0",
-                 decoder_resource_dir=None):
+                 decoder_resource_dir=None, preparation_config=None):
         self.pretrained = pretrained  # legacy fallback
         self.phase = "idle"
         self._vae = None
@@ -41,8 +41,21 @@ class PipelineManager:
         self._perform_controller = None
         self._perform_teardown_callback = None
         self._perform_error = None
+        self._runtime_failure = None
+        self._perform_attempt = None
         self._lifecycle_lock = threading.RLock()
         self._closed = False
+        from concurrent.futures import ThreadPoolExecutor
+        from .decoder_preparation_jobs import PreparationJobs
+        preparation_config = preparation_config or {}
+        self._discovery_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='decoder-discovery')
+        self._preparation = PreparationJobs(
+            interpreters=preparation_config.get('interpreters'), store_dir=preparation_config.get('store_dir'),
+            journal_dir=preparation_config.get('journal_dir'),
+            emit=lambda job: self._emit({'type': 'pipeline_preparation', 'job': job}))
+        import hashlib
+        self._server_namespace = hashlib.sha256(str(self._preparation.store).encode()).hexdigest()
+
 
         # Preprocess result for passing VAE + corpus to train/perform
         self._preprocess_result: Optional[dict] = None
@@ -77,22 +90,21 @@ class PipelineManager:
         """Route incoming pipeline_* WebSocket messages."""
         msg_type = data.get("type", "")
 
-        if msg_type == "pipeline_list_decoders":
-            from ..vae.decoder_availability import decoder_availability
-            corpus_dir = data.get("corpus_dir")
-            if not corpus_dir:
-                self._emit({"type": "pipeline_decoder_list", "decoders": decoder_availability(self._decoder_resource_dir)})
+        if self._preparation.busy and msg_type in ('pipeline_start_perform', 'pipeline_start_preprocess', 'pipeline_start_train', 'pipeline_prepare_decoder'):
+            self._emit({'type': 'pipeline_state', 'phase': self.phase, 'preparation': self._preparation.snapshot(),
+                        'error': 'Decoder preparation owns the pipeline; wait for completion'})
+            return
+        if msg_type == 'pipeline_prepare_decoder':
+            self._handle_prepare_decoder(data)
+        elif msg_type == "pipeline_list_decoders":
+            if data.get("retry_validation") is True and self.phase == "idle":
+                self._runtime_failure = None
+            # Older clients/tests retain synchronous replies; correlated requests
+            # hash artifacts outside the lifecycle lock and WebSocket dispatch.
+            if data.get('request_id'):
+                self._discovery_pool.submit(self._list_decoders, dict(data))
             else:
-                try:
-                    from ..vae.corpus_decoder import corpus_decoder_spec
-                    spec = corpus_decoder_spec(corpus_dir, validate=False)
-                    self._emit({"type": "pipeline_decoder_list", "corpus_dir": corpus_dir,
-                        "vae_id": spec["vae_id"], "default_window": 2 if spec["vae_id"] == "same_s" else 8,
-                        "decoders": decoder_availability(
-                            self._decoder_resource_dir, corpus_spec=spec, weight_path=data.get("vae_weight_path", ""))})
-                except Exception as exc:
-                    self._emit({"type": "pipeline_decoder_list", "corpus_dir": corpus_dir,
-                                "decoders": [], "error": str(exc)})
+                self._list_decoders(data)
         elif msg_type == "pipeline_list_files":
             self._handle_list_files(data)
         elif msg_type == "pipeline_list_corpora":
@@ -119,7 +131,66 @@ class PipelineManager:
             "corpus_dir": self._corpus_dir,
             "decoder": self._active_decoder_state(),
             "error": self._perform_error,
+            "preparation": self._preparation.snapshot(),
+            "preparation_supported": True,
+            "server_namespace": self._server_namespace,
         })
+
+    def _list_decoders(self, data):
+        from ..vae.decoder_availability import decoder_availability
+        corpus_dir = data.get('corpus_dir')
+        response = {'type': 'pipeline_decoder_list'}
+        if data.get('request_id'):
+            response.update(request_id=data['request_id'], fingerprint=data.get('fingerprint'),
+                            server_namespace=self._server_namespace, preparation_supported=True)
+        try:
+            if not corpus_dir:
+                response['decoders'] = decoder_availability(self._decoder_resource_dir)
+            else:
+                from ..vae.corpus_decoder import corpus_decoder_spec
+                spec = corpus_decoder_spec(corpus_dir, validate=False)
+                entries = decoder_availability(self._decoder_resource_dir, corpus_spec=spec,
+                    weight_path=data.get('vae_weight_path',''), repo_path=data.get('vae_repo_path',''),
+                    config_path=data.get('vae_config_path',''), store_dir=self._preparation.store)
+                failure = self._runtime_failure
+                if failure and failure['corpus_dir'] == corpus_dir:
+                    for entry in entries:
+                        if all(entry.get(k) == failure.get(k) for k in ('backend','device','model_identity')):
+                            entry.update(selectable=False, validated=False, detail='Previous runtime validation failed: '+failure['error']+'; Refresh availability to retry.')
+                            entry['reason_codes'].append('runtime_validation_failed')
+                response.update(corpus_dir=corpus_dir, vae_id=spec['vae_id'],
+                    default_window=2 if spec['vae_id']=='same_s' else 8, decoders=entries,
+                    model_identity=entries[0].get('model_identity') if entries else None)
+        except Exception as exc:
+            response.update(corpus_dir=corpus_dir,decoders=[],error=str(exc))
+        self._emit(response)
+
+    def _handle_prepare_decoder(self, data):
+        if self.phase != 'idle':
+            self._emit({'type':'pipeline_state','phase':self.phase,'error':'Stop Perform and drain resources before preparation'})
+            return
+        try:
+            from ..vae.corpus_decoder import corpus_decoder_spec
+            from ..vae.decoder_preparation import validate_request
+            corpus = data.get('corpus_dir') or self._corpus_dir
+            spec = corpus_decoder_spec(corpus, validate=False)
+            request = dict(data.get('request',{}))
+            if 'store_dir' in request:
+                raise ValueError('Decoder store is configured by the server')
+            if request.get('vae_id',spec['vae_id']) != spec['vae_id']:
+                raise ValueError('Preparation VAE must match selected corpus')
+            request['vae_id'] = spec['vae_id']
+            request['compatibility_corpus'] = corpus
+            # Explicit evidence is optional for EAR; SAO requires its real corpus
+            # only when an existing artifact cannot be reused.
+            request = validate_request(request)
+            self._release_app_decoder()
+            self._release_preprocessing_vae()
+            self._preparation.start(request,context={'corpus_dir':corpus,'fingerprint':data.get('fingerprint')})
+            self._corpus_dir = corpus
+            self._emit_phase_state()
+        except Exception as exc:
+            self._emit({'type':'pipeline_state','phase':self.phase,'error':str(exc)})
 
     # ------------------------------------------------------------------
     # File listing
@@ -432,7 +503,7 @@ class PipelineManager:
         try:
             from ..vae.decoder_factory import select_decoder, create_decoder
             from ..vae.corpus_decoder import corpus_decoder_spec
-            config = data.get("config", {})
+            config = dict(data.get("config", {}))
             if not isinstance(config, dict):
                 raise ValueError("Perform config must be an object")
             corpus_dir = config.get("corpus_dir") or self._corpus_dir
@@ -446,7 +517,9 @@ class PipelineManager:
             corpus_spec = corpus_decoder_spec(corpus_dir)
             if corpus_spec and corpus_spec["vae_id"] != "same_s" and "decoder_window" not in config:
                 decoder_window = 8
-            selection = select_decoder(config, resource_dir=self._decoder_resource_dir, corpus_spec=corpus_spec)
+            self._perform_attempt = dict(corpus_dir=corpus_dir,backend=config.get('decoder_backend','onnxruntime'),
+                device=config.get('decoder_device','cpu'),model_identity=config.get('decoder_model_identity'))
+            selection = select_decoder({"decoder_store_dir": str(self._preparation.store), **config}, resource_dir=self._decoder_resource_dir, corpus_spec=corpus_spec)
             self._perform_error = None
             self.phase = "preparing"
             self._emit({"type": "pipeline_phase_change", "phase": self.phase, "decoder": None})
@@ -465,6 +538,7 @@ class PipelineManager:
             self._perform_controller = self._perform_setup_callback(corpus_dir, decoder, dict(config))
             self._corpus_dir = corpus_dir
             self.phase = "perform"
+            self._runtime_failure = None
             self._emit({"type": "pipeline_phase_change", "phase": self.phase,
                         "corpus_dir": corpus_dir, "decoder": self._active_decoder_state()})
         except Exception as exc:
@@ -497,6 +571,8 @@ class PipelineManager:
 
     def _perform_failed(self, exc):
         self._perform_error = str(exc)
+        if self._perform_attempt and self._perform_attempt.get('model_identity'):
+            self._runtime_failure = dict(self._perform_attempt,error=str(exc))
         try:
             self._teardown_perform()
             self._release_app_decoder()
@@ -526,6 +602,10 @@ class PipelineManager:
 
     def close(self):
         """Shut down producers before releasing their model resources."""
+        with self._lifecycle_lock:
+            self._closed = True
+        self._preparation.close()
+        self._discovery_pool.shutdown(wait=True, cancel_futures=True)
         with self._lifecycle_lock:
             self._closed = True
             self._cancel.set()

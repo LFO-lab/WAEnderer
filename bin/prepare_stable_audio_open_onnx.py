@@ -1,6 +1,6 @@
 """Prepare the pinned Stable Audio Open decoder from installed weights, offline."""
 import argparse
-from stable_audio_wanderer.vae.stable_audio_open_export import prepare
+from bin.prepare_decoders import main as prepare_main
 from stable_audio_wanderer.vae.stable_audio_open_weights import SOURCE_REVISION
 
 
@@ -12,9 +12,9 @@ def main():
     parser.add_argument('--opset', type=int, default=18)
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args()
-    print(prepare(args.corpus, store_dir=args.store_dir, revision=args.revision,
-                  opset=args.opset, force=args.force))
+    import sys
+    return prepare_main(['--vae-id','stable_audio_open',*sys.argv[1:]])
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

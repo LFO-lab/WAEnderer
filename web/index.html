@@ -537,6 +537,25 @@
             transform: translateX(20px);
             background-color: #fff;
         }
+        #perform-vae-weight-group label {
+            display: block;
+            margin: 10px 0 5px;
+            font-size: 12px;
+            color: #b9bdc7;
+        }
+        #perform-vae-weight-group input {
+            display: block;
+            box-sizing: border-box;
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #343640;
+            border-radius: 4px;
+            background: #1a1b23;
+            color: #eee;
+            font-size: 12px;
+        }
+        #perform-decoder-unavailable { padding-left: 16px; }
+        #perform-decoder-unavailable li { margin-bottom: 8px; overflow-wrap: anywhere; }
     </style>
 </head>
 <body>
@@ -776,16 +795,24 @@
             <div id="perform-panel" class="panel-hidden">
                 <h2>Perform</h2>
                 <div class="pipeline-section">
-                    <h3>SAME-S Decoder</h3>
+                    <h3>Audio decoder</h3>
+                    <div id="perform-decoder-model" class="stats-text">Select a corpus</div>
                     <label for="perform-decoder-engine">Decode with</label>
                     <select id="perform-decoder-engine">
                         <option value="onnxruntime|cpu">ONNX · CPU</option>
                     </select>
                     <button id="perform-decoder-refresh" type="button">Refresh availability</button>
                     <div id="perform-decoder-availability" class="stats-text" role="status">Availability not checked.</div>
+                    <details class="stats-text"><summary>Unavailable choices and reasons</summary><ul id="perform-decoder-unavailable"></ul></details>
+                    <button id="perform-prepare-btn" type="button" disabled>Prepare ONNX decoder</button>
+                    <div id="perform-prepare-status" class="stats-text" role="status" aria-live="polite"></div>
                     <div id="perform-vae-weight-group" hidden>
                         <label for="perform-vae-weight-path">VAE weights (EAR .pyt)</label>
                         <input id="perform-vae-weight-path" type="text" placeholder="Path to weights inside the EAR_VAE repository">
+                        <label for="perform-vae-repo-path">EAR repository (optional if inferred)</label>
+                        <input id="perform-vae-repo-path" type="text" placeholder="Path to EAR_VAE">
+                        <label for="perform-vae-config-path">EAR configuration (required for custom checkpoints)</label>
+                        <input id="perform-vae-config-path" type="text" placeholder="Path to configuration JSON">
                     </div>
 
                     <div
@@ -793,7 +820,7 @@
                         id="perform-decoder-status"
                         role="status"
                         aria-live="polite"
-                    >No active decoder. ONNX · CPU selected.</div>
+                    >No active decoder. Select a corpus and choose a decoder.</div>
                     <div class="control-row" style="margin-top:8px">
                         <div class="control-group" style="width:100%;grid-column:1 / -1">
                             <div class="control-label">
@@ -1198,9 +1225,9 @@
         </div>
     </div>
     
-    <script src="pipeline.js"></script>
+    <script src="pipeline.js?v=multi-vae-phase4-final"></script>
     <script src="erae_math.js"></script>
-    <script src="sketch.js"></script>
+    <script src="sketch.js?v=multi-vae-phase4-final"></script>
     <script src="erae_visual.js"></script>
 </body>
 </html>

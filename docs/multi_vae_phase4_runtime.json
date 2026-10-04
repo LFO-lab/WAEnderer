@@ -1,0 +1,2484 @@
+{
+  "scope": "Offline real artifacts and production preparation/reconnect; muted short transport, not real-time qualification.",
+  "cli": [
+    {
+      "job_id": "43a8a3cb67aa4dd495e68cbaa141cc2d",
+      "generation": 5,
+      "sequence": 3,
+      "status": "already_valid",
+      "stage": "checking_reuse",
+      "vae_id": "same_s",
+      "context": {},
+      "detail": "Existing artifact verified and runtime checked",
+      "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+      "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+    },
+    {
+      "job_id": "a8e38fdfc4bc4ee491933d15b9b9ac41",
+      "generation": 6,
+      "sequence": 3,
+      "status": "already_valid",
+      "stage": "checking_reuse",
+      "vae_id": "stable_audio_open",
+      "context": {},
+      "detail": "Existing artifact verified and runtime checked",
+      "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+      "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+    },
+    {
+      "job_id": "bd4432fc8e5245aebf9549cfc61d5f5d",
+      "generation": 7,
+      "sequence": 3,
+      "status": "already_valid",
+      "stage": "checking_reuse",
+      "vae_id": "ear_vae_44k",
+      "context": {},
+      "detail": "Existing artifact verified and runtime checked",
+      "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+      "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+    },
+    {
+      "job_id": "cede2827d72c4d5087c13b550d2bef18",
+      "generation": 8,
+      "sequence": 3,
+      "status": "already_valid",
+      "stage": "checking_reuse",
+      "vae_id": "ear_vae_48k",
+      "context": {},
+      "detail": "Existing artifact verified and runtime checked",
+      "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+      "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+    }
+  ],
+  "runs": [
+    [
+      {
+        "vae_id": "same_s",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-same_s",
+          "fingerprint": "phase4-same_s",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+          "vae_id": "same_s",
+          "default_window": 2,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "same_s",
+              "choice_key": "same_s|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 same_s",
+              "hardware": false,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "unavailable_hardware"
+              ],
+              "detail": "CUDA:0 hardware unavailable"
+            }
+          ],
+          "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633"
+        },
+        "job": {
+          "job_id": "303422c7203d471790fa364a4486c1d4",
+          "generation": 1,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "same_s",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+          "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "303422c7203d471790fa364a4486c1d4",
+            "generation": 1,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "same_s",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+            "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "vae_id": "same_s",
+            "default_window": 2,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "same_s",
+                "choice_key": "same_s|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 same_s",
+                "hardware": false,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "unavailable_hardware"
+                ],
+                "detail": "CUDA:0 hardware unavailable"
+              }
+            ],
+            "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "same_s"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 16384,
+            "underruns": 0,
+            "buffer_underruns": 0,
+            "device_underruns": 0,
+            "buffer_duration": 0.9048979591836734,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "same_s",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 16384,
+            "audio_window_samples": 32768,
+            "decode_timing": {
+              "last_ms": 194.2134170094505,
+              "p99_ms": 196.28474000492133,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s",
+            "model_path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s/same_s_decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "stable_audio_open",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-stable_audio_open",
+          "fingerprint": "phase4-stable_audio_open",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+          "vae_id": "stable_audio_open",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+              "hardware": false,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "unavailable_hardware"
+              ],
+              "detail": "CUDA:0 hardware unavailable"
+            }
+          ],
+          "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727"
+        },
+        "job": {
+          "job_id": "2d843b9c82294213ba1eb88aa63b7c6b",
+          "generation": 2,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "stable_audio_open",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "2d843b9c82294213ba1eb88aa63b7c6b",
+            "generation": 2,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "stable_audio_open",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "vae_id": "stable_audio_open",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+                "hardware": false,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "unavailable_hardware"
+                ],
+                "detail": "CUDA:0 hardware unavailable"
+              }
+            ],
+            "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "stable_audio_open"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 8192,
+            "underruns": 23,
+            "buffer_underruns": 23,
+            "device_underruns": 0,
+            "buffer_duration": 0.1766439909297052,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "stable_audio_open",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 8192,
+            "audio_window_samples": 16384,
+            "decode_timing": {
+              "last_ms": 562.5980000477284,
+              "p99_ms": 562.5446650467347,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "ear_vae_44k",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-ear_vae_44k",
+          "fingerprint": "phase4-ear_vae_44k",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+          "vae_id": "ear_vae_44k",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_44k",
+              "hardware": false,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "unavailable_hardware",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            }
+          ],
+          "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed"
+        },
+        "job": {
+          "job_id": "04b078f8ed9b48f5856f3b03f1201664",
+          "generation": 3,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "ear_vae_44k",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "04b078f8ed9b48f5856f3b03f1201664",
+            "generation": 3,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "ear_vae_44k",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "vae_id": "ear_vae_44k",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_44k",
+                "hardware": false,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "unavailable_hardware",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              }
+            ],
+            "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 4096,
+            "underruns": 14,
+            "buffer_underruns": 14,
+            "device_underruns": 0,
+            "buffer_duration": 0.09287981859410431,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "ear_vae_44k",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 4096,
+            "audio_window_samples": 8192,
+            "decode_timing": {
+              "last_ms": 299.73304201848805,
+              "p99_ms": 300.0538703077473,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "ear_vae_48k",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-ear_vae_48k",
+          "fingerprint": "phase4-ear_vae_48k",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+          "vae_id": "ear_vae_48k",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+              "hardware": false,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "unavailable_hardware",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            }
+          ],
+          "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019"
+        },
+        "job": {
+          "job_id": "fb4ff687a9b54bb48da6d714f21697e0",
+          "generation": 4,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "ear_vae_48k",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "fb4ff687a9b54bb48da6d714f21697e0",
+            "generation": 4,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "ear_vae_48k",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "vae_id": "ear_vae_48k",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+                "hardware": false,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "unavailable_hardware",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              }
+            ],
+            "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 3840,
+            "underruns": 23,
+            "buffer_underruns": 23,
+            "device_underruns": 0,
+            "buffer_duration": 0.06933333333333333,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "ear_vae_48k",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 3840,
+            "audio_window_samples": 7680,
+            "decode_timing": {
+              "last_ms": 396.95233397651464,
+              "p99_ms": 396.87172063742764,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      }
+    ],
+    [
+      {
+        "vae_id": "same_s",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-same_s",
+          "fingerprint": "phase4-same_s",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+          "vae_id": "same_s",
+          "default_window": 2,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "same_s",
+              "choice_key": "same_s|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 same_s",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "same_s",
+              "choice_key": "same_s|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 same_s",
+              "hardware": false,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+              "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "unavailable_hardware"
+              ],
+              "detail": "CUDA:0 hardware unavailable"
+            }
+          ],
+          "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633"
+        },
+        "job": {
+          "job_id": "bae812ff4c434bf2a181ed013dd66108",
+          "generation": 5,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "same_s",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+          "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "bae812ff4c434bf2a181ed013dd66108",
+            "generation": 5,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "same_s",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+            "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "vae_id": "same_s",
+            "default_window": 2,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "same_s",
+                "choice_key": "same_s|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 same_s",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "same_s",
+                "choice_key": "same_s|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 same_s",
+                "hardware": false,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+                "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "unavailable_hardware"
+                ],
+                "detail": "CUDA:0 hardware unavailable"
+              }
+            ],
+            "model_identity": "16ad9e4193a135a2da9b5948be24f5046fe7d98875bf6cf791a7762574e64633"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/BurntMemory_20260915_211501",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "same_s"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 16384,
+            "underruns": 0,
+            "buffer_underruns": 0,
+            "device_underruns": 0,
+            "buffer_duration": 0.9048979591836734,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "same_s",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 16384,
+            "audio_window_samples": 32768,
+            "decode_timing": {
+              "last_ms": 194.6608749567531,
+              "p99_ms": 198.24845016584732,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s",
+            "model_path": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/stable_audio_wanderer/resources/same_s/same_s_decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "stable_audio_open",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-stable_audio_open",
+          "fingerprint": "phase4-stable_audio_open",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+          "vae_id": "stable_audio_open",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "stable_audio_open",
+              "choice_key": "stable_audio_open|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+              "hardware": false,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": true,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+              "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "unavailable_hardware"
+              ],
+              "detail": "CUDA:0 hardware unavailable"
+            }
+          ],
+          "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727"
+        },
+        "job": {
+          "job_id": "baf9ead415a1498a9a1f0055a3bb99a3",
+          "generation": 6,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "stable_audio_open",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "baf9ead415a1498a9a1f0055a3bb99a3",
+            "generation": 6,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "stable_audio_open",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "vae_id": "stable_audio_open",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 stable_audio_open",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "stable_audio_open",
+                "choice_key": "stable_audio_open|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 stable_audio_open",
+                "hardware": false,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": true,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+                "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "unavailable_hardware"
+                ],
+                "detail": "CUDA:0 hardware unavailable"
+              }
+            ],
+            "model_identity": "05d41caec8d2c5f0e26ac9edfb63ee810e34d85c64ee6059c77e9bf9bef90727"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/Rack_20260428_181107",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "stable_audio_open"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 8192,
+            "underruns": 23,
+            "buffer_underruns": 23,
+            "device_underruns": 0,
+            "buffer_duration": 0.1766439909297052,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "stable_audio_open",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 8192,
+            "audio_window_samples": 16384,
+            "decode_timing": {
+              "last_ms": 562.9770830273628,
+              "p99_ms": 562.9344838671386,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/stable_audio_open/5b180bcfbef623248357efb0cc6e3b77bc4cef8e4b743d246f133cd106b2bd75/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "ear_vae_44k",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-ear_vae_44k",
+          "fingerprint": "phase4-ear_vae_44k",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+          "vae_id": "ear_vae_44k",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_44k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "ear_vae_44k",
+              "choice_key": "ear_vae_44k|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_44k",
+              "hardware": false,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+              "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "unavailable_hardware",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            }
+          ],
+          "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed"
+        },
+        "job": {
+          "job_id": "59cbe3788bae425eb095d60e08d27643",
+          "generation": 7,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "ear_vae_44k",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "59cbe3788bae425eb095d60e08d27643",
+            "generation": 7,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "ear_vae_44k",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "vae_id": "ear_vae_44k",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_44k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "ear_vae_44k",
+                "choice_key": "ear_vae_44k|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_44k",
+                "hardware": false,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+                "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "unavailable_hardware",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              }
+            ],
+            "model_identity": "b57e826c3101402297f90709e3fbf58bfb39cd00c6ff9c536d8a4f10881249ed"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/TC_Harpsichord_20261002_172959",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "ear_vae_44k"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 4096,
+            "underruns": 14,
+            "buffer_underruns": 14,
+            "device_underruns": 0,
+            "buffer_duration": 0.0837641723356009,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "ear_vae_44k",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 4096,
+            "audio_window_samples": 8192,
+            "decode_timing": {
+              "last_ms": 304.1876250063069,
+              "p99_ms": 305.4423111618962,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      },
+      {
+        "vae_id": "ear_vae_48k",
+        "discovery": {
+          "type": "pipeline_decoder_list",
+          "request_id": "phase4-ear_vae_48k",
+          "fingerprint": "phase4-ear_vae_48k",
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a",
+          "preparation_supported": true,
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+          "vae_id": "ear_vae_48k",
+          "default_window": 8,
+          "decoders": [
+            {
+              "backend": "onnxruntime",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|onnxruntime|cpu",
+              "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": true,
+              "weights": true,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": true,
+              "reason_codes": [],
+              "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|cpu",
+              "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "mps",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|mps",
+              "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+              "hardware": true,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            },
+            {
+              "backend": "pytorch",
+              "device": "cuda:0",
+              "vae_id": "ear_vae_48k",
+              "choice_key": "ear_vae_48k|pytorch|cuda:0",
+              "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+              "hardware": false,
+              "dependencies": false,
+              "weights": false,
+              "native_source_present": false,
+              "artifact_present": true,
+              "artifact_verified": true,
+              "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+              "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+              "validated": false,
+              "selectable": false,
+              "reason_codes": [
+                "missing_dependencies",
+                "unavailable_hardware",
+                "missing_weights",
+                "invalid_native_source"
+              ],
+              "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+            }
+          ],
+          "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019"
+        },
+        "job": {
+          "job_id": "114591a79fac4419805f57fe8ba62b72",
+          "generation": 8,
+          "sequence": 3,
+          "status": "already_valid",
+          "stage": "checking_reuse",
+          "vae_id": "ear_vae_48k",
+          "context": {
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "fingerprint": null
+          },
+          "detail": "Existing artifact verified and runtime checked",
+          "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+          "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+        },
+        "reconnect": {
+          "type": "pipeline_state",
+          "phase": "idle",
+          "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+          "decoder": null,
+          "error": null,
+          "preparation": {
+            "job_id": "114591a79fac4419805f57fe8ba62b72",
+            "generation": 8,
+            "sequence": 3,
+            "status": "already_valid",
+            "stage": "checking_reuse",
+            "vae_id": "ear_vae_48k",
+            "context": {
+              "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+              "fingerprint": null
+            },
+            "detail": "Existing artifact verified and runtime checked",
+            "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+            "artifact_dir": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1"
+          },
+          "preparation_supported": true,
+          "server_namespace": "b2cff55a678c413d302f367d65ad3d2f03bf7029600c51f2f3d26001f9df869a"
+        },
+        "transport": {
+          "discovery": {
+            "type": "pipeline_decoder_list",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "vae_id": "ear_vae_48k",
+            "default_window": 8,
+            "decoders": [
+              {
+                "backend": "onnxruntime",
+                "device": "cpu",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|onnxruntime|cpu",
+                "label": "ONNX \u00b7 CPU \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": true,
+                "weights": true,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": true,
+                "reason_codes": [],
+                "detail": "Available; runtime checked on Start Perform. Real-time performance is not implied."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cpu",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|cpu",
+                "label": "PyTorch \u00b7 CPU \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "mps",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|mps",
+                "label": "PyTorch \u00b7 MPS \u00b7 ear_vae_48k",
+                "hardware": true,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              },
+              {
+                "backend": "pytorch",
+                "device": "cuda:0",
+                "vae_id": "ear_vae_48k",
+                "choice_key": "ear_vae_48k|pytorch|cuda:0",
+                "label": "PyTorch \u00b7 CUDA:0 \u00b7 ear_vae_48k",
+                "hardware": false,
+                "dependencies": false,
+                "weights": false,
+                "native_source_present": false,
+                "artifact_present": true,
+                "artifact_verified": true,
+                "artifact_identity": "882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+                "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019",
+                "validated": false,
+                "selectable": false,
+                "reason_codes": [
+                  "missing_dependencies",
+                  "unavailable_hardware",
+                  "missing_weights",
+                  "invalid_native_source"
+                ],
+                "detail": "Install: dac, audiotools; CUDA:0 hardware unavailable; Native checkpoint is missing; Set the local EAR checkpoint, repository and configuration."
+              }
+            ],
+            "model_identity": "c53e53c30ac2b6bd32a22f18ba59785ab017eca47dcb86ca649bc02999b1d019"
+          },
+          "ready": {
+            "type": "pipeline_phase_change",
+            "phase": "perform",
+            "corpus_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/corpus/phase3_ear_vae_48k_20261003_102119",
+            "decoder": {
+              "backend": "onnxruntime",
+              "provider": "CPUExecutionProvider",
+              "device": "cpu",
+              "vae_id": "ear_vae_48k"
+            }
+          },
+          "decoder": {
+            "gain": 0.0,
+            "frame_samples": 3840,
+            "underruns": 22,
+            "buffer_underruns": 22,
+            "device_underruns": 0,
+            "buffer_duration": 0.058666666666666666,
+            "generation": 1,
+            "pending_generation": null,
+            "transition_status": "idle",
+            "backend": "onnxruntime",
+            "provider": "CPUExecutionProvider",
+            "vae_id": "ear_vae_48k",
+            "supported_windows": [
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22,
+              24,
+              26,
+              28,
+              30,
+              32
+            ],
+            "window_controls": {
+              "mode": "fixed",
+              "minimum": 2,
+              "maximum": 32,
+              "content": "source",
+              "variation": 0.25
+            },
+            "manual_provenance": "source_frames",
+            "selected_window": 8,
+            "requested_window": 8,
+            "latent_hop": 4,
+            "audio_hop_samples": 3840,
+            "audio_window_samples": 7680,
+            "decode_timing": {
+              "last_ms": 386.98854099493474,
+              "p99_ms": 387.81035329098813,
+              "count": 3
+            },
+            "requested_generation": 1,
+            "error": null,
+            "resource_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1",
+            "model_path": "/Users/dthibault/.cache/waenderer/decoders/ear_vae_48k/882ad286cada0d05b61d0b6fee744233e986e67c2eb9b55258c4659b2dcf75a1/decoder_dynamic.onnx"
+          },
+          "stopped": {
+            "type": "pipeline_phase_change",
+            "phase": "idle",
+            "decoder": null
+          }
+        }
+      }
+    ]
+  ],
+  "passed": true
+}

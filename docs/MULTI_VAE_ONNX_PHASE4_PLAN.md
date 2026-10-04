@@ -1,6 +1,6 @@
 # Phase 4 implementation plan — decoder choices and explicit preparation
 
-Status: planned on 3 October 2026, after completed [Phase 3](MULTI_VAE_ONNX_PHASE3.md). This pass inspected the current discovery, pipeline lifecycle, browser selection and preparation entry points. No runtime implementation or export was performed for this plan.
+Status: implemented and validated on 3 October 2026; see [Phase 4 delivery and evidence](MULTI_VAE_ONNX_PHASE4.md). The following preserves the original plan after completed Phase 3.
 
 ## Outcome and scope
 

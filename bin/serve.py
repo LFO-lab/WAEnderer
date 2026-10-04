@@ -189,6 +189,7 @@ def main():
     ap.add_argument("--erae-osc-host", default="127.0.0.1")
     ap.add_argument("--erae-osc-port", type=int, default=9000)
     ap.add_argument("--erae-osc-fps", type=float, default=30.0)
+    ap.add_argument('--decoder-preparation-config', help='Local JSON with exporter interpreters and decoder store')
     args = ap.parse_args()
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -199,7 +200,12 @@ def main():
     from stable_audio_wanderer.runtime.pipeline_server import PipelineManager
     from stable_audio_wanderer.runtime.ws_server import start_ws_server
 
-    pipeline = PipelineManager(pretrained=args.pretrained)
+    preparation_config = {}
+    if args.decoder_preparation_config:
+        import json
+        with open(args.decoder_preparation_config) as stream:
+            preparation_config = json.load(stream)
+    pipeline = PipelineManager(pretrained=args.pretrained, preparation_config=preparation_config)
 
     # Bind early: report OSC port conflicts before starting the GUI services.
     erae_osc = None

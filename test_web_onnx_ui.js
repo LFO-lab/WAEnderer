@@ -28,7 +28,7 @@ class FakeElement {
 }
 
 const ids = [
-    "perform-vae-weight-group", "perform-vae-weight-path", "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
+    "perform-decoder-model", "perform-prepare-btn", "perform-prepare-status", "perform-vae-repo-path", "perform-vae-config-path", "perform-vae-weight-group", "perform-vae-weight-path", "perform-decoder-status", "perform-decoder-window", "val-decoder-window",
     "perform-start-btn", "perform-stop-btn", "perform-decoder-engine", "perform-decoder-refresh", "perform-decoder-availability", "btn-start", "pp-vae-select", "pp-vae-path-group",
     "window-mode", "window-minimum", "window-maximum", "manual-content", "manual-variation",
     "adaptive-window-range", "manual-content-controls", "manual-variation-control",
@@ -73,7 +73,7 @@ assert.equal(transportStart.disabled, true, "transport waits for perform handoff
 start.listeners.click();
 assert.deepEqual(sent.pop(), {
     type: "pipeline_start_perform",
-    config: { corpus_dir: "/corpus/demo", decoder_window: 2, decoder_backend: "onnxruntime", decoder_device: "cpu", vae_weight_path: "" },
+    config: { corpus_dir: "/corpus/demo", decoder_window: 2, decoder_backend: "onnxruntime", decoder_device: "cpu", vae_weight_path: "", vae_repo_path: "", vae_config_path: "", decoder_model_identity: null },
 });
 
 vm.runInContext(
@@ -167,7 +167,7 @@ vm.runInContext(`handlePipelineMessage({type:'pipeline_decoder_list',corpus_dir:
     {backend:'pytorch',device:'cuda:0',label:'PyTorch · GPU · CUDA:0',hardware:false,dependencies:true,weights:true,selectable:false,detail:'GPU unavailable'}
 ]});`, context);
 assert.equal(engine.value, 'onnxruntime|cpu');
-assert.equal(engine.options[2].disabled, true);
+assert.equal(engine.options.find(o=>o.value==='pytorch|cuda:0').disabled, true);
 engine.value = 'pytorch|mps';
 engine.listeners.change();
 start.listeners.click();
@@ -183,7 +183,7 @@ vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'prep
 assert.equal(vm.runInContext('selectedTab', context), 'perform');
 assert.match(elements.get('perform-decoder-status').textContent, /warming/);
 vm.runInContext("handlePipelineMessage({type:'pipeline_phase_change',phase:'perform',decoder:{backend:'pytorch',device:'mps:0'}});", context);
-assert.match(elements.get('perform-decoder-status').textContent, /Active: pytorch · mps:0/);
+assert.match(elements.get('perform-decoder-status').textContent, /Active: .*pytorch · mps:0/);
 assert.equal(engine.disabled, true, 'even paused audio requires leaving Perform');
 assert.equal(stopPerform.disabled, false);
 stopPerform.listeners.click();
@@ -218,7 +218,9 @@ assert.equal(start.disabled, true);
 vm.runInContext("onDecoderList({corpus_dir:'/corpus/old',vae_id:'same_s',decoders:[]});", context);
 assert.equal(start.disabled, true, 'stale availability must be ignored');
 vm.runInContext("onDecoderList({corpus_dir:'/corpus/rack',vae_id:'stable_audio_open',default_window:8,decoders:[{backend:'pytorch',device:'cpu',selectable:true,label:'SAO CPU'},{backend:'pytorch',device:'mps',selectable:true,label:'SAO MPS'}]});", context);
-assert.equal(elements.get('perform-decoder-engine').value, 'pytorch|mps');
+assert.equal(elements.get('perform-decoder-engine').value, '', 'No implicit GPU choice');
+elements.get('perform-decoder-engine').value='pytorch|cpu';
+elements.get('perform-decoder-engine').listeners.change();
 assert.equal(elements.get('perform-vae-weight-group').hidden, true);
 assert.ok(elements.get('perform-decoder-engine').options.every(o => !o.value.startsWith('onnxruntime')));
 start.listeners.click();
@@ -228,6 +230,8 @@ assert.equal(sent.at(-1).config.decoder_backend, 'pytorch');
 vm.runInContext("pipelinePhase='idle'; decoderCommandPending=false; setPipelineCorpusDir('/corpus/ear'); onDecoderList({corpus_dir:'/corpus/ear',vae_id:'ear_vae_48k',decoders:[{backend:'pytorch',device:'cpu',selectable:true,label:'EAR CPU'}]});", context);
 assert.equal(elements.get('perform-vae-weight-group').hidden, false);
 elements.get('perform-vae-weight-path').value = '/models/ear/weights.pyt';
+elements.get('perform-decoder-engine').value='pytorch|cpu';
+elements.get('perform-decoder-engine').listeners.change();
 start.listeners.click();
 assert.equal(sent.at(-1).config.vae_weight_path, '/models/ear/weights.pyt');
 console.log('Corpus-specific VAE selection and EAR weight path passed');
@@ -305,3 +309,60 @@ for (const variant of ['44k','48k']) {
     }
 }
 console.log('Phase 3 recorded EAR 44k/48k discovery, offline restart and reconnect passed');
+
+// Phase 4 identity-bound preferences, correlated requests and preparation jobs.
+const preferences=new Map();
+function phase4Client() {
+    const nodes=new Map(ids.map(id=>[id,new FakeElement(id)]));
+    const messages=[];
+    const client=vm.createContext({console,setTimeout,clearTimeout,
+        localStorage:{getItem:key=>preferences.get(key)||null,setItem:(key,value)=>preferences.set(key,value)},
+        wsConnected:true,ws:{send:payload=>messages.push(JSON.parse(payload))},document:{
+            readyState:'loading',getElementById:id=>nodes.get(id)||null,createElement:()=>new FakeElement(),
+            querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}}});
+    vm.runInContext(fs.readFileSync('web/pipeline.js','utf8'),client);
+    vm.runInContext("setupPipelineControls(); setPipelineCorpusDir('/corpus/phase4');",client);
+    const respond=(identity='model-a',extra={})=>{
+        const request=messages.filter(m=>m.type==='pipeline_list_decoders').at(-1);
+        const data={type:'pipeline_decoder_list',...request, request_id:request.request_id,
+            corpus_dir:'/corpus/phase4',vae_id:'ear_vae_44k',server_namespace:'server-a',model_identity:identity,
+            preparation_supported:true,decoders:[
+                {backend:'onnxruntime',device:'cpu',selectable:true,artifact_verified:true,label:'ONNX CPU'},
+                {backend:'pytorch',device:'cpu',selectable:true,label:'PyTorch CPU'},
+                {backend:'pytorch',device:'mps',selectable:true,label:'PyTorch MPS'}],...extra};
+        data.type='pipeline_decoder_list';
+        vm.runInContext(`handlePipelineMessage(${JSON.stringify(data)});`,client);
+        return data;
+    };
+    return {client,nodes,messages,respond};
+}
+let p4=phase4Client();
+p4.respond();
+assert.equal(p4.nodes.get('perform-decoder-engine').value,'onnxruntime|cpu','verified ONNX preferred over GPU');
+p4.nodes.get('perform-decoder-engine').value='pytorch|cpu';
+p4.nodes.get('perform-decoder-engine').listeners.change();
+p4=phase4Client();p4.respond();
+assert.equal(p4.nodes.get('perform-decoder-engine').value,'pytorch|cpu','explicit CPU survives browser reload');
+const stale=p4.respond();
+vm.runInContext('requestDecoderAvailability();',p4.client);
+vm.runInContext(`onDecoderList(${JSON.stringify(stale)});`,p4.client);
+assert.equal(p4.nodes.get('perform-start-btn').disabled,true,'old same-corpus discovery cannot re-enable Start');
+p4.respond('model-b');
+assert.equal(p4.nodes.get('perform-decoder-engine').value,'onnxruntime|cpu','changed source does not restore old preference');
+p4.respond('model-a',{decoders:[{backend:'onnxruntime',device:'cpu',selectable:true,artifact_verified:true},
+    {backend:'pytorch',device:'cpu',selectable:false,detail:'Native dependency missing'}]});
+assert.equal(p4.nodes.get('perform-decoder-engine').value,'pytorch|cpu');
+assert.equal(p4.nodes.get('perform-start-btn').disabled,true,'unavailable saved backend is retained, not replaced');
+p4.respond('model-a');
+p4.nodes.get('perform-prepare-btn').listeners.click();
+assert.equal(p4.messages.at(-1).type,'pipeline_prepare_decoder');
+assert.equal(p4.nodes.get('perform-start-btn').disabled,true,'pending job blocks Start');
+vm.runInContext("onPreparationJob({job_id:'job-a',generation:1,sequence:1,status:'running',vae_id:'ear_vae_44k',stage:'exporting'});",p4.client);
+assert.equal(p4.nodes.get('perform-decoder-engine').disabled,true);
+vm.runInContext("onPreparationJob({job_id:'job-a',generation:1,sequence:2,status:'prepared',vae_id:'ear_vae_44k'});",p4.client);
+p4.respond();
+assert.equal(p4.nodes.get('perform-decoder-engine').value,'pytorch|cpu','preparation preserves explicit native CPU');
+vm.runInContext("onPreparationJob({job_id:'job-b',generation:2,sequence:1,status:'running',vae_id:'ear_vae_44k'}); onPreparationJob({job_id:'job-a',generation:1,sequence:99,status:'failed',vae_id:'ear_vae_44k'});",p4.client);
+assert.match(p4.nodes.get('perform-prepare-status').textContent,/Preparing/,'late prior job cannot overwrite current job');
+assert.ok(!p4.messages.some(m=>m.type==='pipeline_start_perform'),'discovery/preparation never starts playback');
+console.log('Phase 4 preferences, stale-response guards and preparation lifecycle passed');

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "export": {
+    "job_id": "16d7347db4d54935b2937505266f84a2",
+    "sequence": 51,
+    "status": "prepared",
+    "stage": "publishing",
+    "vae_id": "ear_vae_44k",
+    "context": {},
+    "detail": "ONNX decoder prepared",
+    "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+    "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/build/phase4/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+  },
+  "reuse": {
+    "job_id": "ba83dd1b46d441aa99b1df46714524a7",
+    "generation": 1,
+    "sequence": 3,
+    "status": "already_valid",
+    "stage": "checking_reuse",
+    "vae_id": "ear_vae_44k",
+    "context": {},
+    "detail": "Existing artifact verified and runtime checked",
+    "artifact_identity": "9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694",
+    "artifact_dir": "/Users/dthibault/Documents/GitHub/WAEnderer/WAEnderer_python/build/phase4/decoders/ear_vae_44k/9d7e752c079831cbb75787540bc890b06cadb9f0ed57d6ab5b931aa83d7e2694"
+  },
+  "scope": "Real EAR 44.1 kHz export in .venv-ear, coordinator publication in isolated store, then reuse from default environment."
+}

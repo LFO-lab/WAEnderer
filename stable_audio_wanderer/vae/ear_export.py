@@ -82,7 +82,7 @@ def probe_samples(vae_id, source, fixture=None, corpus=None):
 
 
 def prepare(vae_id, weights, *, repo='', config='', fixture=None, corpus=None,
-            store_dir=None, opset=18, force=False, fixed_only=False):
+            store_dir=None, opset=18, force=False, fixed_only=False, publish_fn=None):
     import torch
     torch.set_num_threads(1)
     resolved=resolve_source(vae_id,weights,repo,config)
@@ -116,4 +116,4 @@ def prepare(vae_id, weights, *, repo='', config='', fixture=None, corpus=None,
     return build_artifact(wrapper=wrapper,source=source,vae_id=vae_id,samples=samples,
         geometry=dict(sample_rate=v['sample_rate'],channels=2,latent_dim=64,samples_per_latent=v['ratio'],
                       corpus_latent_hz=[v['sample_rate']/v['ratio']]),settings=settings,
-        tolerances=TOLERANCES[vae_id],evidence=evidence,store_dir=store_dir,fixed_only=fixed_only,export_fn=export_graph)
+        tolerances=TOLERANCES[vae_id],evidence=evidence,store_dir=store_dir,fixed_only=fixed_only,export_fn=export_graph, **({'publish_fn':publish_fn} if publish_fn else {}))

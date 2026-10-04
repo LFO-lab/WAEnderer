@@ -1,0 +1,119 @@
+{
+  "passed": true,
+  "artifact_identity": "d665e09aff953616c18e6c92c7ed0b75ac05fad5f8bfc2ef50f797af154cadc9",
+  "windows": [
+    {
+      "window": 2,
+      "shape": [
+        8192,
+        2
+      ]
+    },
+    {
+      "window": 4,
+      "shape": [
+        16384,
+        2
+      ]
+    },
+    {
+      "window": 6,
+      "shape": [
+        24576,
+        2
+      ]
+    },
+    {
+      "window": 8,
+      "shape": [
+        32768,
+        2
+      ]
+    },
+    {
+      "window": 10,
+      "shape": [
+        40960,
+        2
+      ]
+    },
+    {
+      "window": 12,
+      "shape": [
+        49152,
+        2
+      ]
+    },
+    {
+      "window": 14,
+      "shape": [
+        57344,
+        2
+      ]
+    },
+    {
+      "window": 16,
+      "shape": [
+        65536,
+        2
+      ]
+    },
+    {
+      "window": 18,
+      "shape": [
+        73728,
+        2
+      ]
+    },
+    {
+      "window": 20,
+      "shape": [
+        81920,
+        2
+      ]
+    },
+    {
+      "window": 22,
+      "shape": [
+        90112,
+        2
+      ]
+    },
+    {
+      "window": 24,
+      "shape": [
+        98304,
+        2
+      ]
+    },
+    {
+      "window": 26,
+      "shape": [
+        106496,
+        2
+      ]
+    },
+    {
+      "window": 28,
+      "shape": [
+        114688,
+        2
+      ]
+    },
+    {
+      "window": 30,
+      "shape": [
+        122880,
+        2
+      ]
+    },
+    {
+      "window": 32,
+      "shape": [
+        131072,
+        2
+      ]
+    }
+  ],
+  "scope": "Real existing SAME-S graph resolved from local current pointer; package unchanged. New export conversion covered separately by tests."
+}

@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "date": "2026-10-03",
+  "url": "http://127.0.0.1:18080/?ws_port=18765",
+  "method": "Actual in-app browser, accessibility inspection and screenshots",
+  "checks": [
+    "EAR 44k ONNX selected with native dependencies absent; unavailable choices expose specific reasons",
+    "Explicit Prepare shows progress and disables conflicting controls",
+    "Stable Audio Open PyTorch CPU stays selected after ONNX preparation and browser reload",
+    "EAR 48k missing checkpoint shows Weights required; explicit Retry after clearing selection reuses valid artifact",
+    "Successful EAR 48k result and styled source fields visually inspected"
+  ],
+  "scope": "UI interaction without starting audible playback; backend transport recorded separately"
+}

@@ -1,6 +1,6 @@
 """Prepare and atomically publish a local EAR decoder without downloading weights."""
 import argparse
-from stable_audio_wanderer.vae.ear_export import prepare
+from bin.prepare_decoders import main as prepare_main
 
 
 def main():
@@ -16,7 +16,8 @@ def main():
     parser.add_argument('--force',action='store_true')
     parser.add_argument('--fixed-only',action='store_true')
     args=vars(parser.parse_args())
-    print(prepare(**args))
+    import sys
+    return prepare_main(sys.argv[1:])
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':raise SystemExit(main())
