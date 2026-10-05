@@ -322,7 +322,14 @@ Start the unified server offline with:
 python bin/serve.py
 ```
 
-Open `http://localhost:8080` and select or create a corpus. After preprocessing
+Open `http://localhost:8080` and select or create a corpus. In Encode,
+**Browse...** opens a system folder picker on the computer running the server;
+selecting a directory displays its path and automatically scans its WAV files.
+The picker requires Python
+Tk support (often supplied separately as `python3-tk` on Linux) and a desktop
+display. For headless preprocessing, use `bin/preprocess.py --audio_dir`.
+Cancel keeps the
+current source. After preprocessing
 or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open/EAR corpora offer ONNX CPU or native PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
 
 All four VAEs now share model-specific decoder choices, visible unavailability reasons, and explicit **Prepare ONNX decoder / Retry** controls. A verified ONNX CPU artifact is the default for a new corpus; explicit backend choices persist across refresh/reconnect/reload. Preparation never starts playback or changes the selected backend. Use `python -m bin.prepare_decoders --all-installed` for batch preparation/reuse. See [Phase 4 configuration, lifecycle and verification](docs/MULTI_VAE_ONNX_PHASE4.md) for separate exporter environments and the server configuration file.

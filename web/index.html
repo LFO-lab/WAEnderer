@@ -582,20 +582,21 @@
 
             <!-- Pipeline Phase Bar -->
             <div id="pipeline-phase-bar" class="phase-bar">
-                <div class="phase-step selected" id="phase-preprocess">Preprocess</div>
+                <div class="phase-step selected" id="phase-preprocess">Encode</div>
                 <div class="phase-step" id="phase-train">Train</div>
-                <div class="phase-step" id="phase-perform">Perform</div>
+                <div class="phase-step" id="phase-perform">Navigate</div>
             </div>
 
             <!-- Preprocess Panel -->
             <div id="preprocess-panel">
-                <h2>Preprocess</h2>
+                <h2>Audio Corpus</h2>
                 <div class="pipeline-section">
                     <h3>Audio Source</h3>
                     <div class="pipeline-input-row">
-                        <input type="text" id="pp-audio-dir" placeholder="Path to audio directory...">
-                        <button id="pp-scan-btn" type="button" class="secondary">Scan</button>
+                        <button id="pp-browse-btn" type="button" class="secondary">Browse...</button>
                     </div>
+                    <p id="pp-source-status" role="status" aria-live="polite"></p>
+                    <p id="pp-audio-dir" class="stats-text panel-hidden" style="overflow-wrap:anywhere"></p>
                     <div id="pp-file-list-container" class="panel-hidden">
                         <table class="file-list-table" id="pp-file-list">
                             <thead><tr><th>File</th><th>Duration</th></tr></thead>
@@ -605,7 +606,7 @@
                 </div>
 
                 <div class="pipeline-section">
-                    <h3>VAE Model</h3>
+                    <h3>Encoder</h3>
                     <div class="control-row">
                         <div class="control-group" style="width:100%">
                             <select id="pp-vae-select">
@@ -623,15 +624,7 @@
                 </div>
 
                 <div class="pipeline-section">
-                    <h3>Or Use Existing Corpus</h3>
-                    <select id="pp-corpus-select">
-                        <option value="">-- Select Corpus --</option>
-                    </select>
-                    <button id="pp-use-corpus-btn" type="button" class="secondary" style="margin-top:4px">Use Selected</button>
-                </div>
-
-                <div class="pipeline-section">
-                    <h3>Settings</h3>
+                    <h3>Dataset</h3>
                     <div class="control-row">
                         <div class="control-group">
                             <div class="control-label"><span>Silence Trim</span></div>
@@ -692,7 +685,7 @@
 
                 <div class="pipeline-section">
                     <div class="control-row">
-                        <button id="pp-start-btn" type="button">Start Preprocess</button>
+                        <button id="pp-start-btn" type="button">Start Encode</button>
                         <button id="pp-cancel-btn" type="button" class="secondary">Cancel</button>
                     </div>
                     <div class="progress-bar" id="pp-progress-bar"><div class="progress-bar-fill" id="pp-progress-fill"></div></div>
@@ -793,19 +786,40 @@
 
             <!-- Perform Panel -->
             <div id="perform-panel" class="panel-hidden">
-                <h2>Perform</h2>
+                <h2>Navigate</h2>
                 <div class="pipeline-section">
-                    <h3>Audio decoder</h3>
-                    <div id="perform-decoder-model" class="stats-text">Select a corpus</div>
-                    <label for="perform-decoder-engine">Decode with</label>
-                    <select id="perform-decoder-engine">
-                        <option value="onnxruntime|cpu">ONNX · CPU</option>
+                    <h3>Select Encoded Corpus</h3>
+                    <select id="perform-corpus-select">
+                        <option value="">-- Select Corpus --</option>
                     </select>
-                    <button id="perform-decoder-refresh" type="button">Refresh availability</button>
-                    <div id="perform-decoder-availability" class="stats-text" role="status">Availability not checked.</div>
-                    <details class="stats-text"><summary>Unavailable choices and reasons</summary><ul id="perform-decoder-unavailable"></ul></details>
-                    <button id="perform-prepare-btn" type="button" disabled>Prepare ONNX decoder</button>
-                    <div id="perform-prepare-status" class="stats-text" role="status" aria-live="polite"></div>
+                </div>
+                <div class="pipeline-section">
+                    <label>Corpus VAE</label>
+                    <div id="perform-decoder-model" class="stats-text">Select a corpus</div>
+                    <div id="perform-corpus-summary" class="stats-text"></div>
+                    <label for="perform-decoder-engine">Decode with</label>
+                    <div class="pipeline-input-row">
+                        <select id="perform-decoder-engine" style="flex:1;min-width:0">
+                            <option value="onnxruntime|cpu">ONNX · CPU</option>
+                        </select>
+                        <button id="perform-decoder-refresh" type="button" class="secondary" style="width:auto;flex:0 0 auto;padding:4px 6px;font-size:10px" title="Refresh availability" aria-label="Refresh decoder availability">↻</button>
+                    </div>
+                    <details class="stats-text">
+                        <summary>Decoder diagnostics</summary>
+                        <div id="perform-decoder-availability" class="stats-text" role="status">Availability not checked.</div>
+                        <details class="stats-text"><summary>Unavailable choices and reasons</summary><ul id="perform-decoder-unavailable"></ul></details>
+                    <div
+                        class="stats-text"
+                        id="perform-decoder-status"
+                        role="status"
+                        aria-live="polite"
+                    >No active decoder. Select a corpus and choose a decoder.</div>
+                    </details>
+                    <details class="pipeline-section">
+                        <summary>ONNX</summary>
+                        <button id="perform-prepare-btn" type="button" disabled>Prepare ONNX decoder</button>
+                        <div id="perform-prepare-status" class="stats-text" role="status" aria-live="polite"></div>
+                    </details>
                     <div id="perform-vae-weight-group" hidden>
                         <label for="perform-vae-weight-path">VAE weights (EAR .pyt)</label>
                         <input id="perform-vae-weight-path" type="text" placeholder="Path to weights inside the EAR_VAE repository">
@@ -815,40 +829,9 @@
                         <input id="perform-vae-config-path" type="text" placeholder="Path to configuration JSON">
                     </div>
 
-                    <div
-                        class="stats-text"
-                        id="perform-decoder-status"
-                        role="status"
-                        aria-live="polite"
-                    >No active decoder. Select a corpus and choose a decoder.</div>
-                    <div class="control-row" style="margin-top:8px">
-                        <div class="control-group" style="width:100%;grid-column:1 / -1">
-                            <div class="control-label">
-                                <span>Decoder Window</span>
-                                <span class="control-value" id="val-decoder-window">T2</span>
-                            </div>
-                            <select id="perform-decoder-window">
-                                <option value="2" selected>T2</option>
-                                <option value="4">T4</option>
-                                <option value="8">T8</option>
-                                <option value="16">T16</option>
-                                <option value="32">T32</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="control-row">
-                        <div class="control-group">
-                            <label for="window-mode">Window length</label>
-                            <select id="window-mode" disabled><option value="fixed">Fixed</option><option value="adaptive">Adaptive</option></select>
-                        </div>
-                        <div class="control-group" id="adaptive-window-range" hidden>
-                            <label for="window-minimum">Minimum T</label><select id="window-minimum" disabled></select>
-                            <label for="window-maximum">Maximum T</label><select id="window-maximum" disabled></select>
-                        </div>
-                    </div>
-                    <button id="perform-start-btn" type="button" disabled>Start Perform</button>
-                    <button id="perform-stop-btn" type="button" disabled>Stop Perform to change decoder</button>
-                    <p class="stats-text">Stop Decode pauses audio. Stop Perform releases the transport so you can choose another decoder.</p>
+                    <button id="perform-start-btn" type="button" disabled>Load corpus</button>
+                    <button id="perform-stop-btn" type="button" disabled>Unload corpus</button>
+                    <p class="stats-text">Stop Decode pauses audio. Unload corpus releases the transport so you can choose another decoder.</p>
                 </div>
 
             <div class="status">
@@ -907,6 +890,35 @@
                 </div>
             </div>
             
+            <div class="pipeline-section">
+                <h3>Performance</h3>
+                    <div class="control-row" style="margin-top:8px">
+                        <div class="control-group" style="width:100%;grid-column:1 / -1">
+                            <div class="control-label">
+                                <span>Decoder Window</span>
+                                <span class="control-value" id="val-decoder-window">T2</span>
+                            </div>
+                            <select id="perform-decoder-window">
+                                <option value="2" selected>T2</option>
+                                <option value="4">T4</option>
+                                <option value="8">T8</option>
+                                <option value="16">T16</option>
+                                <option value="32">T32</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label for="window-mode">Window length</label>
+                            <select id="window-mode" disabled><option value="fixed">Fixed</option><option value="adaptive">Adaptive</option></select>
+                        </div>
+                        <div class="control-group" id="adaptive-window-range" hidden>
+                            <label for="window-minimum">Minimum T</label><select id="window-minimum" disabled></select>
+                            <label for="window-maximum">Maximum T</label><select id="window-maximum" disabled></select>
+                        </div>
+                    </div>
+            </div>
+
             <h2>Navigation Mode</h2>
             <div class="mode-tabs">
                 <button id="mode-random" class="mode-tab active" type="button">Wander</button>

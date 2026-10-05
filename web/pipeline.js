@@ -6,6 +6,8 @@
 // Pipeline state
 let pipelinePhase = 'idle';
 let pipelineCorpusDir = null;
+let selectedAudioDir = '';
+const corpusMetadata = new Map();
 let selectedTab = 'preprocess';
 let pipelineServerSeen = false;
 const APP_DECODER_WINDOWS = [2]; // Backend metadata supplies validated lengths after loading.
@@ -99,7 +101,12 @@ function onDecoderList(data) {
     decoderModelIdentity=data.model_identity || null;
     decoderVae=data.vae_id || 'same_s';
     const modelLabel=document.getElementById('perform-decoder-model');
-    if (modelLabel) modelLabel.textContent=`Corpus VAE: ${decoderVae}`;
+    if (modelLabel) modelLabel.textContent=data.vae_id || corpusMetadata.get(pipelineCorpusDir)?.vae_id || 'Corpus VAE unavailable';
+    const summaryLabel = document.getElementById('perform-corpus-summary');
+    if (summaryLabel) summaryLabel.textContent = pipelineCorpusDir
+        ? formatCorpusAudioSummary(data.corpus_audio || corpusMetadata.get(pipelineCorpusDir)?.corpus_audio)
+            || 'Corpus details unavailable. Restart the server and refresh the corpus list.'
+        : '';
     if (data.corpus_dir && data.corpus_dir !== pipelineCorpusDir) return;
     if (pipelineCorpusDir && !data.corpus_dir && decoderChoiceCorpus) return;
     const corpusChanged = Boolean(data.corpus_dir && data.corpus_dir !== decoderChoiceCorpus);
@@ -190,7 +197,7 @@ function applyDecoderPhase(data) {
     } else if (pipelinePhase === 'stopping') {
         setDecoderStatus('Stopping audio and waiting for pending decoding…');
     } else {
-        setDecoderStatus('No active decoder. Choose a decoder and Start Perform.');
+        setDecoderStatus('No active decoder. Choose a decoder and load corpus.');
         if (pipelinePhase === 'idle') populateDecoderWindowOptions([decoderInitialWindow], decoderInitialWindow);
         pendingDecoderControls.clear();
     }
@@ -232,9 +239,32 @@ function selectTab(tab) {
 function setPipelineCorpusDir(corpusDir) {
     if (!corpusDir || corpusDir === pipelineCorpusDir) return;
     pipelineCorpusDir = corpusDir;
+    const modelLabel = document.getElementById('perform-decoder-model');
+    if (modelLabel) modelLabel.textContent = corpusMetadata.get(corpusDir)?.vae_id || 'Checking corpus…';
+    const summaryLabel = document.getElementById('perform-corpus-summary');
+    if (summaryLabel) summaryLabel.textContent = formatCorpusAudioSummary(corpusMetadata.get(corpusDir)?.corpus_audio)
+        || 'Reading corpus details…';
+    const select = document.getElementById('perform-corpus-select');
+    if (select) select.value = corpusDir;
     decoderChoices = [];
     requestDecoderAvailability();
     updateDecoderControls();
+}
+
+function formatCorpusAudioSummary(summary) {
+    if (!summary) return '';
+    const parts = [];
+    const duration = summary.encoded_duration_seconds;
+    if (typeof duration === 'number' && Number.isFinite(duration) && duration >= 0) {
+        const seconds = Math.round(duration);
+        const hh = String(Math.floor(seconds / 3600)).padStart(2, '0');
+        const mm = String(Math.floor(seconds / 60) % 60).padStart(2, '0');
+        const ss = String(seconds % 60).padStart(2, '0');
+        parts.push(`Encoded audio: ≈ ${hh}:${mm}:${ss}`);
+    }
+    if (Number.isInteger(summary.audio_file_count)) parts.push(`${summary.audio_file_count} files`);
+    if (summary.sample_rate) parts.push(`${summary.sample_rate / 1000} kHz`);
+    return parts.join(' · ');
 }
 
 function normalizeDecoderWindows(values) {
@@ -304,13 +334,13 @@ function updateDecoderControls() {
         const element = document.getElementById(id);
         if (element) {
             element.disabled = !pipelineConnectionReady || decoderCommandPending || !decoderWindowControlsAvailable;
-            element.title = decoderWindowControlsAvailable ? '' : 'Load Perform with the updated server to enable this control';
+            element.title = decoderWindowControlsAvailable ? '' : 'Load corpus with the updated server to enable this control';
         }
     });
     const requested = selectedDecoderChoice();
     const available = decoderChoices?.find(item => item.backend === requested.backend && item.device === requested.device);
     const ready = pipelineConnectionReady && !decoderCommandPending && !preparationBusy();
-    for (const id of ['pp-start-btn','train-start-btn','pp-use-corpus-btn']) {
+    for (const id of ['pp-start-btn','train-start-btn','perform-corpus-select']) {
         const button=document.getElementById(id);
         if (button) button.disabled=!ready || pipelinePhase !== 'idle' || (id === 'train-start-btn' && !pipelineCorpusDir);
     }
@@ -339,7 +369,7 @@ function updateDecoderControls() {
     if (transportStartButton && pipelineServerSeen) {
         transportStartButton.disabled = !pipelineCanStartTransport();
         transportStartButton.title = transportStartButton.disabled
-            ? 'Start Perform first'
+            ? 'Load corpus first'
             : '';
     }
 }
@@ -464,7 +494,20 @@ function handlePipelineMessage(data) {
             onTrainProgress(data);
         }
     } else if (type === 'pipeline_file_list') {
-        onFileList(data);
+        if (data.audio_dir === selectedAudioDir) {
+            document.getElementById('pp-source-status').textContent = data.error || `${data.files.length} WAV files found.`;
+            onFileList(data);
+        }
+    } else if (type === 'pipeline_audio_directory') {
+        document.getElementById('pp-browse-btn').disabled = false;
+        document.getElementById('pp-source-status').textContent = data.error || '';
+        if (data.audio_dir) {
+            selectedAudioDir = data.audio_dir;
+            const pathText = document.getElementById('pp-audio-dir');
+            pathText.textContent = selectedAudioDir;
+            pathText.classList.remove('panel-hidden');
+            scanAudioSource();
+        }
     } else if (type === 'pipeline_corpus_list') {
         onCorpusList(data);
     } else if (type === 'pipeline_vae_list') {
@@ -527,18 +570,28 @@ function onFileList(data) {
 }
 
 function onCorpusList(data) {
-    const select = document.getElementById('pp-corpus-select');
+    const select = document.getElementById('perform-corpus-select');
     if (!select) return;
 
     // Keep the first option
     while (select.options.length > 1) select.remove(1);
+    corpusMetadata.clear();
 
     (data.corpora || []).forEach(c => {
+        corpusMetadata.set(c.path, c);
         const opt = document.createElement('option');
         opt.value = c.path;
         opt.textContent = c.name;
         select.appendChild(opt);
     });
+    select.value = pipelineCorpusDir || '';
+    if (pipelineCorpusDir) {
+        const metadata = corpusMetadata.get(pipelineCorpusDir);
+        const model = document.getElementById('perform-decoder-model');
+        if (model && metadata?.vae_id) model.textContent = metadata.vae_id;
+        const summary = document.getElementById('perform-corpus-summary');
+        if (summary && metadata?.corpus_audio) summary.textContent = formatCorpusAudioSummary(metadata.corpus_audio);
+    }
 }
 
 function onVAEList(data) {
@@ -691,6 +744,14 @@ function onTrainComplete(data) {
 
 // ---- Setup Controls ----
 
+function scanAudioSource() {
+    const dir = selectedAudioDir;
+    document.getElementById('pp-file-list-container').classList.add('panel-hidden');
+    const sent = dir && sendPipelineMessage({ type: 'pipeline_list_files', audio_dir: dir });
+    document.getElementById('pp-source-status').textContent = !dir ? '' :
+        sent ? 'Scanning…' : 'Connect to the server to scan this directory.';
+}
+
 function setupPipelineControls() {
     populateDecoderWindowOptions(APP_DECODER_WINDOWS, 2);
     setDecoderStatus('No active decoder. Select a corpus and choose a decoder.');
@@ -711,23 +772,24 @@ function setupPipelineControls() {
         vaeSelect.addEventListener('change', updateVAEPathVisibility);
     }
 
-    // Scan button
-    const scanBtn = document.getElementById('pp-scan-btn');
-    if (scanBtn) {
-        scanBtn.addEventListener('click', () => {
-            const dir = document.getElementById('pp-audio-dir').value.trim();
-            if (!dir) return;
-            sendPipelineMessage({ type: 'pipeline_list_files', audio_dir: dir });
-        });
-    }
+    // Native picker opens on the server host and selection triggers a scan.
+    const browseBtn = document.getElementById('pp-browse-btn');
+    browseBtn?.addEventListener('click', () => {
+        if (sendPipelineMessage({type: 'pipeline_choose_audio_dir',
+            audio_dir: selectedAudioDir})) {
+            browseBtn.disabled = true;
+            document.getElementById('pp-source-status').textContent = 'Choose a folder in the system window…';
+        } else {
+            document.getElementById('pp-source-status').textContent = 'Connect to the server to choose a directory.';
+        }
+    });
 
-    // Use existing corpus
-    const useCorpusBtn = document.getElementById('pp-use-corpus-btn');
-    if (useCorpusBtn) {
-        useCorpusBtn.addEventListener('click', () => {
-            const select = document.getElementById('pp-corpus-select');
-            if (select && select.value) {
-                setPipelineCorpusDir(select.value);
+    // Apply corpus selection immediately; loading remains an explicit action.
+    const corpusSelect = document.getElementById('perform-corpus-select');
+    if (corpusSelect) {
+        corpusSelect.addEventListener('change', () => {
+            if (corpusSelect.value) {
+                setPipelineCorpusDir(corpusSelect.value);
                 const trainInfo = document.getElementById('train-corpus-info');
                 if (trainInfo) trainInfo.textContent = `Corpus: ${pipelineCorpusDir}`;
                 updatePipelinePhaseUI();
@@ -739,7 +801,7 @@ function setupPipelineControls() {
     const ppStartBtn = document.getElementById('pp-start-btn');
     if (ppStartBtn) {
         ppStartBtn.addEventListener('click', () => {
-            const audioDir = document.getElementById('pp-audio-dir').value.trim();
+            const audioDir = selectedAudioDir;
             if (!audioDir) return;
 
             const config = {

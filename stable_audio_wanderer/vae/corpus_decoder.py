@@ -3,6 +3,24 @@ from pathlib import Path
 import numpy as np
 
 
+def corpus_audio_summary(corpus_path):
+    """Read small metadata arrays; duration uses encoded frames, after trimming."""
+    path = Path(corpus_path).expanduser()
+    if path.is_dir():
+        path /= 'corpus.npz'
+    with np.load(path, allow_pickle=False) as data:
+        summary = {'sample_rate': int(data['sr'].item())}
+        if 'file_offsets' in data:
+            offsets = data['file_offsets']
+            hz = float(data['latent_hz'].item())
+            if (offsets.ndim == 1 and len(offsets) >= 2
+                    and offsets[0] == 0 and np.all(np.diff(offsets) >= 0)
+                    and np.isfinite(hz) and hz > 0):
+                summary.update(encoded_duration_seconds=float(offsets[-1]) / hz,
+                               audio_file_count=len(offsets) - 1)
+        return summary
+
+
 def corpus_decoder_spec(corpus_path, *, validate=True):
     path = Path(corpus_path).expanduser()
     if path.is_dir():

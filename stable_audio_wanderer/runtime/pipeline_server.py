@@ -45,6 +45,7 @@ class PipelineManager:
         self._perform_attempt = None
         self._lifecycle_lock = threading.RLock()
         self._closed = False
+        self._audio_picker_busy = False
         from concurrent.futures import ThreadPoolExecutor
         from .decoder_preparation_jobs import PreparationJobs
         preparation_config = preparation_config or {}
@@ -107,6 +108,11 @@ class PipelineManager:
                 self._list_decoders(data)
         elif msg_type == "pipeline_list_files":
             self._handle_list_files(data)
+        elif msg_type == "pipeline_choose_audio_dir":
+            if not self._audio_picker_busy:
+                self._audio_picker_busy = True
+                threading.Thread(target=self._choose_audio_dir,
+                                 args=(data.get("audio_dir", ""),), daemon=True).start()
         elif msg_type == "pipeline_list_corpora":
             self._handle_list_corpora()
         elif msg_type == "pipeline_list_vaes":
@@ -168,8 +174,10 @@ class PipelineManager:
             if not corpus_dir:
                 response['decoders'] = self._available_decoders({'vae_id':'same_s'}, data)
             else:
-                from ..vae.corpus_decoder import corpus_decoder_spec
+                from ..vae.corpus_decoder import corpus_decoder_spec, corpus_audio_summary
                 spec = corpus_decoder_spec(corpus_dir, validate=False)
+                response.update(corpus_dir=corpus_dir, vae_id=spec['vae_id'],
+                                corpus_audio=corpus_audio_summary(corpus_dir))
                 entries = self._available_decoders(spec, data)
                 failure = self._runtime_failure
                 if failure and failure['corpus_dir'] == corpus_dir:
@@ -215,6 +223,24 @@ class PipelineManager:
     # File listing
     # ------------------------------------------------------------------
 
+    def _choose_audio_dir(self, initial_dir: str):
+        import json
+        import subprocess
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-m", "stable_audio_wanderer.runtime.audio_directory_picker", initial_dir],
+                capture_output=True, text=True, check=True,
+            )
+            result = json.loads(completed.stdout)
+        except Exception as exc:
+            result = {"error": f"Could not open folder picker: {exc}"}
+        finally:
+            with self._lifecycle_lock:
+                self._audio_picker_busy = False
+        if not self._closed:
+            self._emit({"type": "pipeline_audio_directory", **result})
+
     def _handle_list_files(self, data: dict):
         audio_dir = data.get("audio_dir", "")
         if not audio_dir or not os.path.isdir(audio_dir):
@@ -248,6 +274,7 @@ class PipelineManager:
         })
 
     def _handle_list_corpora(self):
+        from ..vae.corpus_decoder import corpus_decoder_spec, corpus_audio_summary
         corpus_root = os.path.join(os.getcwd(), "corpus")
         corpora = []
         if os.path.isdir(corpus_root):
@@ -256,10 +283,16 @@ class PipelineManager:
                 if os.path.isdir(entry_path):
                     corpus_npz = os.path.join(entry_path, "corpus.npz")
                     if os.path.exists(corpus_npz):
-                        corpora.append({
+                        item = {
                             "name": entry,
                             "path": entry_path,
-                        })
+                        }
+                        try:
+                            item['corpus_audio'] = corpus_audio_summary(corpus_npz)
+                            item['vae_id'] = corpus_decoder_spec(corpus_npz, validate=False)['vae_id']
+                        except Exception as exc:
+                            item['metadata_error'] = str(exc)
+                        corpora.append(item)
         self._emit({
             "type": "pipeline_corpus_list",
             "corpora": corpora,
