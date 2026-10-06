@@ -2,7 +2,6 @@
 PipelineManager: orchestrates preprocess -> train -> perform phases
 over a shared WebSocket connection.
 """
-import glob
 import os
 import sys
 import threading
@@ -252,7 +251,8 @@ class PipelineManager:
             })
             return
 
-        wav_files = sorted(glob.glob(os.path.join(audio_dir, "*.wav")))
+        from ..io.audio_discovery import find_wav_files
+        wav_files = find_wav_files(audio_dir)
         file_infos = []
         for p in wav_files:
             try:
@@ -262,7 +262,7 @@ class PipelineManager:
             except OSError:
                 approx_duration = 0.0
             file_infos.append({
-                "name": os.path.basename(p),
+                "name": os.path.relpath(p, audio_dir),
                 "path": p,
                 "approx_duration": round(approx_duration, 1),
             })
@@ -366,7 +366,7 @@ class PipelineManager:
                 silence_threshold_db=float(config.get("silence_threshold_db", -45.0)),
                 silence_min_duration_sec=float(config.get("silence_min_duration_sec", 0.25)),
                 silence_keep_sec=float(config.get("silence_keep_sec", 0.10)),
-                manual_reducer=str(config.get("manual_reducer", "pca")),
+                manual_reducer=str(config.get("manual_reducer", "umap")),
                 manual_embed_dim=int(config.get("manual_embed_dim", 4)),
                 reorg_min_sec=float(config.get("reorg_min_sec", 2.0)),
                 reorg_max_sec=float(config.get("reorg_max_sec", 10.0)),

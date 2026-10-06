@@ -12,7 +12,7 @@ Pipeline:
 import os
 import argparse
 import datetime
-import glob
+import math
 from typing import List, Dict
 
 import numpy as np
@@ -218,10 +218,26 @@ def compute_latent_aligned_descriptors(
             return_complex=True,
         )
         power = (stft.abs().pow(2.0) + 1e-8).cpu().numpy().astype(np.float32)
+        pitch_frame_time = float(hop_length) / float(sample_rate)
+        pitch_frame_size = math.ceil(sample_rate * pitch_frame_time)
+        pitch_frames = math.ceil(x.shape[-1] / pitch_frame_size)
+        if pitch_frames == 1:
+            # Torchaudio's median smoother cannot handle a single frame,
+            # even with win_length=1 (its padding code concatenates no tensors).
+            # Use two shorter analysis intervals, without extending the audio;
+            # pitch is aligned back to target_frames below, as usual.
+            pitch_frame_time = float(math.ceil(x.shape[-1] / 2)) / float(sample_rate)
+            pitch_frame_size = math.ceil(sample_rate * pitch_frame_time)
+            pitch_frames = math.ceil(x.shape[-1] / pitch_frame_size)
+        # Preserve Torchaudio's default smoothing on clips with >=30 frames.
+        # Short clips use an odd window no larger than their frame count,
+        # except two-frame clips need 3: Torchaudio cannot smooth with 1.
+        pitch_window = 30 if pitch_frames >= 30 else max(3, pitch_frames - (pitch_frames % 2 == 0))
         pitch_hz = AF.detect_pitch_frequency(
             x,
             sample_rate=int(sample_rate),
-            frame_time=float(hop_length) / float(sample_rate),
+            frame_time=pitch_frame_time,
+            win_length=pitch_window,
             freq_low=50,
             freq_high=2000,
         )
@@ -596,10 +612,11 @@ def run_preprocess(
     os.makedirs(out_dir, exist_ok=True)
 
     _emit("scan_start", audio_dir=audio_dir)
-    paths = sorted(glob.glob(os.path.join(audio_dir, "*.wav")))
+    from stable_audio_wanderer.io.audio_discovery import find_wav_files
+    paths = find_wav_files(audio_dir)
     if not paths:
-        raise FileNotFoundError("No WAV files in --audio_dir")
-    _emit("scan_done", file_count=len(paths), files=[os.path.basename(p) for p in paths])
+        raise FileNotFoundError("No WAV files in --audio_dir or its subfolders")
+    _emit("scan_done", file_count=len(paths), files=[os.path.relpath(p, audio_dir) for p in paths])
 
     if _cancelled():
         return {"corpus_dir": out_dir, "cancelled": True}

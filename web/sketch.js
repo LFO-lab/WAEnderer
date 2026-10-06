@@ -796,6 +796,7 @@ function handleMessage(data) {
 }
 
 function updateConnectionStatus(connected) {
+    updateDecodeToggle();
     const dot = document.getElementById('status-dot');
     const text = document.getElementById('status-text');
     
@@ -1050,7 +1051,12 @@ function setupControls() {
         sendTransportSetMode('manual');
     });
 
-    document.getElementById('btn-start').addEventListener('click', () => {
+    document.getElementById('btn-decode-toggle').addEventListener('click', () => {
+        if (!wsConnected) return;
+        if (transportRunning) {
+            sendTransportAction('stop');
+            return;
+        }
         if (
             typeof pipelineCanStartTransport === 'function' &&
             !pipelineCanStartTransport()
@@ -1058,10 +1064,6 @@ function setupControls() {
             return;
         }
         sendTransportAction('start');
-    });
-
-    document.getElementById('btn-stop').addEventListener('click', () => {
-        sendTransportAction('stop');
     });
 
     // Random controls
@@ -1420,6 +1422,17 @@ function applyNavigationModeUI() {
     modeRandomBtn.disabled = transportRunning;
     modeReorganizedBtn.disabled = transportRunning;
     modeManualBtn.disabled = transportRunning;
+    updateDecodeToggle();
+}
+
+function updateDecodeToggle() {
+    const button = document.getElementById('btn-decode-toggle');
+    if (!button) return;
+    button.textContent = transportRunning ? 'Stop Decode' : 'Start Decode';
+    button.setAttribute('aria-pressed', String(transportRunning));
+    button.disabled = !wsConnected || (!transportRunning &&
+        typeof pipelineCanStartTransport === 'function' && !pipelineCanStartTransport());
+    button.title = button.disabled && wsConnected ? 'Load corpus first' : '';
 }
 
 function sendRandomControl(name, value) {

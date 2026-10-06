@@ -102,10 +102,41 @@ def test_trim_silent_frames_keeps_fully_silent_files_intact():
     assert np.array_equal(desc_trimmed, desc)
 
 
+def test_short_clips_keep_mask_aligned_when_padding_exceeds_clip_length():
+    cfg = SilenceTrimConfig(threshold_db=-20.0, keep_silence_sec=0.1)
+    for levels in ([1.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0, 0.0]):
+        frames = len(levels)
+        latents = np.arange(frames * 2, dtype=np.float32).reshape(frames, 2)
+        desc = np.arange(frames * 3, dtype=np.float32).reshape(frames, 3)
+        z_trimmed, desc_trimmed, result = trim_silent_frames(
+            _make_wave(levels), latents, desc, cfg, latent_hz=21.5,
+        )
+        assert result.keep_mask.shape == (frames,)
+        assert result.keep_mask.all()
+        assert result.removed_frames == 0
+        np.testing.assert_array_equal(z_trimmed, latents)
+        np.testing.assert_array_equal(desc_trimmed, desc)
+
+
+def test_padding_short_mask_retains_active_frame_position():
+    from stable_audio_wanderer.preprocess.silence import _pad_active_regions
+
+    np.testing.assert_array_equal(
+        _pad_active_regions(np.array([True, False, False, False]), keep_frames=2),
+        [True, True, True, False],
+    )
+    np.testing.assert_array_equal(
+        _pad_active_regions(np.array([False, False, False, True]), keep_frames=2),
+        [False, True, True, True],
+    )
+
+
 def run_all():
     test_trim_silent_frames_removes_only_long_gaps_and_keeps_padding()
     test_trim_silent_frames_preserves_short_gaps()
     test_trim_silent_frames_keeps_fully_silent_files_intact()
+    test_short_clips_keep_mask_aligned_when_padding_exceeds_clip_length()
+    test_padding_short_mask_retains_active_frame_position()
     print("All preprocess silence tests passed.")
 
 

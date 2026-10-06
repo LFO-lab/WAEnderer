@@ -101,7 +101,7 @@ function onDecoderList(data) {
     decoderModelIdentity=data.model_identity || null;
     decoderVae=data.vae_id || 'same_s';
     const modelLabel=document.getElementById('perform-decoder-model');
-    if (modelLabel) modelLabel.textContent=data.vae_id || corpusMetadata.get(pipelineCorpusDir)?.vae_id || 'Corpus VAE unavailable';
+    if (modelLabel) modelLabel.textContent=formatCorpusVae(data.vae_id || corpusMetadata.get(pipelineCorpusDir)?.vae_id);
     const summaryLabel = document.getElementById('perform-corpus-summary');
     if (summaryLabel) summaryLabel.textContent = pipelineCorpusDir
         ? formatCorpusAudioSummary(data.corpus_audio || corpusMetadata.get(pipelineCorpusDir)?.corpus_audio)
@@ -240,7 +240,8 @@ function setPipelineCorpusDir(corpusDir) {
     if (!corpusDir || corpusDir === pipelineCorpusDir) return;
     pipelineCorpusDir = corpusDir;
     const modelLabel = document.getElementById('perform-decoder-model');
-    if (modelLabel) modelLabel.textContent = corpusMetadata.get(corpusDir)?.vae_id || 'Checking corpus…';
+    if (modelLabel) modelLabel.textContent = corpusMetadata.get(corpusDir)?.vae_id
+        ? formatCorpusVae(corpusMetadata.get(corpusDir).vae_id) : 'Checking corpus…';
     const summaryLabel = document.getElementById('perform-corpus-summary');
     if (summaryLabel) summaryLabel.textContent = formatCorpusAudioSummary(corpusMetadata.get(corpusDir)?.corpus_audio)
         || 'Reading corpus details…';
@@ -249,6 +250,10 @@ function setPipelineCorpusDir(corpusDir) {
     decoderChoices = [];
     requestDecoderAvailability();
     updateDecoderControls();
+}
+
+function formatCorpusVae(vaeId) {
+    return vaeId ? `VAE: ${vaeId === 'same_s' ? 'same-s' : vaeId}` : 'VAE: unavailable';
 }
 
 function formatCorpusAudioSummary(summary) {
@@ -322,8 +327,7 @@ function pipelineCanStartTransport() {
 
 function updateDecoderControls() {
     const windowSelect = document.getElementById('perform-decoder-window');
-    const performStartButton = document.getElementById('perform-start-btn');
-    const transportStartButton = document.getElementById('btn-start');
+    const corpusToggle = document.getElementById('perform-corpus-toggle');
     const performanceLoaded = pipelinePhase === 'perform' || decoderWindowControlsAvailable;
 
     if (windowSelect) {
@@ -358,20 +362,16 @@ function updateDecoderControls() {
     }
     const weights = document.getElementById('perform-vae-weight-path');
     if (weights) weights.disabled = !ready || pipelinePhase !== 'idle';
-    const stopPerform = document.getElementById('perform-stop-btn');
-    if (stopPerform) stopPerform.disabled = !ready || !['perform', 'error'].includes(pipelinePhase);
     const refresh = document.getElementById('perform-decoder-refresh');
     if (refresh) refresh.disabled = !ready || pipelinePhase !== 'idle';
-    if (performStartButton) {
-        performStartButton.disabled = !ready || pipelinePhase !== 'idle' || !pipelineCorpusDir
-            || (decoderChoices !== null && !available?.selectable);
+    if (corpusToggle) {
+        const canUnload = ['perform', 'error'].includes(pipelinePhase);
+        corpusToggle.textContent = canUnload ? 'Unload corpus' : 'Load corpus';
+        corpusToggle.setAttribute('aria-pressed', String(canUnload));
+        corpusToggle.disabled = !ready || (!canUnload && (pipelinePhase !== 'idle' || !pipelineCorpusDir
+            || (decoderChoices !== null && !available?.selectable)));
     }
-    if (transportStartButton && pipelineServerSeen) {
-        transportStartButton.disabled = !pipelineCanStartTransport();
-        transportStartButton.title = transportStartButton.disabled
-            ? 'Load corpus first'
-            : '';
-    }
+    if (typeof updateDecodeToggle === 'function') updateDecodeToggle();
 }
 
 function updateDecoderWindowState(decoder) {
@@ -538,11 +538,8 @@ function updatePipelinePhaseUI() {
     // Disable start buttons during active phase
     const ppStartBtn = document.getElementById('pp-start-btn');
     const trainStartBtn = document.getElementById('train-start-btn');
-    const performStartBtn = document.getElementById('perform-start-btn');
-
     if (ppStartBtn) ppStartBtn.disabled = pipelinePhase !== 'idle';
     if (trainStartBtn) trainStartBtn.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
-    if (performStartBtn) performStartBtn.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
     updateDecoderControls();
 }
 
@@ -563,7 +560,12 @@ function onFileList(data) {
     const files = data.files || [];
     files.forEach(f => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${f.name}</td><td>${f.approx_duration.toFixed(1)}s</td>`;
+        const nameCell = document.createElement('td');
+        nameCell.textContent = f.name;
+        const durationCell = document.createElement('td');
+        durationCell.textContent = `${f.approx_duration.toFixed(1)}s`;
+        tr.appendChild(nameCell);
+        tr.appendChild(durationCell);
         tbody.appendChild(tr);
     });
     container.classList.toggle('panel-hidden', files.length === 0);
@@ -588,7 +590,7 @@ function onCorpusList(data) {
     if (pipelineCorpusDir) {
         const metadata = corpusMetadata.get(pipelineCorpusDir);
         const model = document.getElementById('perform-decoder-model');
-        if (model && metadata?.vae_id) model.textContent = metadata.vae_id;
+        if (model && metadata?.vae_id) model.textContent = formatCorpusVae(metadata.vae_id);
         const summary = document.getElementById('perform-corpus-summary');
         if (summary && metadata?.corpus_audio) summary.textContent = formatCorpusAudioSummary(metadata.corpus_audio);
     }
@@ -811,7 +813,7 @@ function setupPipelineControls() {
                 vae_weight_path: document.getElementById('pp-vae-path')?.value || '',
                 trim_silence: document.getElementById('pp-trim-silence')?.checked ?? true,
                 silence_threshold_db: parseFloat(document.getElementById('pp-threshold')?.value || '-45'),
-                manual_reducer: document.getElementById('pp-reducer')?.value || 'pca',
+                manual_reducer: document.getElementById('pp-reducer')?.value || 'umap',
                 manual_embed_dim: parseInt(document.getElementById('pp-embed-dim')?.value || '4'),
                 latent_nav_k: parseInt(document.getElementById('pp-latent-nav-k')?.value || '32'),
                 reorg_target_sec: parseFloat(document.getElementById('pp-reorg-target-sec')?.value || '5.0'),
@@ -911,20 +913,19 @@ function setupPipelineControls() {
     document.getElementById('perform-decoder-refresh')?.addEventListener('click', () => {
         requestDecoderAvailability(true);
     });
-    document.getElementById('perform-stop-btn')?.addEventListener('click', () => {
-        if (decoderCommandPending || !['perform', 'error'].includes(pipelinePhase)) return;
-        if (sendPipelineMessage({type: 'pipeline_stop_perform'})) {
-            decoderCommandPending = true;
-            setDecoderStatus('Stopping Perform…');
-            updateDecoderControls();
-        }
-    });
-
-    // Perform start
-    const performStartBtn = document.getElementById('perform-start-btn');
-    if (performStartBtn) {
-        performStartBtn.addEventListener('click', () => {
-            if (performStartBtn.disabled || decoderCommandPending) return;
+    // Load/unload corpus using the server's confirmed pipeline state.
+    const corpusToggle = document.getElementById('perform-corpus-toggle');
+    if (corpusToggle) {
+        corpusToggle.addEventListener('click', () => {
+            if (corpusToggle.disabled || decoderCommandPending) return;
+            if (['perform', 'error'].includes(pipelinePhase)) {
+                if (sendPipelineMessage({type: 'pipeline_stop_perform'})) {
+                    decoderCommandPending = true;
+                    setDecoderStatus('Unloading corpus…');
+                    updateDecoderControls();
+                } else setDecoderStatus('Not connected. Reconnect and try again.', 'error');
+                return;
+            }
             const choice = selectedDecoderChoice();
             const decoderWindow = Number(document.getElementById('perform-decoder-window')?.value);
             if (!Number.isInteger(decoderWindow)) return;

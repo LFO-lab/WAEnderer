@@ -115,8 +115,12 @@ def _pad_active_regions(active_mask: np.ndarray, keep_frames: int) -> np.ndarray
     active = np.asarray(active_mask, dtype=bool).reshape(-1)
     if active.size == 0 or keep_frames <= 0:
         return active.copy()
-    kernel = np.ones((2 * int(keep_frames) + 1,), dtype=np.int32)
-    padded = np.convolve(active.astype(np.int32), kernel, mode="same") > 0
+    radius = int(keep_frames)
+    kernel = np.ones((2 * radius + 1,), dtype=np.int32)
+    # NumPy's "same" returns max(signal length, kernel length), so short
+    # clips need an explicit centered crop to retain one mask entry per frame.
+    full = np.convolve(active.astype(np.int32), kernel, mode="full")
+    padded = full[radius:radius + active.size] > 0
     return padded.astype(bool)
 
 

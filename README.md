@@ -324,7 +324,10 @@ python bin/serve.py
 
 Open `http://localhost:8080` and select or create a corpus. In Encode,
 **Browse...** opens a system folder picker on the computer running the server;
-selecting a directory displays its path and automatically scans its WAV files.
+selecting a directory displays its path and automatically scans WAV files in
+that folder and all subfolders. Encoding uses the same recursive file list;
+the preview shows relative paths to distinguish files with matching names.
+UMAP is the default reducer in the Encode panel.
 The picker requires Python
 Tk support (often supplied separately as `python3-tk` on Linux) and a desktop
 display. For headless preprocessing, use `bin/preprocess.py --audio_dir`.

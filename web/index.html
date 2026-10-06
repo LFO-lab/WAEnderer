@@ -645,8 +645,8 @@
                         <div class="control-group">
                             <div class="control-label"><span>Reducer</span></div>
                             <select id="pp-reducer">
-                                <option value="pca" selected>PCA</option>
-                                <option value="umap">UMAP</option>
+                                <option value="pca">PCA</option>
+                                <option value="umap" selected>UMAP</option>
                             </select>
                         </div>
                         <div class="control-group">
@@ -786,18 +786,17 @@
 
             <!-- Perform Panel -->
             <div id="perform-panel" class="panel-hidden">
-                <h2>Navigate</h2>
+                <h2>Corpus</h2>
                 <div class="pipeline-section">
-                    <h3>Select Encoded Corpus</h3>
-                    <select id="perform-corpus-select">
+                    <select id="perform-corpus-select" aria-label="Select encoded corpus">
                         <option value="">-- Select Corpus --</option>
                     </select>
                 </div>
                 <div class="pipeline-section">
-                    <label>Corpus VAE</label>
+                    <div class="control-label">Infos</div>
                     <div id="perform-decoder-model" class="stats-text">Select a corpus</div>
                     <div id="perform-corpus-summary" class="stats-text"></div>
-                    <label for="perform-decoder-engine">Decode with</label>
+                    <label for="perform-decoder-engine" class="control-label">Decode with</label>
                     <div class="pipeline-input-row">
                         <select id="perform-decoder-engine" style="flex:1;min-width:0">
                             <option value="onnxruntime|cpu">ONNX · CPU</option>
@@ -816,7 +815,7 @@
                     >No active decoder. Select a corpus and choose a decoder.</div>
                     </details>
                     <details class="pipeline-section">
-                        <summary>ONNX</summary>
+                        <summary style="font-size:12px">ONNX</summary>
                         <button id="perform-prepare-btn" type="button" disabled>Prepare ONNX decoder</button>
                         <div id="perform-prepare-status" class="stats-text" role="status" aria-live="polite"></div>
                     </details>
@@ -829,8 +828,7 @@
                         <input id="perform-vae-config-path" type="text" placeholder="Path to configuration JSON">
                     </div>
 
-                    <button id="perform-start-btn" type="button" disabled>Load corpus</button>
-                    <button id="perform-stop-btn" type="button" disabled>Unload corpus</button>
+                    <button id="perform-corpus-toggle" type="button" aria-pressed="false" disabled>Load corpus</button>
                     <p class="stats-text">Stop Decode pauses audio. Unload corpus releases the transport so you can choose another decoder.</p>
                 </div>
 
@@ -891,7 +889,7 @@
             </div>
             
             <div class="pipeline-section">
-                <h3>Performance</h3>
+                <h2>Window of Inference</h2>
                     <div class="control-row" style="margin-top:8px">
                         <div class="control-group" style="width:100%;grid-column:1 / -1">
                             <div class="control-label">
@@ -920,15 +918,13 @@
             </div>
 
             <h2>Navigation Mode</h2>
+            <div style="margin-bottom:16px">
+                <button id="btn-decode-toggle" type="button" style="width:100%" aria-pressed="false" disabled>Start Decode</button>
+            </div>
             <div class="mode-tabs">
                 <button id="mode-random" class="mode-tab active" type="button">Wander</button>
                 <button id="mode-reorganized" class="mode-tab" type="button">Reorganized</button>
                 <button id="mode-manual" class="mode-tab" type="button">Manual</button>
-            </div>
-
-            <div class="control-row">
-                <button id="btn-start" type="button">Start Decode</button>
-                <button id="btn-stop" type="button" class="secondary">Stop Decode</button>
             </div>
 
             <div id="random-panel">
