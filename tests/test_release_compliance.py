@@ -127,3 +127,33 @@ def test_dependency_license_override_is_exact_version_and_evidence_backed():
     assert exact["cuda-toolkit"]["license_evidence"].startswith("https://docs.nvidia.com/")
     assert future["cuda-toolkit"]["license"] == "NOASSERTION"
     assert asserted["cuda-toolkit"]["license"] == "Upstream asserted license"
+
+
+def test_same_s_license_override_preserves_policy(tmp_path):
+    overrides = _license_overrides(
+        PROJECT_ROOT / "licenses" / "dependency-license-overrides.json"
+    )
+    packages = {
+        "stable-audio-3": {
+            "name": "stable-audio-3", "version": "0.1.0", "license": "NOASSERTION"
+        }
+    }
+    _apply_license_overrides(packages, overrides)
+    package = packages["stable-audio-3"]
+    assert package["license"] == "MIT"
+    assert package["license_evidence"] == (
+        "https://github.com/Stability-AI/stable-audio-3/blob/"
+        "779434a908193105335fd8d833418603625b2859/LICENSE"
+    )
+    report = tmp_path / "licenses.json"
+    report.write_text(json.dumps({"packages": list(packages.values())}))
+    assert check_dependency_license_report(report) == []
+
+    for version, license_value in [("0.2.0", "NOASSERTION"), ("0.1.0", "AGPL-3.0-only")]:
+        packages = {"stable-audio-3": {
+            "name": "stable-audio-3", "version": version, "license": license_value
+        }}
+        _apply_license_overrides(packages, overrides)
+        assert packages["stable-audio-3"]["license"] == license_value
+        report.write_text(json.dumps({"packages": list(packages.values())}))
+        assert len(check_dependency_license_report(report)) == 1

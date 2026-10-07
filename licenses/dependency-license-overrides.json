@@ -7,6 +7,13 @@
       "license": "NVIDIA Software License Agreement and CUDA Supplement",
       "evidence_url": "https://docs.nvidia.com/cuda/eula/index.html",
       "reason": "NVIDIA's empty CUDA Toolkit metapackage omits license metadata; PyPI identifies it as the CUDA Toolkit installer metapackage, and NVIDIA states that the CUDA Toolkit is governed by these terms."
+    },
+    {
+      "name": "stable-audio-3",
+      "version": "0.1.0",
+      "license": "MIT",
+      "evidence_url": "https://github.com/Stability-AI/stable-audio-3/blob/779434a908193105335fd8d833418603625b2859/LICENSE",
+      "reason": "The pinned upstream commit carries an MIT LICENSE, but the installed distribution omits asserted license metadata. Applies to library code only, not SAME-S model weights."
     }
   ]
 }

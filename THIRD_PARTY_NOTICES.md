@@ -68,7 +68,7 @@ Vendored SHA-256:
 | diffusers, transformers, accelerate, safetensors, huggingface-hub | Apache-2.0 | Retain license and NOTICE material. Model weights have separate terms. |
 | ONNX | Apache-2.0 | Retain license and NOTICE material. |
 | ONNX Runtime, ONNX Script | MIT | Retain notices. |
-| stable-audio-3, einops, einops-exts | MIT | Applies to code, not model weights. |
+| stable-audio-3, einops, einops-exts | MIT | Applies to code, not model weights. `stable-audio-3==0.1.0` omits asserted package license metadata; the reviewed override cites the LICENSE at our pinned upstream commit. |
 | descript-audio-codec | MIT | Optional EAR VAE dependency. |
 | NVIDIA CUDA Toolkit packages (Linux, transitive through PyTorch) | [NVIDIA Software License Agreement and CUDA Supplement](https://docs.nvidia.com/cuda/eula/index.html) | The `cuda-toolkit==13.0.3.0` metapackage omits license metadata and is covered by the reviewed override. CUDA is not bundled in WÆnderer's wheel; review NVIDIA's redistribution terms before shipping an environment or container containing its libraries. |
 | certifi (transitive) | MPL-2.0 | Preserve MPL-covered files and notice if bundled. |
