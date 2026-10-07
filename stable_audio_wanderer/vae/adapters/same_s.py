@@ -38,7 +38,14 @@ class SameSAdapter(VAEAdapter):
                 "upstream dependency pins with --no-deps."
             ) from exc
 
-        model = AutoencoderModel.from_pretrained(repo_or_path)
+        if repo_or_path != "same-s":
+            raise ValueError("SAME-S encoding requires the pinned same-s model")
+        from ..same_s_weights import resolve_same_s_weights
+        from stable_audio_3.loading_utils import load_autoencoder
+        weights = resolve_same_s_weights(local_files_only=True)
+        autoencoder = load_autoencoder(str(weights.config_path), str(weights.model_path), device=DEVICE)
+        autoencoder.eval().requires_grad_(False)
+        model = AutoencoderModel(autoencoder, _SAMPLE_RATE, DEVICE)
         if hasattr(model, "to"):
             model = model.to(DEVICE)
         if hasattr(model, "eval"):

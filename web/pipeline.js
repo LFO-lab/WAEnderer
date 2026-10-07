@@ -9,6 +9,13 @@ let pipelineCorpusDir = null;
 let selectedAudioDir = '';
 const corpusMetadata = new Map();
 let selectedTab = 'preprocess';
+let encoderAvailability = {};
+let encoderListSeen = false;
+
+function encoderReady() {
+    const id = document.getElementById('pp-vae-select')?.value;
+    return encoderAvailability[id]?.ready === true;
+}
 let pipelineServerSeen = false;
 const APP_DECODER_WINDOWS = [2]; // Backend metadata supplies validated lengths after loading.
 let decoderWindowControlsAvailable = false;
@@ -346,7 +353,7 @@ function updateDecoderControls() {
     const ready = pipelineConnectionReady && !decoderCommandPending && !preparationBusy();
     for (const id of ['pp-start-btn','train-start-btn','perform-corpus-select']) {
         const button=document.getElementById(id);
-        if (button) button.disabled=!ready || pipelinePhase !== 'idle' || (id === 'train-start-btn' && !pipelineCorpusDir);
+        if (button) button.disabled=!ready || pipelinePhase !== 'idle' || (id === 'train-start-btn' && !pipelineCorpusDir) || (id === 'pp-start-btn' && !encoderReady());
     }
     const engine = document.getElementById('perform-decoder-engine');
     if (engine) engine.disabled = !ready || pipelinePhase !== 'idle';
@@ -460,6 +467,7 @@ function handlePipelineMessage(data) {
         applyDecoderPhase(data);
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
+            if (selectedTab === 'preprocess') showEncoderError(data.error);
             setDecoderStatus(`Error: ${data.error}`, 'error');
         }
         // If server is already in a phase, switch to that tab
@@ -484,6 +492,7 @@ function handlePipelineMessage(data) {
 
         if (data.error) {
             console.error('[pipeline] Error:', data.error);
+            if (selectedTab === 'preprocess') showEncoderError(data.error);
             setDecoderStatus(`Error: ${data.error}`, 'error');
         }
         updatePipelinePhaseUI();
@@ -538,7 +547,7 @@ function updatePipelinePhaseUI() {
     // Disable start buttons during active phase
     const ppStartBtn = document.getElementById('pp-start-btn');
     const trainStartBtn = document.getElementById('train-start-btn');
-    if (ppStartBtn) ppStartBtn.disabled = pipelinePhase !== 'idle';
+    if (ppStartBtn) ppStartBtn.disabled = pipelinePhase !== 'idle' || !encoderReady();
     if (trainStartBtn) trainStartBtn.disabled = pipelinePhase !== 'idle' || !pipelineCorpusDir;
     updateDecoderControls();
 }
@@ -600,8 +609,12 @@ function onVAEList(data) {
     const select = document.getElementById('pp-vae-select');
     if (!select) return;
 
+    const previous = encoderListSeen ? select.value : 'same_s';
+    encoderListSeen = true;
+    encoderAvailability = {};
     select.innerHTML = '';
     (data.vaes || []).forEach(v => {
+        encoderAvailability[v.vae_id] = v.availability;
         const opt = document.createElement('option');
         opt.value = v.vae_id;
         opt.textContent = v.display_name;
@@ -610,7 +623,7 @@ function onVAEList(data) {
         select.appendChild(opt);
     });
     if (Array.from(select.options).some(option => option.value === 'same_s')) {
-        select.value = 'same_s';
+        select.value = Object.prototype.hasOwnProperty.call(encoderAvailability, previous) ? previous : 'same_s';
     }
     // Trigger change to update path visibility
     updateVAEPathVisibility();
@@ -623,11 +636,19 @@ function updateVAEPathVisibility() {
     if (!select || !pathGroup) return;
 
     const opt = select.options[select.selectedIndex];
+    const status = document.getElementById('pp-model-status');
+    if (status) status.textContent = encoderAvailability[select.value]?.detail || 'Checking model availability…';
+    updateDecoderControls();
     const needsPath = opt && opt.dataset.requiresPath === '1';
     pathGroup.classList.toggle('panel-hidden', !needsPath);
     if (pathLabel && opt) {
         pathLabel.textContent = opt.dataset.pathLabel || 'Path to model weights';
     }
+}
+
+function showEncoderError(error) {
+    const text = document.getElementById('pp-progress-text');
+    if (text) text.textContent = `Error: ${error}`;
 }
 
 function onPreprocessProgress(data) {
@@ -636,7 +657,13 @@ function onPreprocessProgress(data) {
     const statsEl = document.getElementById('pp-stats');
     const event = data.event;
 
-    if (event === 'encode_file_start' || event === 'encode_file_done') {
+    if (event === 'model_download' || event === 'model_download_done') {
+        if (text) text.textContent = data.detail;
+    } else if (event === 'vae_load_start') {
+        if (text) text.textContent = 'Loading and validating encoder…';
+    } else if (event === 'vae_load_done') {
+        if (text) text.textContent = 'Encoder ready';
+    } else if (event === 'encode_file_start' || event === 'encode_file_done') {
         const pct = ((data.file_index + (event === 'encode_file_done' ? 1 : 0)) / data.total_files) * 100;
         if (fill) fill.style.width = pct + '%';
         if (text) text.textContent = `Encoding ${data.file_name} (${data.file_index + 1}/${data.total_files})`;
@@ -799,12 +826,18 @@ function setupPipelineControls() {
         });
     }
 
+    document.getElementById('pp-check-models')?.addEventListener('click', () => {
+        encoderAvailability = {};
+        updateVAEPathVisibility();
+        sendPipelineMessage({type: 'pipeline_list_vaes'});
+    });
+
     // Preprocess start
     const ppStartBtn = document.getElementById('pp-start-btn');
     if (ppStartBtn) {
         ppStartBtn.addEventListener('click', () => {
             const audioDir = selectedAudioDir;
-            if (!audioDir) return;
+            if (!audioDir || !encoderReady()) return;
 
             const config = {
                 audio_dir: audioDir,

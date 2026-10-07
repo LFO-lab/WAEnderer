@@ -304,6 +304,7 @@ class PipelineManager:
 
     def _handle_list_vaes(self):
         from stable_audio_wanderer.vae import list_vaes
+        from ..vae.encoder_availability import encoder_availability
         vaes = []
         for info in list_vaes():
             vaes.append({
@@ -315,6 +316,7 @@ class PipelineManager:
                 "channels": info.channels,
                 "requires_path": info.requires_path,
                 "path_label": info.path_label,
+                "availability": encoder_availability(info.vae_id),
             })
         self._emit({"type": "pipeline_vae_list", "vaes": vaes})
 
@@ -333,6 +335,12 @@ class PipelineManager:
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": "Invalid audio_dir"})
             return
 
+        from ..vae.encoder_availability import encoder_availability
+        availability = encoder_availability(config.get("vae_id") or "stable_audio_open")
+        if not availability['ready']:
+            self._emit({"type": "pipeline_state", "phase": self.phase, "error": availability['detail']})
+            return
+
         self._release_app_decoder()
         self.phase = "preprocess"
         self._cancel.clear()
@@ -349,6 +357,13 @@ class PipelineManager:
 
             def progress_cb(event_data):
                 self._emit({"type": "pipeline_stats", "phase": "preprocess", **event_data})
+
+            from ..vae.encoder_availability import prepare_encoder_weights
+            prepare_encoder_weights(config.get("vae_id") or "stable_audio_open", progress_cb, self._cancel)
+            if self._cancel.is_set():
+                self.phase = "idle"
+                self._emit({"type": "pipeline_phase_change", "phase": "idle", "reason": "cancelled"})
+                return
 
             result = run_preprocess(
                 audio_dir=config.get("audio_dir"),

@@ -85,6 +85,51 @@ setup failures, useful bug reports, and verification limits. See
 and model preparation. Installed tools include `waenderer-serve`,
 `waenderer-prepare`, `waenderer-model-bundle`, and `waenderer-check-delivery`.
 
+### Hugging Face model setup
+
+Opening the web interface only verifies that the server runs. Before encoding,
+install the Hugging Face client/CLI in the **same activated environment**:
+
+```sh
+python -m pip install "huggingface_hub>=1.7.1"
+hf --help
+hf auth login
+hf auth whoami
+```
+
+Create a [Hugging Face account](https://huggingface.co/join), visit
+[Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) and
+[SAME-S](https://huggingface.co/stabilityai/SAME-S), and complete any access request
+or terms acceptance required by each model. Log in with your own read-access
+[token](https://huggingface.co/settings/tokens). Do not share tokens between users.
+See the [official CLI guide](https://huggingface.co/docs/huggingface_hub/guides/cli).
+
+Weights download automatically when encoding first starts if they are not cached.
+The browser displays the current file being downloaded, then encoder loading.
+Authentication, model access, and network failures stop encoding with setup
+guidance. Login is needed for gated access, not for already cached weights.
+
+Alternatively, download the exact files/revisions manually for offline use into
+the shared Hugging Face cache (leave out `--local-dir`):
+
+```sh
+hf download stabilityai/stable-audio-open-1.0 vae/config.json vae/diffusion_pytorch_model.safetensors --revision f21265c1e2710b3bd2386596943f0007f55f802e
+hf download stabilityai/SAME-S model_config.json model.safetensors --revision fbeb3dcf53a326e5682f38e22e7f740202d44232
+```
+
+Wait for both commands to finish successfully. Authentication errors require
+checking the account's model access and token permissions; network errors require
+restoring connectivity. Run these commands as the same OS user as the server,
+with the same Hugging Face cache settings. Then click **Check models** in Encode.
+Missing libraries disable encoding. Missing weights show an automatic-download
+notice and permit encoding to start.
+Cached files are a preflight check; actual model loading/integrity can still fail.
+Cancel waits for the current download request to return, then prevents encoding.
+
+The application uses the Python Hub client internally; `hf` provides the explicit
+login/download setup above. Both share the cache and authentication. A prepared
+ONNX corpus/decoder can run without these native weights or an online login.
+
 ### Other installation profiles
 
 For prepared ONNX playback only, use `requirements-runtime.txt` (or install the
