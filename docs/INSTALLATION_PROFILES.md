@@ -1,13 +1,14 @@
 # Installation profiles
 
-`pyproject.toml` owns the base package dependencies. `requirements.txt` installs the package with its `export` extra instead of maintaining a competing list. A plain package installation supplies Stable Audio Open and ONNX support; it does not imply that optional native SAME-S/EAR libraries or checkpoints are installed.
+`pyproject.toml` owns the base package dependencies. `requirements.txt` installs the package with its `export`, `native-stable-audio-open`, and `native-same-s` extras instead of maintaining a competing list. A plain package installation supplies the application and prepared ONNX runtime; it does not imply that optional native SAME-S/EAR libraries or checkpoints are installed.
 
 From the repository's Python root, choose a profile and honor normal dependency resolution:
 
 | Profile | Command | Additional requirements |
 | --- | --- | --- |
-| Base and ONNX export | `python -m pip install -r requirements.txt` | `onnxscript` export extra |
-| Native SAME-S | `python -m pip install -r requirements-same-s-native.txt` | Pinned Stable Audio 3 commit, Torch/Torchaudio 2.7.1 |
+| Runtime / prepared ONNX | `python -m pip install -r requirements-runtime.txt` | Matching prepared decoder and corpus supplied separately |
+| Default: Stable Audio Open, SAME-S and ONNX export | `python -m pip install -r requirements.txt` | Git; pinned Stable Audio 3 and Torch/Torchaudio 2.7.1; model weights separately |
+| Focused native Stable Audio Open + SAME-S | `python -m pip install -r requirements-same-s-native.txt` | Pinned Stable Audio 3 commit, Torch/Torchaudio 2.7.1 |
 | Native EAR and export | `python -m pip install -r requirements-ear-native.txt` | DAC 1.0.0, pinned audio-tools revision, einops, protobuf 4.25.x |
 | Both native families | `python -m pip install -r requirements-native.txt` | Union of the two source profiles |
 
@@ -22,3 +23,8 @@ Model assets remain separate: EAR needs its checkpoint and repository, SAME-S/St
 Native worker modules are Python package files and are included by setuptools package discovery. Workers launch with `python -m stable_audio_wanderer.vae.native_worker` using the current interpreter by default. They do not assume a checkout path, `.venv` directory or site-packages working directory. Optional external interpreter overrides require this package to be installed in that interpreter too.
 
 The portability check built a wheel, confirmed the three worker modules are included, extracted packaged Python files into a separate directory and successfully launched worker discovery there with the default interpreter. The [check receipt](installation_portability_checks.json) records this result. It verifies package inclusion and checkout independence; it does not substitute for a fresh dependency installation or model/hardware qualification.
+
+The default Stable Audio Open + SAME-S profile also resolved successfully for
+Python 3.12 on macOS (72 packages) after adding the shared `native-same-s` extra.
+The development lockfile was refreshed successfully. These are dependency
+resolution checks, not a fresh install or model-load qualification.

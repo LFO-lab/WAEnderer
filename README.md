@@ -16,27 +16,83 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 
 ## Installation
 
-Requires Python 3.11+. The ONNX Web decoder requires ONNX Runtime 1.26 or
-newer, whose supported Python range sets this project minimum.
+Use Python **3.12** for the beta reference setup (package minimum: 3.11).
+Start with a fresh virtual environment. Choose one installation path below.
+Commands after activation use that environment's `python` and installed tools.
 
-```bash
-pip install -r requirements.txt
+### Beta quick start
+
+For a source checkout, run these commands from the directory containing
+`pyproject.toml` (called `WAEnderer_python` in the local multi-project workspace):
+
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip check
+waenderer-serve
 ```
 
-That compatibility profile includes export tooling and Stable Audio Open native libraries. For runtime installation
-from source use `python -m pip install -r requirements-runtime.txt`; for an
-installed distribution use `python -m pip install /path/to/application.whl`.
-Installed commands are `waenderer-serve`, `waenderer-prepare` and
-`waenderer-model-bundle`. Ordinary wheels contain application assets and notices;
-model binaries are selected explicitly. See [packaging, decoder installation and
-recovery](docs/MULTI_VAE_ONNX_PHASE6.md). Existing checkout commands remain supported.
+On Windows PowerShell, create the environment with `py -3.12 -m venv .venv`
+and activate it with `.\.venv\Scripts\Activate.ps1`.
+Open [http://localhost:8080](http://localhost:8080). Keep the terminal open;
+Ctrl-C stops the server. Launch from the same working directory each time:
+its `corpus/` folder is used for corpus discovery and generated outputs.
 
-For a reproducible development environment, install from the project metadata
-and committed lockfile instead:
+For a supplied application wheel, activate a fresh environment as above, then:
 
-```bash
-uv sync --all-extras
+```sh
+python -m pip install "/path/to/stable_audio_wanderer-0.1.0-py3-none-any.whl[native-stable-audio-open,native-same-s,export]"
+python -m pip check
+waenderer-serve
 ```
+
+The default setup includes native Stable Audio Open and SAME-S libraries, plus
+ONNX export tooling. Git is required to fetch the pinned SAME-S library; no
+manual SAME-S repository clone is needed.
+
+Replace the wheel path with the file supplied for your beta. A wheel installation
+does not require the source checkout; launch from a writable working folder.
+
+**Application installation does not install model weights or a demo corpus.**
+For the shortest first-performance path, obtain a prepared corpus folder and a
+matching verified ONNX decoder bundle from the maintainer. Stop the application,
+then install the supplied model bundle into the default decoder store:
+
+```sh
+waenderer-model-bundle check /path/to/decoder-bundle
+waenderer-model-bundle install /path/to/decoder-bundle --store-dir "$HOME/.cache/waenderer/decoders"
+```
+
+On PowerShell, use `--store-dir "$HOME/.cache/waenderer/decoders"` as well.
+Place the complete corpus folder under `corpus/` in your working folder, restart
+`waenderer-serve`, select it in the browser, and choose its compatible ONNX CPU
+decoder. Use **Start Perform**, then the performance transport to start audio.
+Do not copy only `corpus.npz`: retain the navigation artifacts alongside it.
+
+Creating a corpus requires model weights in addition to the installed libraries.
+SAME-S is the browser's default encoder; both it and Stable Audio Open are
+available through the default install above. EAR remains optional and needs its
+[additional profile](docs/INSTALLATION_PROFILES.md) and external repository/checkpoint.
+Model downloads may need upstream access/acceptance and an internet connection;
+prepared ONNX performance can run offline. The Erae controller is an optional
+separate bridge, not required to use the browser instrument.
+
+See the [beta setup and debugging guide](docs/BETA_SETUP.md) for prerequisites,
+setup failures, useful bug reports, and verification limits. See
+[packaging and decoder recovery](docs/MULTI_VAE_ONNX_PHASE6.md) for custom stores
+and model preparation. Installed tools include `waenderer-serve`,
+`waenderer-prepare`, `waenderer-model-bundle`, and `waenderer-check-delivery`.
+
+### Other installation profiles
+
+For prepared ONNX playback only, use `requirements-runtime.txt` (or install the
+wheel without extras). This smaller profile omits native encoder and export
+libraries. `requirements.txt` is the default for creating and playing corpora
+with Stable Audio Open or SAME-S.
+For development with the committed lockfile, use `uv sync --all-extras`;
+this includes SAME-S and Stable Audio Open; EAR remains a separate profile.
 
 ### Dependencies
 
@@ -55,11 +111,12 @@ and the Stop Perform → select → Start Perform workflow.
 | Navigation | `scikit-learn`, `scipy`, `faiss-cpu`, `umap-learn` |
 | Runtime | `sounddevice`, `python-osc`, `websockets`, `onnxruntime`, `onnx` (artifact validation) |
 | Native Stable Audio Open extra (`native-stable-audio-open`) | `diffusers`, `transformers`, `accelerate`, `safetensors` |
+| Native SAME-S extra (`native-same-s`) | Pinned `stable-audio-3`, `torch==2.7.1`, `torchaudio==2.7.1` |
 | ONNX export extra | `onnxscript` |
 
 ### Using Other VAEs
 
-The pipeline supports pluggable VAE backends. The default is [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) (44.1 kHz, 64D latents). Additional VAEs can be selected from the GUI dropdown or via CLI flags.
+The pipeline supports pluggable VAE backends. The standalone CLI defaults to [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) (44.1 kHz, 64D latents); the browser defaults to SAME-S. Additional VAEs can be selected from the GUI dropdown or via CLI flags.
 
 #### EAR VAE
 
@@ -90,7 +147,7 @@ The pipeline supports pluggable VAE backends. The default is [Stable Audio Open]
 
 The corpus records which VAE was used (`vae_id`), so train and perform phases automatically load the correct adapter and parameters.
 
-[SAME-S](https://huggingface.co/stabilityai/SAME-S) is also available as a 44.1 kHz stereo adapter with 256D latents and a 4096x temporal compression ratio. Install its pinned native profile, honoring upstream Torch/Torchaudio requirements:
+[SAME-S](https://huggingface.co/stabilityai/SAME-S) is available as a 44.1 kHz stereo adapter with 256D latents and a 4096x temporal compression ratio. Its libraries are included in the default install. For a focused native installation without ONNX export tooling, use:
 
 ```bash
 python -m pip install -r requirements-same-s-native.txt
@@ -333,7 +390,7 @@ Tk support (often supplied separately as `python3-tk` on Linux) and a desktop
 display. For headless preprocessing, use `bin/preprocess.py --audio_dir`.
 Cancel keeps the
 current source. After preprocessing
-or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open/EAR corpora offer ONNX CPU or native PyTorch on the explicitly selected device. There is no fallback to another VAE. Stable Audio Open uses cached Hugging Face weights in the default environment, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
+or training, that corpus remains selected. **Start Perform** is enabled after corpus-specific availability is received. The decoder loads lazily on Start and checks its model, I/O contract, windows and corpus geometry. SAME-S and prepared Stable Audio Open/EAR corpora offer ONNX CPU or native PyTorch on the explicitly selected device. There is no fallback to another VAE. Native Stable Audio Open uses cached Hugging Face weights and the `native-stable-audio-open` extra, without requiring `stable-audio-3`. See [multi-VAE restoration and measured limits](docs/MULTI_VAE_WEB.md).
 
 All four VAEs now share model-specific decoder choices, visible unavailability reasons, and explicit **Prepare ONNX decoder / Retry** controls. A verified ONNX CPU artifact is the default for a new corpus; explicit backend choices persist across refresh/reconnect/reload. Preparation never starts playback or changes the selected backend. Use `python -m bin.prepare_decoders --all-installed` for batch preparation/reuse. See [Phase 4 configuration, lifecycle and verification](docs/MULTI_VAE_ONNX_PHASE4.md) for separate exporter environments and the server configuration file.
 
@@ -579,6 +636,8 @@ stable-audio-wanderer/
 │   ├── perform.py         # Real-time performance (standalone)
 │   └── serve.py           # GUI pipeline server (web UI)
 ├── stable_audio_wanderer/
+│   ├── cli/               # Installed CLI implementations (bin/ wraps these)
+│   ├── resources/         # Packaged assets and explicit release resources
 │   ├── config.py          # Global constants
 │   ├── io/
 │   │   ├── audio_io.py    # WAV loading/saving

@@ -32,10 +32,9 @@ class SameSAdapter(VAEAdapter):
             from stable_audio_3 import AutoencoderModel
         except ImportError as exc:
             raise ImportError(
-                "SAME-S requires compatible native dependencies. Use the separate "
-                "pinned environment in requirements-same-s-native-macos.lock "
-                "on macOS arm64, or requirements-same-s-native.txt for another "
-                "platform; see docs/DUAL_INFERENCE_RELEASE.md. Do not bypass "
+                "SAME-S requires compatible native dependencies. Install the default "
+                "requirements.txt or the native-same-s package extra in this "
+                "interpreter; see docs/INSTALLATION_PROFILES.md. Do not bypass "
                 "upstream dependency pins with --no-deps."
             ) from exc
 

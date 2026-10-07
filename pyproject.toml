@@ -41,6 +41,10 @@ dependencies = [
 native-stable-audio-open = [
   "diffusers==0.35.1", "transformers>=4.43", "accelerate>=0.33", "safetensors>=0.4",
 ]
+native-same-s = [
+  "torch==2.7.1", "torchaudio==2.7.1",
+  "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@779434a908193105335fd8d833418603625b2859",
+]
 export = ["onnxscript>=0.7"]
 same-s-helpers = ["einops-exts", "huggingface-hub>=1.7.1"]
 dev = ["build>=1.2", "pytest>=8"]
