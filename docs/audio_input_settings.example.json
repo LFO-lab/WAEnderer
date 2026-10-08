@@ -1,0 +1,9 @@
+{
+  "window_seconds": 1.0,
+  "update_seconds": 0.1,
+  "freshness_seconds": 2.0,
+  "dwell_seconds": 0.15,
+  "silence_db": -45.0,
+  "channels": 1,
+  "encoder_tail_frames": 1
+}

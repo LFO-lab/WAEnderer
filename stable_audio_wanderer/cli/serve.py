@@ -127,6 +127,16 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
     selected_window = int(config.get("decoder_window", latent_decoder.default_window))
     audio_player = DecoderPlayer(gain=1.0, sr=corpus_sr)
 
+    audio_input = None
+    audio_input_error = ''
+    try:
+        from stable_audio_wanderer.runtime.audio_input import create_audio_input
+        with np.load(manual_artifact_path, allow_pickle=False) as artifact:
+            audio_input = create_audio_input(data, artifact, config)
+    except Exception as exc:
+        # Older artifacts/optional models still support the existing modes.
+        audio_input_error = str(exc)
+
     try:
         controller = DecoderTransportController(
             nav=nav,
@@ -146,8 +156,12 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
             unit_graph_scores=wander_graph.get("unit_graph_scores"),
             initial_mode="random",
             initial_window=selected_window,
+            audio_input=audio_input,
+            audio_input_error=audio_input_error,
         )
     except Exception:
+        if audio_input is not None:
+            audio_input.close()
         audio_player.close()
         raise
 
@@ -187,6 +201,7 @@ def main():
     ap.add_argument("--erae-osc-port", type=int, default=9000)
     ap.add_argument("--erae-osc-fps", type=float, default=30.0)
     ap.add_argument('--decoder-preparation-config', help='Local JSON with exporter interpreters and decoder store')
+    ap.add_argument('--audio-input-settings', help='Local JSON with Audio Input analysis settings')
     args = ap.parse_args()
 
     from stable_audio_wanderer.assets import web_directory
@@ -196,6 +211,13 @@ def main():
     from stable_audio_wanderer.runtime.ws_server import start_ws_server
 
     preparation_config = {}
+    audio_input_settings = {}
+    if args.audio_input_settings:
+        import json
+        from stable_audio_wanderer.runtime.audio_input import InputSettings
+        with open(args.audio_input_settings) as stream:
+            audio_input_settings = json.load(stream)
+        InputSettings(**audio_input_settings)  # Validate before opening services.
     if args.decoder_preparation_config:
         import json
         with open(args.decoder_preparation_config) as stream:
@@ -218,6 +240,7 @@ def main():
     def on_perform_setup(corpus_dir, decoder, config):
         if shutdown_requested.is_set():
             raise RuntimeError("application is shutting down")
+        config = {**config, 'audio_input_settings': audio_input_settings}
         controller = _setup_perform_phase(corpus_dir, decoder, config, broadcaster, args.port)
         try:
             if erae_osc is not None:

@@ -666,6 +666,7 @@ function handleMessage(data) {
         const nav = data.navigation || {};
         const transport = data.transport || {};
         const manual = data.manual || {};
+        if (typeof updateAudioInputState === 'function') updateAudioInputState(data.audio_input || {});
         const hasAudioRenderCursor = nav.clock === 'audio_render';
 
         if (typeof nav.mode === 'string') {
@@ -1026,6 +1027,7 @@ function updateWanderRenderControls(values) {
 
 // UI Control handlers
 function setupControls() {
+    if (typeof setupAudioInputControls === 'function') setupAudioInputControls();
     const modeRandomBtn = document.getElementById('mode-random');
     const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');
@@ -1403,6 +1405,14 @@ function applyNavigationModeUI() {
     const isRandom = selectedNavigationMode === 'random';
     const isReorganized = selectedNavigationMode === 'reorganized';
     const isManual = selectedNavigationMode === 'manual';
+    const isAudioInput = selectedNavigationMode === 'audio_input';
+    const audioInputButton = document.getElementById('mode-audio-input');
+    const audioInputPanel = document.getElementById('audio-input-panel');
+    if (audioInputButton) {
+        audioInputButton.classList.toggle('active', isAudioInput);
+        audioInputButton.disabled = transportRunning || !audioInputButton.dataset?.available;
+    }
+    if (audioInputPanel) audioInputPanel.classList.toggle('panel-hidden', !isAudioInput);
     const useShared3DView = currentModeUsesShared3DView();
 
     modeRandomBtn.classList.toggle('active', isRandom);

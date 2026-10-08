@@ -618,6 +618,17 @@ class WSBroadcaster:
                         print(f"[ws] Error in pipeline message handler: {e}")
                 return
 
+            if msg_type == 'audio_input':
+                # Device operations and worker shutdown can block. Keep state
+                # broadcasts responsive while they finish, just as for pipeline jobs.
+                handler = self._message_handler
+                if handler is not None:
+                    try:
+                        await asyncio.to_thread(handler, data)
+                    except Exception as exc:
+                        print(f'[ws] Audio Input handler: {exc}')
+                return
+
             if msg_type in ("transport", "manual_controls"):
                 if self._message_handler is not None:
                     try:

@@ -458,6 +458,7 @@ function handlePipelineMessage(data) {
         if (data.preparation) onPreparationJob(data.preparation);
         if (data.error) preparationRequestPending=false;
         pipelinePhase = data.phase || 'idle';
+        if (pipelinePhase !== 'perform' && typeof updateAudioInputState === 'function') updateAudioInputState({});
         if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         let restoredCorpus=data.corpus_dir;
         if (!restoredCorpus && !pipelineCorpusDir && pipelinePhase === 'idle') {
@@ -475,6 +476,7 @@ function handlePipelineMessage(data) {
         updatePipelinePhaseUI();
     } else if (type === 'pipeline_phase_change') {
         pipelinePhase = data.phase || 'idle';
+        if (pipelinePhase !== 'perform' && typeof updateAudioInputState === 'function') updateAudioInputState({});
         if (pipelinePhase !== 'perform') decoderWindowControlsAvailable = false;
         setPipelineCorpusDir(data.corpus_dir);
         applyDecoderPhase(data);

@@ -10,15 +10,16 @@ pytest.importorskip("websockets")
 from stable_audio_wanderer.runtime.ws_server import WSBroadcaster
 
 
-def test_pipeline_preparation_does_not_block_websocket_event_loop():
+@pytest.mark.parametrize('message_type', ['pipeline_start_perform', 'audio_input'])
+def test_pipeline_and_input_operations_do_not_block_websocket_event_loop(message_type):
     entered, release = threading.Event(), threading.Event()
     def prepare(_):
         entered.set()
         assert release.wait(3)
-    broadcaster = WSBroadcaster(pipeline_message_handler=prepare)
+    broadcaster = WSBroadcaster(pipeline_message_handler=prepare, message_handler=prepare)
     async def run():
         task = asyncio.create_task(broadcaster._handle_message(
-            None, json.dumps({"type": "pipeline_start_perform"})))
+            None, json.dumps({"type": message_type})))
         try:
             for _ in range(100):
                 if entered.is_set():

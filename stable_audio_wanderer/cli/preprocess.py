@@ -184,6 +184,17 @@ def _descriptor_scales() -> np.ndarray:
     return scales
 
 
+def weight_descriptor_queries(desc, center, scale, weights):
+    """Apply corpus-fitted transforms to raw descriptor frames, never refit them."""
+    desc = np.asarray(desc, dtype=np.float32)
+    normalized = np.clip((desc - center) / scale, -8.0, 8.0)
+    weighted = (normalized * weights).astype(np.float32)
+    weighted[..., PITCH_CHROMA_SLICE] *= np.clip(
+        desc[..., PITCH_CONF_INDEX:PITCH_CONF_INDEX + 1], 0.0, 1.0
+    ) ** 2
+    return weighted
+
+
 def compute_latent_aligned_descriptors(
     wav_stereo: np.ndarray,
     target_frames: int,
@@ -386,10 +397,7 @@ def compute_manual_navigation_features(
 
     desc_norm, desc_center, desc_scale = _robust_standardize(desc)
     scales = _descriptor_scales()
-    desc_weighted = (desc_norm * scales[None, :]).astype(np.float32)
-    pitch_conf = np.clip(desc[:, PITCH_CONF_INDEX], 0.0, 1.0).astype(np.float32)
-    pitch_gate = (pitch_conf**2).astype(np.float32)
-    desc_weighted[:, PITCH_CHROMA_SLICE] *= pitch_gate[:, None]
+    desc_weighted = weight_descriptor_queries(desc, desc_center, desc_scale, scales)
 
     reducer_name = str(reducer).lower().strip()
     if reducer_name == MANUAL_REDUCER_PCA:

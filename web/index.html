@@ -928,6 +928,34 @@
                 <button id="mode-random" class="mode-tab active" type="button">Wander</button>
                 <button id="mode-reorganized" class="mode-tab" type="button">Reorganized</button>
                 <button id="mode-manual" class="mode-tab" type="button">Manual</button>
+                <button id="mode-audio-input" class="mode-tab" type="button" disabled>Audio Input</button>
+            </div>
+
+            <div id="audio-input-panel" class="panel-hidden">
+                <h2>Audio Input · prototype</h2>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="audio-input-device">Microphone on server computer</label>
+                        <select id="audio-input-device"><option value="">System default</option></select>
+                    </div>
+                    <button id="audio-input-devices" type="button">Refresh devices</button>
+                </div>
+                <div class="control-row">
+                    <button id="audio-input-start" type="button">Start Input</button>
+                    <button id="audio-input-stop" type="button">Stop Input</button>
+                    <div class="control-group">
+                        <label for="audio-input-path">Matching method</label>
+                        <select id="audio-input-path">
+                            <option value="descriptors">Descriptors</option>
+                            <option value="latents">VAE Latents</option>
+                        </select>
+                    </div>
+                </div>
+                <label for="audio-input-level">Input level</label>
+                <meter id="audio-input-level" min="-90" max="0" low="-45" value="-90"></meter>
+                <p id="audio-input-status" class="stats-text" role="status">Load a supported corpus first.</p>
+                <pre id="audio-input-diagnostics" class="stats-text" style="white-space:pre-wrap"></pre>
+                <p class="stats-text">Start Input, wait for a ready result, then Start Decode. Switch methods during playback. Silence or stale analysis holds the last location. Use headphones to keep speaker output out of the microphone.</p>
             </div>
 
             <div id="random-panel">
@@ -1239,6 +1267,7 @@
     <script src="pipeline.js?v=multi-vae-phase4-final"></script>
     <script src="erae_math.js"></script>
     <script src="sketch.js?v=multi-vae-phase4-final"></script>
+    <script src="audio_input.js?v=prototype1"></script>
     <script src="erae_visual.js"></script>
 </body>
 </html>

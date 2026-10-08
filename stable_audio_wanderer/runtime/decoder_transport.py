@@ -80,6 +80,8 @@ class DecoderTransportController:
         unit_graph_scores: Optional[np.ndarray] = None,
         initial_mode: str = "random",
         initial_window: int = 2,
+        audio_input=None,
+        audio_input_error: str = '',
     ) -> None:
         self.nav = nav
         self.manual = manual_engine
@@ -89,6 +91,10 @@ class DecoderTransportController:
         self._lifecycle_lock = threading.RLock()
         self._closed = False
         self._resources_closed = False
+        self.audio_input = audio_input
+        self._audio_input_message = audio_input_error
+        self._audio_input_devices = []
+        self._audio_input_last_index = None
 
         self.Z_concat = np.ascontiguousarray(z_concat, dtype=np.float32)
         self.file_offsets = np.asarray(file_offsets, dtype=np.int64).reshape(-1)
@@ -178,8 +184,10 @@ class DecoderTransportController:
 
     def set_mode(self, mode: str) -> Tuple[bool, str]:
         mode = str(mode)
-        if mode not in ("random", "reorganized", "manual"):
+        if mode not in ("random", "reorganized", "manual", "audio_input"):
             return False, f"invalid mode {mode!r}"
+        if mode == 'audio_input' and self.audio_input is None:
+            return False, self._audio_input_message or 'Audio Input unavailable'
         if mode == "reorganized" and not self.nav.has_variant("reorganized"):
             return False, "reorganized mode unavailable (missing units artifact)"
         with self._lock:
@@ -251,6 +259,8 @@ class DecoderTransportController:
     def set_window_controls(self, controls):
         if not isinstance(controls, dict):
             return False, "window controls must be an object"
+        if self.selected_mode == 'audio_input' and controls.get('mode') == 'adaptive':
+            return False, 'Audio Input prototype uses fixed windows'
         try:
             mode = controls.get("mode", self._window_mode)
             content = controls.get("content", self._manual_content)
@@ -414,10 +424,18 @@ class DecoderTransportController:
 
         with self._lock:
             mode = self.selected_mode
-            if mode != "manual" and not self.nav.has_variant(mode):
+            if mode not in ("manual", "audio_input") and not self.nav.has_variant(mode):
                 return False, f"{mode} mode unavailable"
-            if mode != "manual" and not self.nav.set_policy_variant(mode):
+            if mode not in ("manual", "audio_input") and not self.nav.set_policy_variant(mode):
                 return False, f"could not select navigation mode {mode}"
+            if mode == 'audio_input':
+                try:
+                    self._audio_input_last_index = self.audio_input.select(require_fresh=True)
+                    self._audio_input_message = ''
+                except Exception as exc:
+                    self._audio_input_message = str(exc)
+                    return False, str(exc)
+                self._window_mode = 'fixed'
             self._active_mode = mode
             self._generation_counter += 1
             generation = self._generation_counter
@@ -481,6 +499,8 @@ class DecoderTransportController:
                 return
             self._closed = True
             self._stop()
+            if self.audio_input is not None:
+                self.audio_input.close()
             self.decoder.close()
             self._resources_closed = True
 
@@ -494,7 +514,9 @@ class DecoderTransportController:
 
     def _stationary_hold_index(self, mode: str) -> int:
         """Capture the visible cursor before the producer advances navigation."""
-        if mode == "manual":
+        if mode == 'audio_input':
+            candidate = self._audio_input_last_index or 0
+        elif mode == "manual":
             state = self.manual.get_state()
             candidate = state.get("nearest_index", self._manual_last_index)
         else:
@@ -546,6 +568,21 @@ class DecoderTransportController:
             raw,
             indices,
         )
+
+    def _audio_input_request(self, generation, window):
+        anchor = self.audio_input.select()
+        if anchor is not None:
+            self._audio_input_last_index = anchor
+        # Silence, stopped capture, stale analysis or an unavailable destination
+        # path holds the last location; never fall back to another query path.
+        if self._audio_input_last_index is None:
+            raise RuntimeError('Audio Input has no selected corpus location')
+        anchor = self._audio_input_last_index
+        raw, plan = build_file_bounded_latent_window(
+            self.Z_concat, self.file_offsets, anchor, window,
+            mean=self.Z_mean, std=self.Z_std)
+        return _DecodeRequest(generation, window, raw,
+                              tuple(int(i) for i in plan.frame_indices))
 
     def _wander_request(
         self,
@@ -619,7 +656,9 @@ class DecoderTransportController:
         self.wander_planner, self._manual_texture = lane.planner, lane.texture
         self._texture_tail, self._texture_content = lane.texture_tail, lane.texture_content
         try:
-            if mode == "manual":
+            if mode == 'audio_input':
+                request = self._audio_input_request(lane.generation, lane.window)
+            elif mode == "manual":
                 request = self._manual_request(lane.generation, lane.window)
             elif mode == "random":
                 request, lane.reset_serial = self._wander_request(
@@ -892,6 +931,13 @@ class DecoderTransportController:
                 "error": error,
             },
             "navigation_mode": selected_mode,
+            "audio_input": {
+                **(self.audio_input.state() if self.audio_input is not None else {}),
+                "available": self.audio_input is not None,
+                "message": self._audio_input_message,
+                "devices": self._audio_input_devices,
+                "render_anchor": self._audio_input_last_index,
+            },
             "wander_render": {
                 "frame_source": frame_source,
                 "requested_frame_source": frame_source,
@@ -926,6 +972,28 @@ class DecoderTransportController:
 
     def handle_ws_message(self, data: dict) -> bool:
         msg_type = data.get("type", "")
+        if msg_type == 'audio_input':
+            try:
+                if self.audio_input is None:
+                    raise RuntimeError(self._audio_input_message or 'Audio Input unavailable')
+                action = data.get('action')
+                if action == 'devices':
+                    self._audio_input_devices = self.audio_input.devices()
+                elif action == 'start':
+                    device = data.get('device')
+                    if device is not None and (not isinstance(device, int) or isinstance(device, bool)):
+                        raise ValueError('input device must be a listed numeric ID or null for default')
+                    self.audio_input.start(device=device)
+                elif action == 'stop':
+                    self.audio_input.stop()
+                elif action == 'path':
+                    self.audio_input.set_path(data.get('path'))
+                else:
+                    raise ValueError('unknown Audio Input action')
+                self._audio_input_message = ''
+            except Exception as exc:
+                self._audio_input_message = str(exc)
+            return True
         if msg_type == "transport":
             action = data.get("action", "")
             if action == "set_mode":
