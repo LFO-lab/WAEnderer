@@ -31,8 +31,8 @@ def evaluate_transport(report):
         if any(report['windows'][w].get('decode_ms', {}).get('count', 0) < 1 for w in expected):
             reasons.append('Missing decode observations')
     transitions = report.get('transitions', [])
-    for mode in ('random','manual','reorganized'):
-        steps = {row.get('step') for row in transitions if row.get('mode') == mode and row.get('settled_ms') is not None}
+    for mode in ('wander','manual','reorganized'):
+        steps = {row.get('step') for row in transitions if ('wander' if row.get('mode') == 'random' else row.get('mode')) == mode and row.get('settled_ms') is not None}
         if not set(range(17)).issubset(steps):
             reasons.append(f'Incomplete fixed/adaptive transitions for {mode}')
     return {'passed':not reasons, 'reasons':reasons}
@@ -212,11 +212,11 @@ def evaluate_multi_vae_campaign(manifest_path):
             if runtime.get('error') or runtime.get('nonfinite_pcm') is not False or any(type(runtime.get(k)) is not int or runtime[k] != 0 for k in ('underruns','buffer_underruns','device_underruns')):
                 reasons.append('Runtime error, nonfinite PCM or underruns')
             profile = claim.get('realtime_profile', dict(windows=policy['windows'],
-                modes=['random','manual','reorganized'], adaptive=True))
+                modes=['wander','manual','reorganized'], adaptive=True))
             windows, modes = profile.get('windows',[]), profile.get('modes',[])
             valid_profile = (bool(windows) and len(set(windows)) == len(windows) and
                 set(windows).issubset(policy['windows']) and bool(modes) and
-                len(set(modes)) == len(modes) and set(modes).issubset({'random','manual','reorganized'}) and
+                len(set(modes)) == len(modes) and set(modes).issubset({'wander','random','manual','reorganized'}) and
                 type(profile.get('adaptive')) is bool)
             if not valid_profile or runtime.get('realtime_profile') != profile:
                 reasons.append('Runtime profile does not match explicit claim')

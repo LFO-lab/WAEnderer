@@ -21,14 +21,14 @@ def run_server(
         Navigation:
             /cursor x [y [z ...]]  - Set cursor position (coordinates in [0,1])
 
-        Random controls:
-            /random/phrase_scale value
-            /random/jump_rate value
-            /random/timbre_lock value
-            /random/drift value
-            /random/repeat_avoid value
-            /random/crossfile value
-            /random/reset
+        Wander controls:
+            /wander/phrase_scale value
+            /wander/jump_rate value
+            /wander/timbre_lock value
+            /wander/drift value
+            /wander/repeat_avoid value
+            /wander/crossfile value
+            /wander/reset
 
         Reorganized controls:
             /reorganized/morph_len value
@@ -91,7 +91,7 @@ def run_server(
         arr = np.clip(arr, 0.0, 1.0)
         # In manual mode, route /cursor to manual XYZ controls for convenience.
         if manual_controller is not None:
-            selected_mode = str(getattr(manual_controller, "selected_mode", "random"))
+            selected_mode = str(getattr(manual_controller, "selected_mode", "wander"))
             active_mode = str(getattr(manual_controller, "_active_mode", selected_mode))
             if selected_mode == "manual" or active_mode == "manual":
                 set_all = getattr(manual_controller, "set_manual_faders", None)
@@ -106,45 +106,45 @@ def run_server(
         nav.set_cursor_nd(arr)
         _dbg(f"{addr} -> nav cursor {arr.tolist()}")
 
-    # --- Random controls ---
-    def on_random_phrase_scale(addr, *vals):
+    # --- Wander controls ---
+    def on_wander_phrase_scale(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(phrase_scale=v)
+            nav.set_wander_controls(phrase_scale=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_jump_rate(addr, *vals):
+    def on_wander_jump_rate(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(jump_rate=v)
+            nav.set_wander_controls(jump_rate=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_timbre_lock(addr, *vals):
+    def on_wander_timbre_lock(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(timbre_lock=v)
+            nav.set_wander_controls(timbre_lock=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_drift(addr, *vals):
+    def on_wander_drift(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(drift=v)
+            nav.set_wander_controls(drift=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_repeat_avoid(addr, *vals):
+    def on_wander_repeat_avoid(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(repeat_avoid=v)
+            nav.set_wander_controls(repeat_avoid=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_crossfile(addr, *vals):
+    def on_wander_crossfile(addr, *vals):
         v = _as_scalar(vals)
         if v is not None:
-            nav.set_random_controls(crossfile=v)
+            nav.set_wander_controls(crossfile=v)
             _dbg(f"{addr} {v}")
 
-    def on_random_reset(addr, *vals):
-        nav.set_policy_variant("random")
+    def on_wander_reset(addr, *vals):
+        nav.set_policy_variant("wander")
         nav.reset_policy()
         _dbg(f"{addr}")
 
@@ -354,13 +354,22 @@ def run_server(
     # Register handlers
     dispatcher.map("/cursor", on_cursor)
 
-    dispatcher.map("/random/phrase_scale", on_random_phrase_scale)
-    dispatcher.map("/random/jump_rate", on_random_jump_rate)
-    dispatcher.map("/random/timbre_lock", on_random_timbre_lock)
-    dispatcher.map("/random/drift", on_random_drift)
-    dispatcher.map("/random/repeat_avoid", on_random_repeat_avoid)
-    dispatcher.map("/random/crossfile", on_random_crossfile)
-    dispatcher.map("/random/reset", on_random_reset)
+    dispatcher.map("/wander/phrase_scale", on_wander_phrase_scale)
+    dispatcher.map("/wander/jump_rate", on_wander_jump_rate)
+    dispatcher.map("/wander/timbre_lock", on_wander_timbre_lock)
+    dispatcher.map("/wander/drift", on_wander_drift)
+    dispatcher.map("/wander/repeat_avoid", on_wander_repeat_avoid)
+    dispatcher.map("/wander/crossfile", on_wander_crossfile)
+    dispatcher.map("/wander/reset", on_wander_reset)
+    # Legacy OSC paths remain accepted; outgoing documentation uses /wander/.
+    for control, handler in (
+        ('phrase_scale', on_wander_phrase_scale), ('jump_rate', on_wander_jump_rate),
+        ('timbre_lock', on_wander_timbre_lock), ('drift', on_wander_drift),
+        ('repeat_avoid', on_wander_repeat_avoid), ('crossfile', on_wander_crossfile),
+        ('reset', on_wander_reset),
+    ):
+        dispatcher.map('/random/' + control, handler)
+
 
     dispatcher.map("/reorganized/morph_len", on_reorganized_morph_len)
     dispatcher.map("/reorganized/jump_rate", on_reorganized_jump_rate)
@@ -386,8 +395,8 @@ def run_server(
     print(f"OSC listening on {ip}:{port}")
     print("  /cursor d0 [d1 [d2 ...]] — set navigation cursor (values in [0..1])")
     print(
-        "  Random: /random/phrase_scale, /jump_rate, /timbre_lock, "
-        "/drift, /repeat_avoid, /crossfile (0..1), /random/reset"
+        "  Wander: /wander/phrase_scale, /jump_rate, /timbre_lock, "
+        "/drift, /repeat_avoid, /crossfile (0..1), /wander/reset"
     )
     print(
         "  Reorganized: /reorganized/morph_len, /jump_rate, /timbre_lock, "

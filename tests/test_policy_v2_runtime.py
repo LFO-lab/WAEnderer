@@ -104,7 +104,7 @@ def _build_engine(policy_v2_enabled: bool, v2_artifact: dict) -> LatentNavigatio
 def test_policy_v2_runtime_emits_valid_indices():
     artifact = _build_v2_artifact()
     engine = _build_engine(policy_v2_enabled=True, v2_artifact=artifact)
-    engine.set_random_controls(
+    engine.set_wander_controls(
         phrase_scale=0.4,
         jump_rate=0.9,
         timbre_lock=0.3,
@@ -155,7 +155,7 @@ def test_control_banks_and_variant_switching():
     artifact = _build_v2_artifact()
     engine = _build_engine(policy_v2_enabled=True, v2_artifact=artifact)
 
-    engine.set_random_controls(jump_rate=0.31, timbre_lock=0.27, crossfile=0.73)
+    engine.set_wander_controls(jump_rate=0.31, timbre_lock=0.27, crossfile=0.73)
     engine.set_reorganized_controls(
         morph_len=0.82,
         jump_rate=0.64,
@@ -165,12 +165,12 @@ def test_control_banks_and_variant_switching():
         crossfile=0.66,
     )
     state = engine.get_state()
-    random_ctrl = state["controls"]["random"]
+    wander_ctrl = state["controls"]["wander"]
     reorg_ctrl = state["controls"]["reorganized"]
 
-    assert abs(float(random_ctrl["jump_rate"]) - 0.31) < 1e-6
-    assert abs(float(random_ctrl["timbre_lock"]) - 0.27) < 1e-6
-    assert abs(float(random_ctrl["crossfile"]) - 0.73) < 1e-6
+    assert abs(float(wander_ctrl["jump_rate"]) - 0.31) < 1e-6
+    assert abs(float(wander_ctrl["timbre_lock"]) - 0.27) < 1e-6
+    assert abs(float(wander_ctrl["crossfile"]) - 0.73) < 1e-6
     assert abs(float(reorg_ctrl["morph_len"]) - 0.82) < 1e-6
     assert abs(float(reorg_ctrl["jump_rate"]) - 0.64) < 1e-6
     assert abs(float(reorg_ctrl["timbre_lock"]) - 0.55) < 1e-6
@@ -178,10 +178,15 @@ def test_control_banks_and_variant_switching():
     assert abs(float(reorg_ctrl["novelty"]) - 0.22) < 1e-6
     assert abs(float(reorg_ctrl["crossfile"]) - 0.66) < 1e-6
 
+    assert engine.set_policy_variant("wander") is True
+    state_wander = engine.get_state()
+    assert state_wander["active_variant"] == "wander"
+    assert state_wander["policy_v2"]["active"] is False
+
     assert engine.set_policy_variant("random") is True
-    state_random = engine.get_state()
-    assert state_random["active_variant"] == "random"
-    assert state_random["policy_v2"]["active"] is False
+    assert engine.get_state()["active_variant"] == "wander"
+    engine.set_random_controls(jump_rate=0.42)
+    assert engine.get_wander_controls()["jump_rate"] == engine.get_random_controls()["jump_rate"]
 
     assert engine.set_policy_variant("reorganized") is True
     state_reorg = engine.get_state()

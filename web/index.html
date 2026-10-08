@@ -707,9 +707,9 @@
                 <div class="pipeline-section">
                     <h3>Mode</h3>
                     <select id="train-mode">
-                        <option value="all" selected>All (Manual + Random + Reorganized)</option>
+                        <option value="all" selected>All (Manual + Wander + Reorganized)</option>
                         <option value="manual">Manual Only</option>
-                        <option value="random">Random Only</option>
+                        <option value="wander">Wander Only</option>
                         <option value="reorganized">Reorganized Only</option>
                     </select>
                 </div>
@@ -804,7 +804,9 @@
                         <select id="perform-decoder-engine" style="flex:1;min-width:0">
                             <option value="onnxruntime|cpu">ONNX · CPU</option>
                         </select>
-                        <button id="perform-decoder-refresh" type="button" class="secondary" style="width:auto;flex:0 0 auto;padding:4px 6px;font-size:10px" title="Refresh availability" aria-label="Refresh decoder availability">↻</button>
+                        <button id="perform-download-same-s" type="button" hidden>Download SAME-S weights</button>
+                    <p id="perform-native-weights-status" role="status"></p>
+                    <button id="perform-decoder-refresh" type="button" class="secondary" style="width:auto;flex:0 0 auto;padding:4px 6px;font-size:10px" title="Refresh availability" aria-label="Refresh decoder availability">↻</button>
                     </div>
                     <details class="stats-text">
                         <summary>Decoder diagnostics</summary>
@@ -925,12 +927,12 @@
                 <button id="btn-decode-toggle" type="button" style="width:100%" aria-pressed="false" disabled>Start Decode</button>
             </div>
             <div class="mode-tabs">
-                <button id="mode-random" class="mode-tab active" type="button">Wander</button>
+                <button id="mode-wander" class="mode-tab active" type="button">Wander</button>
                 <button id="mode-reorganized" class="mode-tab" type="button">Reorganized</button>
                 <button id="mode-manual" class="mode-tab" type="button">Manual</button>
             </div>
 
-            <div id="random-panel">
+            <div id="wander-panel">
                 <h2>Wander</h2>
 
                 <div class="control-row">
@@ -969,17 +971,17 @@
                     <div class="control-group">
                         <div class="control-label">
                             <span>Phrase Scale</span>
-                            <span class="control-value" id="val-random-phrase_scale">0.40</span>
+                            <span class="control-value" id="val-wander-phrase_scale">0.40</span>
                         </div>
-                        <input type="range" id="random-phrase_scale" min="0" max="1" step="0.01" value="0.40">
+                        <input type="range" id="wander-phrase_scale" min="0" max="1" step="0.01" value="0.40">
                     </div>
                     
                     <div class="control-group">
                         <div class="control-label">
                             <span>Jump Rate</span>
-                            <span class="control-value" id="val-random-jump_rate">0.55</span>
+                            <span class="control-value" id="val-wander-jump_rate">0.55</span>
                         </div>
-                        <input type="range" id="random-jump_rate" min="0" max="1" step="0.01" value="0.55">
+                        <input type="range" id="wander-jump_rate" min="0" max="1" step="0.01" value="0.55">
                     </div>
                 </div>
                 
@@ -987,17 +989,17 @@
                     <div class="control-group">
                         <div class="control-label">
                             <span>Timbre Lock</span>
-                            <span class="control-value" id="val-random-timbre_lock">0.55</span>
+                            <span class="control-value" id="val-wander-timbre_lock">0.55</span>
                         </div>
-                        <input type="range" id="random-timbre_lock" min="0" max="1" step="0.01" value="0.55">
+                        <input type="range" id="wander-timbre_lock" min="0" max="1" step="0.01" value="0.55">
                     </div>
                     
                     <div class="control-group">
                         <div class="control-label">
                             <span>Drift</span>
-                            <span class="control-value" id="val-random-drift">0.50</span>
+                            <span class="control-value" id="val-wander-drift">0.50</span>
                         </div>
-                        <input type="range" id="random-drift" min="0" max="1" step="0.01" value="0.50">
+                        <input type="range" id="wander-drift" min="0" max="1" step="0.01" value="0.50">
                     </div>
                 </div>
                 
@@ -1005,9 +1007,9 @@
                     <div class="control-group">
                         <div class="control-label">
                             <span>Repeat Avoid</span>
-                            <span class="control-value" id="val-random-repeat_avoid">0.75</span>
+                            <span class="control-value" id="val-wander-repeat_avoid">0.75</span>
                         </div>
-                        <input type="range" id="random-repeat_avoid" min="0" max="1" step="0.01" value="0.75">
+                        <input type="range" id="wander-repeat_avoid" min="0" max="1" step="0.01" value="0.75">
                     </div>
                 </div>
 
@@ -1015,13 +1017,13 @@
                     <div class="control-group">
                         <div class="control-label">
                             <span>Crossfile</span>
-                            <span class="control-value" id="val-random-crossfile">0.70</span>
+                            <span class="control-value" id="val-wander-crossfile">0.70</span>
                         </div>
-                        <input type="range" id="random-crossfile" min="0" max="1" step="0.01" value="0.70">
+                        <input type="range" id="wander-crossfile" min="0" max="1" step="0.01" value="0.70">
                     </div>
                 </div>
 
-                <button id="btn-random-reset">Reset Wander</button>
+                <button id="btn-wander-reset">Reset Wander</button>
             </div>
 
             <div id="reorganized-panel" class="panel-hidden">

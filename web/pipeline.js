@@ -232,7 +232,7 @@ function noteDecoderControlChange(element) {
 
 // Training history for chart rendering
 let trainingHistory = {
-    random: { train_loss: [], val_loss: [], window_mae: [] },
+    wander: { train_loss: [], val_loss: [], window_mae: [] },
     reorganized: { train_loss: [], val_loss: [], accuracy: [] },
 };
 
@@ -369,6 +369,11 @@ function updateDecoderControls() {
     }
     const weights = document.getElementById('perform-vae-weight-path');
     if (weights) weights.disabled = !ready || pipelinePhase !== 'idle';
+    const download = document.getElementById('perform-download-same-s');
+    if (download) {
+        download.hidden = decoderVae !== 'same_s' || !decoderChoices?.some(c => c.backend === 'pytorch' && c.reason_codes?.includes('missing_weights'));
+        download.disabled = !ready || pipelinePhase !== 'idle';
+    }
     const refresh = document.getElementById('perform-decoder-refresh');
     if (refresh) refresh.disabled = !ready || pipelinePhase !== 'idle';
     if (corpusToggle) {
@@ -496,6 +501,10 @@ function handlePipelineMessage(data) {
             setDecoderStatus(`Error: ${data.error}`, 'error');
         }
         updatePipelinePhaseUI();
+    } else if (type === 'pipeline_native_weights') {
+        const status = document.getElementById('perform-native-weights-status');
+        if (status) status.textContent = data.detail;
+        if (data.status !== 'running') requestDecoderAvailability();
     } else if (type === 'pipeline_stats') {
         if (data.phase === 'preprocess') {
             onPreprocessProgress(data);
@@ -714,7 +723,7 @@ function onTrainProgress(data) {
     const fill = document.getElementById('train-progress-fill');
     const text = document.getElementById('train-progress-text');
     const statsEl = document.getElementById('train-stats');
-    const mode = data.mode || 'random';
+    const mode = data.mode || 'wander';
 
     if (data.epoch != null && data.total_epochs != null) {
         const pct = (data.epoch / data.total_epochs) * 100;
@@ -726,11 +735,11 @@ function onTrainProgress(data) {
 
         // Accumulate history for chart
         if (data.train && data.val) {
-            if (mode === 'random' || mode === 'all') {
-                trainingHistory.random.train_loss.push(data.train.loss || 0);
-                trainingHistory.random.val_loss.push(data.val.loss || 0);
+            if (mode === 'wander' || mode === 'all') {
+                trainingHistory.wander.train_loss.push(data.train.loss || 0);
+                trainingHistory.wander.val_loss.push(data.val.loss || 0);
                 if (data.val.window_mae_frames != null) {
-                    trainingHistory.random.window_mae.push(data.val.window_mae_frames);
+                    trainingHistory.wander.window_mae.push(data.val.window_mae_frames);
                 }
             }
             if (mode === 'reorganized') {
@@ -884,7 +893,7 @@ function setupPipelineControls() {
 
             // Reset training history
             trainingHistory = {
-                random: { train_loss: [], val_loss: [], window_mae: [] },
+                wander: { train_loss: [], val_loss: [], window_mae: [] },
                 reorganized: { train_loss: [], val_loss: [], accuracy: [] },
             };
 
@@ -922,6 +931,9 @@ function setupPipelineControls() {
         });
     }
 
+    document.getElementById('perform-download-same-s')?.addEventListener('click', () => {
+        sendPipelineMessage({type:'pipeline_download_same_s', corpus_dir:pipelineCorpusDir});
+    });
     document.getElementById('perform-decoder-engine')?.addEventListener('change', () => {
         saveDecoderPreference();
         updateDecoderAvailability();

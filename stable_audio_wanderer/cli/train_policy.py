@@ -394,13 +394,14 @@ def build_latent_loaders(sequences, Z, geometry, args, window_targets=None):
 
 
 def _normalize_navigation_mode(raw_mode: str) -> str:
-    mode = str(raw_mode or "all").strip().lower()
+    from stable_audio_wanderer.navigation_modes import normalize_mode
+    mode = normalize_mode(raw_mode or "all")
     if mode == "":
         mode = "all"
-    valid = {"manual", "random", "reorganized", "all"}
+    valid = {"manual", "wander", "reorganized", "all"}
     if mode not in valid:
         raise ValueError(
-            "Invalid --navigation_mode. Expected one of: manual, random, reorganized, all."
+            "Invalid --navigation_mode. Expected one of: manual, wander, reorganized, all."
         )
     return mode
 
@@ -841,7 +842,7 @@ def _train_reorganized_policy(args, data: dict, progress_callback=None, cancel_e
     return {"reorganized_checkpoint": out_path, "best_val_loss": best_val}
 
 
-def _train_random_policy(
+def _train_wander_policy(
     args,
     data: dict,
     progress_callback=None,
@@ -926,7 +927,7 @@ def _train_random_policy(
         history["val"].append(val_hist)
 
         epoch_data = {
-            "mode": "random",
+            "mode": "wander",
             "epoch": epoch + 1,
             "total_epochs": total_epochs,
             "train": train_hist,
@@ -960,7 +961,7 @@ def _train_random_policy(
         if val_stats["loss"] < best_val_loss:
             best_val_loss = val_stats["loss"]
 
-    out_path = args.random_out_path
+    out_path = args.wander_out_path
     if out_path is None:
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         out_path = os.path.join(args.corpus_dir, f"latent_policy_{ts}.pt")
@@ -972,7 +973,7 @@ def _train_random_policy(
     }
     torch.save(ckpt, out_path)
     print(f"[done] Saved policy checkpoint: {out_path}")
-    return {"random_checkpoint": out_path, "best_val_loss": best_val_loss}
+    return {"wander_checkpoint": out_path, "best_val_loss": best_val_loss}
 
 
 def run_train(
@@ -997,7 +998,7 @@ def run_train(
     lambda_manifold: float = 0.1,
     lambda_diversity: float = 0.01,
     lambda_window: float = 0.5,
-    random_out_path=None,
+    wander_out_path=None,
     reorganized_units_path=None,
     reorganized_out_path=None,
     reorganized_epochs: int = 120,
@@ -1017,7 +1018,7 @@ def run_train(
 
     Args:
         corpus_dir: Path to directory containing corpus.npz.
-        navigation_mode: Training mode (manual, random, reorganized, or all).
+        navigation_mode: Training mode (manual, wander, reorganized, or all).
         progress_callback: Optional callable(dict) for progress events.
         cancel_event: Optional threading.Event for cancellation.
         **remaining kwargs: Match CLI argparse defaults.
@@ -1045,7 +1046,7 @@ def run_train(
         lambda_manifold=lambda_manifold,
         lambda_diversity=lambda_diversity,
         lambda_window=lambda_window,
-        random_out_path=random_out_path,
+        wander_out_path=wander_out_path,
         reorganized_units_path=reorganized_units_path,
         reorganized_out_path=reorganized_out_path,
         reorganized_epochs=reorganized_epochs,
@@ -1090,17 +1091,17 @@ def run_train(
         if progress_callback is not None:
             progress_callback({"mode": "manual", "event": "complete", "path": manual_out})
 
-    if mode in ("random", "all"):
+    if mode in ("wander", "all"):
         if _cancelled():
             return results
-        print("[info] Stage start: random model")
-        random_result = _train_random_policy(
+        print("[info] Stage start: wander model")
+        wander_result = _train_wander_policy(
             args=args, data=data,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
         )
-        if random_result:
-            results.update(random_result)
+        if wander_result:
+            results.update(wander_result)
 
     if mode in ("reorganized", "all"):
         if _cancelled():
@@ -1120,7 +1121,7 @@ def run_train(
 def main():
     ap = argparse.ArgumentParser(
         description=(
-            "Train navigation artifacts/models for manual, random, and reorganized modes."
+            "Train navigation artifacts/models for manual, wander, and reorganized modes."
         )
     )
     ap.add_argument("--corpus_dir", required=True, help="Folder containing corpus.npz")
@@ -1128,8 +1129,8 @@ def main():
         "--navigation_mode",
         default="all",
         help=(
-            "Training mode target: manual, random, reorganized, or all "
-            "(legacy aliases supported: policy->random, both->all, v2->reorganized)."
+            "Training mode target: manual, wander, reorganized, or all "
+            "(legacy aliases supported: policy->wander, both->all, v2->reorganized)."
         ),
     )
     ap.add_argument(
@@ -1164,9 +1165,9 @@ def main():
                     help="Weight for window size Huber loss.")
 
     ap.add_argument(
-        "--random_out_path",
+        "--wander_out_path", "--random_out_path",
         default=None,
-        help="Random mode checkpoint output (.pt). Defaults to <corpus_dir>/latent_policy_<timestamp>.pt",
+        help="Wander mode checkpoint output (.pt). Defaults to <corpus_dir>/latent_policy_<timestamp>.pt",
     )
     ap.add_argument(
         "--reorganized_units_path",
@@ -1251,7 +1252,7 @@ def main():
         lambda_manifold=args.lambda_manifold,
         lambda_diversity=args.lambda_diversity,
         lambda_window=args.lambda_window,
-        random_out_path=args.random_out_path,
+        wander_out_path=args.wander_out_path,
         reorganized_units_path=args.reorganized_units_path,
         reorganized_out_path=args.reorganized_out_path,
         reorganized_epochs=args.reorganized_epochs,

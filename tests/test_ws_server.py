@@ -82,7 +82,7 @@ def _make_nav_state():
         "current_file_id": 1,
         "recent_indices": [0, 1, 2],
         "controls": {
-            "random": {"jump_rate": 0.5},
+            "wander": {"jump_rate": 0.5},
             "reorganized": {"jump_rate": 0.4},
         },
         "fractional": {
@@ -96,13 +96,13 @@ def _make_nav_state():
     }
 
 
-def test_ws_broadcaster_exposes_manual_space_navigation_for_random_mode():
+def test_ws_broadcaster_exposes_manual_space_navigation_for_wander_mode():
     nav = FakeNav(_make_nav_state())
     broadcaster = WSBroadcaster(
         nav,
         extra_state_provider=lambda: {
-            "navigation_mode": "random",
-            "transport": {"running": False, "selected_mode": "random"},
+            "navigation_mode": "wander",
+            "transport": {"running": False, "selected_mode": "wander"},
         },
         manual_points_3d=np.asarray(
             [
@@ -118,7 +118,7 @@ def test_ws_broadcaster_exposes_manual_space_navigation_for_random_mode():
 
     state = json.loads(broadcaster._get_state_json())
 
-    assert state["navigation"]["mode"] == "random"
+    assert state["navigation"]["mode"] == "wander"
     assert state["navigation"]["position_3d"] == pytest.approx([0.625, 0.625, 0.625])
     assert np.allclose(
         np.asarray(state["navigation"]["trajectory_3d"], dtype=np.float32),
@@ -162,7 +162,7 @@ def test_ws_broadcaster_normalizes_manual_position_from_extra_state():
     assert state["manual"]["position_3d"] == pytest.approx([0.5, 0.5, 0.25])
 
 
-@pytest.mark.parametrize("navigation_mode", ["random", "manual", "reorganized"])
+@pytest.mark.parametrize("navigation_mode", ["wander", "manual", "reorganized"])
 def test_ws_broadcaster_uses_audio_render_presentation_cursor(navigation_mode):
     nav = FakeNav(_make_nav_state())
     broadcaster = WSBroadcaster(

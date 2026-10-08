@@ -9,7 +9,7 @@ def passing_report():
             'underruns':0, 'error':None, 'rendered_blocks':25000,
             'windows':{str(w):{'decode_ms':{'count':10}} for w in range(2,33,2)},
             'transitions':[{'mode':mode, 'step':step, 'settled_ms':20}
-                for mode in ('random','manual','reorganized') for step in range(17)]}
+                for mode in ('wander','manual','reorganized') for step in range(17)]}
 
 
 def test_physical_production_campaign_passes():

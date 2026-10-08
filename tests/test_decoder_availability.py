@@ -95,3 +95,28 @@ def test_native_model_identity_survives_onnx_removal(monkeypatch):
     after=discovery.decoder_availability(corpus_spec={'vae_id':'stable_audio_open'})
     assert before[1]['model_identity']==after[1]['model_identity']
     assert before[0]['artifact_verified'] and not after[0]['artifact_verified']
+
+
+def test_missing_native_checkpoint_reports_revision_cache_and_recovery(monkeypatch, tmp_path):
+    monkeypatch.setattr(discovery, 'find_spec', lambda _: object())
+    monkeypatch.setitem(sys.modules, 'huggingface_hub', SimpleNamespace(
+        constants=SimpleNamespace(HF_HUB_CACHE=str(tmp_path/'hub')),
+        try_to_load_from_cache=lambda *a, **kw: None))
+    rows = discovery.decoder_availability(tmp_path/'absent-resource', corpus_spec={'vae_id':'same_s'}, store_dir=tmp_path/'empty')
+    native = next(row for row in rows if row['backend']=='pytorch' and row['device']=='cpu')
+    from stable_audio_wanderer.vae.same_s_weights import SOURCE_REVISION
+    assert not native['selectable']
+    assert SOURCE_REVISION in native['detail']
+    assert 'model.safetensors' in native['detail']
+    assert str(tmp_path/'hub') in native['detail']
+    assert 'hf download stabilityai/SAME-S' in native['detail']
+    assert 'No prepared ONNX decoder' in rows[0]['detail']
+
+
+def test_cache_lookup_error_is_not_silently_reported_as_missing(monkeypatch, tmp_path):
+    def broken(*a, **kw): raise OSError('cache unreadable')
+    monkeypatch.setitem(sys.modules, 'huggingface_hub', SimpleNamespace(try_to_load_from_cache=broken))
+    rows = discovery.decoder_availability(tmp_path/'absent-resource', corpus_spec={'vae_id':'same_s'}, store_dir=tmp_path/'empty')
+    native = next(row for row in rows if row['backend']=='pytorch' and row['device']=='cpu')
+    assert 'cache lookup failed (OSError)' in native['detail']
+    assert 'cache unreadable' in native['detail']

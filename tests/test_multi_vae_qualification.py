@@ -24,10 +24,10 @@ def campaign(tmp_path):
         active_audio_seconds=601,rendered_samples=601*48000,sample_rate=48000,
         nonfinite_pcm=False,error=None,underruns=0,buffer_underruns=0,device_underruns=0,
         preparation_ms=12,process_cpu_percent=80,peak_rss_bytes=1024,
-        declared_scenarios=[f'{m}:{s}' for m in ('random','manual','reorganized') for s in [*[f'T{w}' for w in policy['windows']],'adaptive']],
+        declared_scenarios=[f'{m}:{s}' for m in ('wander','manual','reorganized') for s in [*[f'T{w}' for w in policy['windows']],'adaptive']],
         windows={str(w):{'decode_ms':{'count':10,'median':2,'p95':3,'p99':4}} for w in policy['windows']},
-        transitions=[dict(mode=m,step=i,settled_ms=20) for m in ('random','manual','reorganized') for i in range(17)])
-    runtime['realtime_profile'] = dict(windows=policy['windows'],modes=['random','manual','reorganized'],adaptive=True)
+        transitions=[dict(mode=m,step=i,settled_ms=20) for m in ('wander','manual','reorganized') for i in range(17)])
+    runtime['realtime_profile'] = dict(windows=policy['windows'],modes=['wander','manual','reorganized'],adaptive=True)
     runtime['sample_attribution'] = 'stable_pcm_generation_without_underrun'
     for transition,scenario in zip(runtime['transitions'],runtime['declared_scenarios']):
         transition['scenario'] = scenario

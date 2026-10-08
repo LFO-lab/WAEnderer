@@ -44,7 +44,7 @@ def _build_engine(
 
 def test_recompose_path_validity():
     engine = _build_engine(with_desc=True, policy_recompose_enabled=True)
-    engine.set_random_controls(jump_rate=1.0, timbre_lock=0.5, crossfile=1.0)
+    engine.set_wander_controls(jump_rate=1.0, timbre_lock=0.5, crossfile=1.0)
     original_lookahead = engine._lookahead_best_s1
     engine._lookahead_best_s1 = lambda candidate_idx, direction, q_gate: 0.0
     try:
@@ -63,7 +63,7 @@ def test_recompose_path_validity():
 
 def test_recompose_creates_non_serial_transition():
     engine = _build_engine(with_desc=True, policy_recompose_enabled=True)
-    engine.set_random_controls(jump_rate=1.0, timbre_lock=1.0, crossfile=0.0)
+    engine.set_wander_controls(jump_rate=1.0, timbre_lock=1.0, crossfile=0.0)
 
     # Force a strong same-file timbre attractor away from t+1.
     seed_idx = 0
@@ -102,7 +102,7 @@ def test_recompose_creates_non_serial_transition():
 
 def test_navigation_uses_contiguous_fill_when_recompose_disabled():
     engine = _build_engine(with_desc=True, policy_recompose_enabled=False)
-    engine.set_random_controls(jump_rate=1.0, timbre_lock=0.5, crossfile=1.0)
+    engine.set_wander_controls(jump_rate=1.0, timbre_lock=0.5, crossfile=1.0)
     for _ in range(6):
         engine.step()
     state = engine.get_state()
@@ -111,7 +111,7 @@ def test_navigation_uses_contiguous_fill_when_recompose_disabled():
 
 def test_recompose_avoids_self_stalls():
     engine = _build_engine(with_desc=True, policy_recompose_enabled=True)
-    engine.set_random_controls(
+    engine.set_wander_controls(
         jump_rate=1.0,
         timbre_lock=0.75,
         repeat_avoid=1.0,
@@ -157,7 +157,7 @@ def test_jump_rate_increases_path_novelty():
     original_lookahead = engine._lookahead_best_s1
     engine._lookahead_best_s1 = lambda candidate_idx, direction, q_gate: 0.0
     try:
-        engine.set_random_controls(
+        engine.set_wander_controls(
             jump_rate=0.0,
             timbre_lock=0.0,
             repeat_avoid=1.0,
@@ -175,7 +175,7 @@ def test_jump_rate_increases_path_novelty():
         low_jump_unique = len(set(int(i) for i in low_jump_path))
 
         engine._retrieval_buffer.clear()
-        engine.set_random_controls(
+        engine.set_wander_controls(
             jump_rate=1.0,
             timbre_lock=0.0,
             repeat_avoid=1.0,

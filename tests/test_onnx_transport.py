@@ -25,12 +25,12 @@ def _wait_until(predicate, timeout=2.0):
 class FakeNavigation:
     def __init__(self):
         self.counter = 0
-        self.variant = "random"
+        self.variant = "wander"
         self.fixed_retrieval_windows = []
         self.reset_policy_calls = []
 
     def has_variant(self, variant):
-        return variant in ("random", "reorganized")
+        return variant in ("wander", "reorganized")
 
     def set_policy_variant(self, variant):
         if not self.has_variant(variant):
@@ -46,7 +46,7 @@ class FakeNavigation:
     def get_active_jump_rate(self, variant=None):
         return 0.5
 
-    def get_random_controls(self):
+    def get_wander_controls(self):
         return {
             "phrase_scale": 0.4,
             "jump_rate": 0.55,
@@ -61,7 +61,7 @@ class FakeNavigation:
         if idx is not None:
             self.counter = int(idx)
 
-    def set_random_controls(self, **_controls):
+    def set_wander_controls(self, **_controls):
         pass
 
     def set_reorganized_controls(self, **_controls):
@@ -349,7 +349,7 @@ class FakePlayer:
         }
 
 
-def _controller(*, initial_mode="random", initial_window=2):
+def _controller(*, initial_mode="wander", initial_window=2):
     decoder = FakeDecoder()
     player = FakePlayer()
     controller = OnnxTransportController(
@@ -584,7 +584,7 @@ def test_wander_render_defaults_and_control_validation_are_visible_in_state():
     assert unchanged["latent_colour"] == 0.75
 
 
-def test_live_wander_render_changes_stage_only_for_active_random_mode():
+def test_live_wander_render_changes_stage_only_for_active_wander_mode():
     controller, _decoder, player = _controller()
 
     with controller._lock:
@@ -598,7 +598,7 @@ def test_live_wander_render_changes_stage_only_for_active_random_mode():
     assert player.requested_generation is None
 
     with controller._lock:
-        controller._active_mode = "random"
+        controller._active_mode = "wander"
     ok, message = controller.set_wander_render_controls({"latent_colour": 0.4})
     assert ok
     assert "generation 8" in message
@@ -678,7 +678,7 @@ def test_reset_wander_resets_policy_stages_random_generation_and_resets_planner(
         controller._requested_generation = 3
         controller._generation_windows = {3: 4}
         controller._requested_window = 4
-        controller._active_mode = "random"
+        controller._active_mode = "wander"
         controller._running.set()
 
     serial_before = controller._wander_reset_serial

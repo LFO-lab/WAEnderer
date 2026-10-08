@@ -22,6 +22,7 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path='',
         raise ValueError('Unknown corpus VAE')
     source = {k: spec[k] for k in SOURCE_FIELDS if k in spec}
     native_present, native_error = False, ''
+    native_missing_detail = 'Native checkpoint is missing'
     required = ('torch', 'torchaudio', 'stable_audio_3', 'safetensors', 'huggingface_hub') if vae == 'same_s' else (
         ('torch', 'diffusers', 'safetensors', 'huggingface_hub') if vae == 'stable_audio_open' else ('torch', 'dac', 'audiotools', 'einops'))
     selected_error = ''
@@ -53,6 +54,7 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path='',
             native_error = 'Set the local EAR checkpoint, repository and configuration.'
     else:
         try:
+            import huggingface_hub
             from huggingface_hub import try_to_load_from_cache
             if vae == 'same_s':
                 from .same_s_weights import SOURCE_MODEL, SOURCE_REVISION
@@ -60,9 +62,21 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path='',
             else:
                 from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION
                 names = ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors')
-            native_present = all(isinstance(try_to_load_from_cache(SOURCE_MODEL, n, revision=SOURCE_REVISION), str) for n in names)
-        except Exception:
-            pass
+            cached = {name: try_to_load_from_cache(SOURCE_MODEL, name, revision=SOURCE_REVISION) for name in names}
+            missing_files = [name for name, path in cached.items() if not isinstance(path, str)]
+            native_present = not missing_files
+            cache = getattr(getattr(huggingface_hub, 'constants', None), 'HF_HUB_CACHE', 'Hugging Face default cache')
+            if missing_files:
+                command = f'hf download {SOURCE_MODEL} {" ".join(names)} --revision {SOURCE_REVISION}'
+                native_missing_detail = (
+                    f'Native checkpoint is missing at revision {SOURCE_REVISION}. '
+                    f'Missing files: {", ".join(missing_files)}. Cache: {cache}. '
+                    f'An older encoder may have cached another revision. In the decoder environment run: {command}; '
+                    'then refresh decoder availability. '
+                    'ONNX preparation is not required for PyTorch playback.'
+                )
+        except Exception as exc:
+            native_missing_detail = f'Native checkpoint cache lookup failed ({type(exc).__name__}): {exc}. Check huggingface_hub in the decoder interpreter.'
     artifact, artifact_error = None, ''
     artifact_present = False
     artifact_reason = 'missing_artifact'
@@ -120,8 +134,12 @@ def decoder_availability(resource_dir=None, *, corpus_spec=None, weight_path='',
         reasons = []
         if missing: reasons.append(('missing_dependencies', 'Install: '+', '.join(missing)))
         if not hardware: reasons.append(('unavailable_hardware', f'{device.upper()} hardware unavailable'))
-        if onnx and not artifact: reasons.append((artifact_reason, artifact_error or 'Prepare ONNX decoder first'))
-        if not onnx and not native_present: reasons.append(('missing_weights', 'Native checkpoint is missing'))
+        if onnx and not artifact:
+            explanation = artifact_error or 'Prepare ONNX decoder first'
+            if not artifact_present:
+                explanation = 'No prepared ONNX decoder installed. Use a ready PyTorch decoder or Prepare ONNX decoder. ' + explanation
+            reasons.append((artifact_reason, explanation))
+        if not onnx and not native_present: reasons.append(('missing_weights', native_missing_detail))
         if not onnx and native_error: reasons.append(('invalid_native_source', native_error))
         entries.append(dict(backend=backend, device=device, vae_id=vae,
             choice_key=f'{vae}|{backend}|{device}', label=f'{"ONNX" if onnx else "PyTorch"} · {device.upper()} · {vae}',

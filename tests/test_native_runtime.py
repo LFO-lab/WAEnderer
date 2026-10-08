@@ -80,3 +80,74 @@ def test_default_interpreter_and_relative_sources_are_checkout_independent(tmp_p
     assert config['decoder_python']==sys.executable
     assert config['vae_weight_path']==str(folder/'checkpoint.pyt')
     assert config['vae_repo_path']==str(folder/'source')
+
+
+def test_default_workers_share_server_package_without_overriding_external_environment(monkeypatch):
+    from stable_audio_wanderer.vae.native_runtime import worker_environment
+    import stable_audio_wanderer.vae.native_runtime as runtime
+    monkeypatch.setenv('PYTHONPATH', '/existing/path')
+    default = worker_environment(sys.executable)
+    assert default['PYTHONPATH'].split(':')[0] == str(Path(runtime.__file__).resolve().parents[2])
+    assert worker_environment('/external/venv/bin/python')['PYTHONPATH'] == '/existing/path'
+
+
+def test_native_download_refreshes_discovery_without_starting_playback(monkeypatch):
+    from stable_audio_wanderer.runtime.pipeline_server import PipelineManager
+    messages, calls = [], []
+    def request(python, operation, payload, **kwargs):
+        calls.append((python, operation, kwargs))
+        return {'ready':True}
+    monkeypatch.setattr('stable_audio_wanderer.vae.native_runtime.request_once', request)
+    pipeline = PipelineManager()
+    monkeypatch.setattr(pipeline, '_emit', messages.append)
+    monkeypatch.setattr(pipeline, '_list_decoders', lambda data: calls.append(data))
+    try:
+        pipeline.phase = 'preparing'
+        pipeline._native_download_busy = True
+        pipeline._download_same_s_worker('/decoder/python', '/corpus')
+        assert pipeline.phase == 'idle' and not pipeline._native_download_busy
+        assert pipeline._app_decoder is None
+        assert calls[0][1] == 'download_same_s'
+        assert calls[-1] == {'corpus_dir':'/corpus'}
+        assert messages[-1]['status'] == 'ready'
+    finally:
+        pipeline.close()
+
+
+def test_download_worker_validates_weights_before_reporting_ready(monkeypatch):
+    import io
+    import threading
+    from stable_audio_wanderer.vae import native_worker, encoder_availability, same_s_weights
+    output = io.StringIO()
+    monkeypatch.setattr(sys, 'stdout', output)
+    monkeypatch.setattr(sys, 'stderr', io.StringIO())
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('{}'))
+    monkeypatch.setattr(sys, 'argv', ['native_worker', 'download_same_s'])
+    calls = []
+    monkeypatch.setattr(encoder_availability, 'prepare_encoder_weights', lambda *a: calls.append('download'))
+    def validate(**kwargs):
+        assert kwargs['local_files_only']
+        calls.append('validate')
+    monkeypatch.setattr(same_s_weights, 'resolve_same_s_weights', validate)
+    native_worker.main()
+    assert calls == ['download', 'validate']
+    assert json.loads(output.getvalue()) == {'ready':True}
+
+
+def test_cancelled_download_terminates_worker(monkeypatch, tmp_path):
+    import threading
+    from stable_audio_wanderer.vae.native_runtime import request_once
+    script = tmp_path/'waiting.py'
+    script.write_text('import time\ntime.sleep(30)\n')
+    popen = subprocess.Popen
+    processes = []
+    def launch(*a, **kwargs):
+        process = popen([sys.executable,str(script)], **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr('stable_audio_wanderer.vae.native_runtime.subprocess.Popen', launch)
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(RuntimeError, match='cancelled'):
+        request_once(sys.executable,'download_same_s',{},cancel_event=cancel)
+    assert processes[0].poll() is not None

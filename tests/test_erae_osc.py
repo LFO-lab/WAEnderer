@@ -14,7 +14,7 @@ class Controller:
         self.Z_concat = SimpleNamespace(shape=(100, 256))
         self.latent_decoder = SimpleNamespace(supported_windows=(2, 4, 8, 32))
         self.nav = SimpleNamespace(set_cursor_index=self.selections.append)
-        self.state = dict(running=True, mode='random', valid=True, index=7,
+        self.state = dict(running=True, mode='wander', valid=True, index=7,
                           generation=2, requested_window=8, active_window=4,
                           transition='staging', window_mode='fixed', error='')
 
@@ -140,7 +140,7 @@ def test_lightweight_snapshot_never_uses_producer_index():
     c._lock = threading.Lock()
     c._running = threading.Event()
     c._running.set()
-    c._active_mode = c.selected_mode = 'random'
+    c._active_mode = c.selected_mode = 'wander'
     c._requested_window = 8
     c._requested_generation = 4
     c._generation_windows = {2: 4, 4: 8}

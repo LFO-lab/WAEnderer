@@ -59,10 +59,10 @@ class ReplayNavigation:
         self.z = z
         self.index = 0
 
-    def has_variant(self, mode): return mode in ('random', 'reorganized')
+    def has_variant(self, mode): return mode in ('wander', 'reorganized')
     def set_policy_variant(self, mode): return self.has_variant(mode)
     def get_active_jump_rate(self, variant=None): return 0.0
-    def get_random_controls(self): return {}
+    def get_wander_controls(self): return {}
     def get_state(self): return {'policy_index': self.index, 'nearest_index': self.index}
     def set_faders(self, values): self.index = int(float(values[0]) * (len(self.z)-1))
     def step_with_faders(self, values):
@@ -329,9 +329,9 @@ if __name__ == '__main__':
     parser.add_argument('--vae-id', default='same_s', choices=['same_s','stable_audio_open','ear_vae_44k','ear_vae_48k'], help='Synthetic model; corpus selects its own VAE')
     add_selection_arguments(parser)
     parser.add_argument('--windows', nargs='+', type=int, default=list(range(2,33,2)), help='Fixed windows in the claimed combined profile')
-    parser.add_argument('--modes', nargs='+', choices=['random','manual','reorganized'], default=['random','manual','reorganized'])
+    parser.add_argument('--modes', nargs='+', choices=['wander','manual','reorganized'], default=['wander','manual','reorganized'])
     parser.add_argument('--no-adaptive', action='store_true', help='Restrict profile to its fixed windows')
-    parser.add_argument('--initial-mode', choices=['random','manual','reorganized'], default='random')
+    parser.add_argument('--initial-mode', choices=['wander','manual','reorganized'], default='wander')
     parser.add_argument('--navigation', choices=['replay','production'], default='replay')
     parser.add_argument('--require-zero-underruns', action='store_true', help='Exit nonzero if any buffer or device underrun occurs')
     parser.add_argument('--audio-device', help='Explicit output device name; muted hardware callback instead of software clock')

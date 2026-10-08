@@ -80,3 +80,23 @@ The beta handoff still needs a new-machine dependency installation, the supplied
 corpus/bundle pair, browser workflow, output-device integration and listening.
 A package build and short HTTP startup check verify distribution structure and
 launch only. They do not verify encoding, model inference or audible performance.
+
+## SAME-S encoded successfully but no decoder is selectable
+
+A missing packaged `resources/same_s/decoder.json` means ONNX has not been prepared
+or installed; it does not mean the native PyTorch decoder needs an ONNX artifact.
+Native discovery looks for `model_config.json` and `model.safetensors` at the
+pinned SAME-S revision, in the decoder interpreter's Hugging Face cache. Earlier
+encoders could use a different revision or an upstream Stable Audio 3 fallback.
+A separate native interpreter, user account or cache configuration can also make
+weights unavailable to Perform despite successful encoding elsewhere.
+
+Read the full native choice detail: it now lists the expected revision, missing
+files, cache directory and a model-specific download command. Click **Download SAME-S weights** in Perform to fetch and validate the pinned
+checkpoint in the configured decoder interpreter. This refreshes availability
+without loading a corpus or starting playback. Alternatively, run the diagnostic
+command in the same environment/user/cache as the decoder, then refresh availability.
+If cache lookup itself fails, its error is reported separately. Reinstall/update
+and restart the server if the installed package still shows only the old generic
+“Native checkpoint is missing” message. Installing new code does not update an
+already running process or an older non-editable package automatically.

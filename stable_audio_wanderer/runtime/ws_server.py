@@ -443,7 +443,7 @@ class WSBroadcaster:
                 "recompose": nav_state.get("recompose", {}),
                 "policy_v2": nav_state.get("policy_v2", {}),
                 "reorganized": nav_state.get("reorganized", {}),
-                "mode": "random",
+                "mode": "wander",
             },
             "controls": nav_state["controls"],
         }
@@ -557,7 +557,7 @@ class WSBroadcaster:
             if self._manual_file_ids is not None:
                 manual_file_ids = self._manual_file_ids[indices].tolist()
 
-        nav_mode = "random"
+        nav_mode = "wander"
         if self._extra_state_provider is not None:
             try:
                 extra = self._extra_state_provider()
@@ -638,11 +638,11 @@ class WSBroadcaster:
                 except Exception as e:
                     print(f"[ws] Error in custom message handler: {e}")
             
-            if msg_type in ("random_control", "control"):
-                # Random control update (with backward-compatible alias "control")
+            if msg_type in ("wander_control", "random_control", "control"):
+                # Wander control update (with backward-compatible alias "control")
                 controls = data.get("controls", {})
                 if isinstance(controls, dict):
-                    self.nav.set_random_controls(**controls)
+                    self.nav.set_wander_controls(**controls)
 
             elif msg_type == "reorganized_control":
                 controls = data.get("controls", {})

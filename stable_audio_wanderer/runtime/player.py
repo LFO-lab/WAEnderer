@@ -6,6 +6,7 @@ import os
 # Fix OpenMP duplicate library issue on macOS (must be set before importing faiss)
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+from ..navigation_modes import normalize_mode
 import numpy as np
 import threading
 from dataclasses import dataclass
@@ -61,7 +62,7 @@ class LatentNavigationEngine:
     V2_MODEL_BLEND = 0.65
     V2_REPEAT_WINDOW = 32
     V2_ENTRY_NOVELTY_WEIGHT = 0.80
-    POLICY_VARIANTS = ("random", "reorganized")
+    POLICY_VARIANTS = ("wander", "reorganized")
 
     def __init__(
         self,
@@ -166,11 +167,11 @@ class LatentNavigationEngine:
         self.policy_sample = bool(policy_sample)
 
         # Control parameters.
-        variant_default = "reorganized" if bool(policy_v2_enabled) else "random"
+        variant_default = "reorganized" if bool(policy_v2_enabled) else "wander"
         if policy_variant is None:
             self.policy_variant = variant_default
         else:
-            variant_name = str(policy_variant).strip().lower()
+            variant_name = normalize_mode(policy_variant)
             self.policy_variant = (
                 variant_name if variant_name in self.POLICY_VARIANTS else variant_default
             )
@@ -192,7 +193,7 @@ class LatentNavigationEngine:
         self.policy_recompose_enabled = bool(policy_recompose_enabled)
         self.policy_v2_enabled = bool(policy_v2_enabled)
         self.policy_v2_temperature = max(1e-3, float(policy_v2_temperature))
-        self._prev_random_control_vector = self._runtime_control_vector()
+        self._prev_wander_control_vector = self._runtime_control_vector()
         self._prev_reorganized_control_vector = self._reorganized_control_vector()
         self._controls_dirty = False
 
@@ -526,7 +527,7 @@ class LatentNavigationEngine:
     _CONTROL_CHANGE_THRESHOLD = 0.05
 
     def set_policy_variant(self, variant: str) -> bool:
-        variant_name = str(variant).strip().lower()
+        variant_name = normalize_mode(variant)
         if variant_name not in self.POLICY_VARIANTS:
             return False
         with self._lock:
@@ -549,8 +550,8 @@ class LatentNavigationEngine:
             return str(self.policy_variant)
 
     def has_variant(self, variant: str) -> bool:
-        variant_name = str(variant).strip().lower()
-        if variant_name == "random":
+        variant_name = normalize_mode(variant)
+        if variant_name == "wander":
             return True
         if variant_name == "reorganized":
             return bool(self.policy_v2_enabled and self._v2_ready)
@@ -558,13 +559,20 @@ class LatentNavigationEngine:
 
     def get_active_jump_rate(self, variant: Optional[str] = None) -> float:
         variant_name = (
-            str(variant).strip().lower() if variant is not None else self.policy_variant
+            normalize_mode(variant) if variant is not None else self.policy_variant
         )
         if variant_name == "reorganized":
             return float(self.ctrl_reorg_jump_rate)
         return float(self.ctrl_jump_rate)
 
-    def set_random_controls(
+    def set_random_controls(self, **controls):
+        """Compatibility alias for controllers predating Wander."""
+        return self.set_wander_controls(**controls)
+
+    def get_random_controls(self):
+        return self.get_wander_controls()
+
+    def set_wander_controls(
         self,
         phrase_scale=None,
         jump_rate=None,
@@ -589,13 +597,13 @@ class LatentNavigationEngine:
 
             new_vec = self._runtime_control_vector()
             if (
-                np.max(np.abs(new_vec - self._prev_random_control_vector))
+                np.max(np.abs(new_vec - self._prev_wander_control_vector))
                 > self._CONTROL_CHANGE_THRESHOLD
             ):
                 self._controls_dirty = True
-                self._prev_random_control_vector = new_vec
+                self._prev_wander_control_vector = new_vec
 
-    def get_random_controls(self) -> dict:
+    def get_wander_controls(self) -> dict:
         """Return an atomic snapshot for decoder-window source planning."""
         with self._lock:
             return {
@@ -1919,7 +1927,7 @@ class LatentNavigationEngine:
                 "current_file_id": self._current_file_id,
                 "recent_indices": list(self._recent_indices),
                 "controls": {
-                    "random": {
+                    "wander": {
                         "phrase_scale": self.ctrl_phrase_scale,
                         "jump_rate": self.ctrl_jump_rate,
                         "timbre_lock": self.ctrl_timbre_lock,
@@ -1935,7 +1943,7 @@ class LatentNavigationEngine:
                         "novelty": self.ctrl_novelty,
                         "crossfile": self.ctrl_reorg_crossfile,
                     },
-                    # Backward-compatible flat random controls.
+                    # Backward-compatible flat wander controls.
                     "phrase_scale": self.ctrl_phrase_scale,
                     "jump_rate": self.ctrl_jump_rate,
                     "timbre_lock": self.ctrl_timbre_lock,

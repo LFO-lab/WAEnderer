@@ -193,6 +193,7 @@ def test_discovery_correlates_same_corpus_source_edits_off_thread(tmp_path,monke
     pipeline=PipelineManager(preparation_config={'store_dir':str(tmp_path/'store')})
     pipeline.set_broadcaster(SimpleNamespace(broadcast_pipeline_message=lambda x:(events.append(x),done.set())))
     monkeypatch.setattr('stable_audio_wanderer.vae.corpus_decoder.corpus_decoder_spec',lambda *a,**k:{'vae_id':'ear_vae_44k'})
+    monkeypatch.setattr('stable_audio_wanderer.vae.corpus_decoder.corpus_audio_summary',lambda *a:{})
     monkeypatch.setattr('stable_audio_wanderer.vae.decoder_availability.decoder_availability',lambda *a,**k:[{'model_identity':'source'}])
     pipeline.handle_message({'type':'pipeline_list_decoders','corpus_dir':'corpus','request_id':'client:2','fingerprint':'source-v2'})
     assert done.wait(2)

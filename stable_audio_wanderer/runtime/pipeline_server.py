@@ -28,6 +28,8 @@ class PipelineManager:
                  decoder_resource_dir=None, preparation_config=None):
         self.pretrained = pretrained  # legacy fallback
         self.phase = "idle"
+        self._native_download_busy = False
+        self._native_download_cancel = threading.Event()
         self._vae = None
         self._corpus_dir: Optional[str] = None
         self._cancel = threading.Event()
@@ -90,11 +92,13 @@ class PipelineManager:
         """Route incoming pipeline_* WebSocket messages."""
         msg_type = data.get("type", "")
 
-        if self._preparation.busy and msg_type in ('pipeline_start_perform', 'pipeline_start_preprocess', 'pipeline_start_train', 'pipeline_prepare_decoder'):
+        if (self._preparation.busy or self._native_download_busy) and msg_type in ('pipeline_start_perform', 'pipeline_start_preprocess', 'pipeline_start_train', 'pipeline_prepare_decoder', 'pipeline_download_same_s', 'pipeline_stop_perform'):
             self._emit({'type': 'pipeline_state', 'phase': self.phase, 'preparation': self._preparation.snapshot(),
                         'error': 'Decoder preparation owns the pipeline; wait for completion'})
             return
-        if msg_type == 'pipeline_prepare_decoder':
+        if msg_type == 'pipeline_download_same_s':
+            self._handle_download_same_s(data)
+        elif msg_type == 'pipeline_prepare_decoder':
             self._handle_prepare_decoder(data)
         elif msg_type == "pipeline_list_decoders":
             if data.get("retry_validation") is True and self.phase == "idle":
@@ -190,6 +194,43 @@ class PipelineManager:
         except Exception as exc:
             response.update(corpus_dir=corpus_dir,decoders=[],error=str(exc))
         self._emit(response)
+
+    def _handle_download_same_s(self, data):
+        if self.phase != 'idle' or self._preparation.busy:
+            self._emit({'type':'pipeline_state', 'phase':self.phase, 'error':'Stop the pipeline before downloading weights'})
+            return
+        try:
+            from ..vae.native_runtime import native_config
+            python = native_config('same_s', {})['decoder_python']
+            corpus = data.get('corpus_dir') or self._corpus_dir
+            self.phase = 'preparing'
+            self._native_download_busy = True
+            self._native_download_cancel.clear()
+            self._emit({'type':'pipeline_phase_change', 'phase':self.phase})
+            self._emit({'type':'pipeline_native_weights', 'status':'running',
+                        'detail':'Downloading/validating pinned SAME-S weights in the decoder environment. This may take several minutes.'})
+            self._discovery_pool.submit(self._download_same_s_worker, python, corpus)
+        except Exception as exc:
+            self.phase = 'idle'
+            self._native_download_busy = False
+            self._emit({'type':'pipeline_state', 'phase':self.phase, 'error':str(exc)})
+
+    def _download_same_s_worker(self, python, corpus):
+        from ..vae.native_runtime import request_once
+        try:
+            result = request_once(python, 'download_same_s', {}, timeout=1800, cancel_event=self._native_download_cancel)
+        except Exception as exc:
+            result = {'ready':False, 'error':str(exc)}
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self.phase = 'idle'
+            self._native_download_busy = False
+            self._runtime_failure = None
+            self._emit({'type':'pipeline_phase_change', 'phase':'idle'})
+            self._emit({'type':'pipeline_native_weights', 'status':'ready' if result.get('ready') else 'failed',
+                        'detail':'SAME-S weights verified. Choose a PyTorch decoder.' if result.get('ready') else result.get('error','Weight download failed')})
+        self._list_decoders({'corpus_dir':corpus})
 
     def _handle_prepare_decoder(self, data):
         if self.phase != 'idle':
@@ -666,6 +707,7 @@ class PipelineManager:
         """Shut down producers before releasing their model resources."""
         with self._lifecycle_lock:
             self._closed = True
+            self._native_download_cancel.set()
         self._preparation.close()
         self._discovery_pool.shutdown(wait=True, cancel_futures=True)
         with self._lifecycle_lock:

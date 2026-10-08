@@ -22,7 +22,7 @@ Redémarrer le serveur puis recharger la page sans cache. Choisir le corpus, ouv
 
 ## Vérification sur Rack
 
-Corpus fourni : `corpus/Rack_20260428_181107/corpus.npz`, Stable Audio Open, 152 463 frames × 64 dimensions, 44,1 kHz. Les politiques Random et Reorganized et l’artefact Manual existants sont utilisés.
+Corpus fourni : `corpus/Rack_20260428_181107/corpus.npz`, Stable Audio Open, 152 463 frames × 64 dimensions, 44,1 kHz. Les politiques Wander et Reorganized et l’artefact Manual existants sont utilisés.
 
 - [Essai du pipeline complet](multi_vae_rack_pipeline.json), environnement habituel Torch 2.13.0, MPS, haut-parleurs MacBook Pro à volume nul : chargement via `PipelineManager`, préparation des 16 fenêtres, puis 10 secondes à T8 dans chacun des trois modes. **Zéro underrun**, 1243 callbacks, fermeture et libération effectuées.
 - [Essai de changements rapides](multi_vae_rack_mps.json), environnement natif séparé Torch 2.7.1, MPS, 180 secondes, changement toutes les 3 secondes, T2–T32 et adaptive : **534 sous-alimentations PCM**, zéro incident de périphérique. Ce stress test ne passe pas le critère temps réel. Son ancien calcul de budget SAME-S a été corrigé explicitement dans le rapport pour le ratio SAO ; les mesures brutes et compteurs sont conservés.

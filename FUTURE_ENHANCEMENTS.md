@@ -32,5 +32,5 @@ Possible augmentations:
 
 Where this is useful:
 - Better corpus connectivity: more neighboring examples can reduce isolated latent pockets.
-- Smoother navigation: random/reorganized traversal may find more plausible bridges between materials.
+- Smoother navigation: wander/reorganized traversal may find more plausible bridges between materials.
 - More robust retrieval: related audio states can stay closer together despite minor acoustic variation.

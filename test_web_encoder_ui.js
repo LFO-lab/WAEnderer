@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const elements = new Map();
-for (const id of ['pp-vae-select', 'pp-vae-path-group', 'pp-model-status', 'pp-start-btn', 'pp-progress-text', 'pp-model-setup']) {
+for (const id of ['pp-vae-select', 'pp-vae-path-group', 'pp-model-status', 'pp-start-btn', 'pp-progress-text', 'pp-model-setup', 'perform-download-same-s']) {
     elements.set(id, {value:'same_s', options:[], selectedIndex:0, textContent:'', disabled:false,
         addEventListener(){}, classList:{toggle(){}}, appendChild(option){this.options.push(option);},
         set innerHTML(value){this.options=[];}});
@@ -31,3 +31,9 @@ vm.runInContext("onVAEList({vaes:[{vae_id:'same_s',display_name:'SAME-S',availab
 assert.match(elements.get('pp-vae-select').options[1].textContent,/install required/);
 assert.equal(elements.get('pp-model-setup').textContent,'Install optional profile');
 assert.equal(elements.get('pp-start-btn').disabled,true);
+
+vm.runInContext("decoderVae='same_s'; decoderChoices=[{backend:'pytorch',reason_codes:['missing_weights']}]; updateDecoderControls();",context);
+assert.equal(elements.get('perform-download-same-s').hidden,false);
+assert.equal(elements.get('perform-download-same-s').disabled,false);
+vm.runInContext("pipelinePhase='preparing'; updateDecoderControls();",context);
+assert.equal(elements.get('perform-download-same-s').disabled,true);

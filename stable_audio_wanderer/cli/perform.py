@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Real-time decoding with selectable manual/random/reorganized navigation modes.
+Real-time decoding with selectable manual/wander/reorganized navigation modes.
 """
 
 import os
@@ -55,18 +55,18 @@ def smooth_window_log2(
 
 def load_navigation_engine(
     data: dict,
-    random_model_path: str = None,
-    random_temperature: float = 1.0,
-    random_sample: bool = True,
+    wander_model_path: str = None,
+    wander_temperature: float = 1.0,
+    wander_sample: bool = True,
     desc_weighted: np.ndarray = None,
-    random_timbre_swap: bool = True,
-    random_recompose: bool = True,
-    random_phrase_scale: float = 0.40,
-    random_jump_rate: float = 0.55,
-    random_timbre_lock: float = 0.55,
-    random_drift: float = 0.5,
-    random_repeat_avoid: float = 0.75,
-    random_crossfile: float = 0.70,
+    wander_timbre_swap: bool = True,
+    wander_recompose: bool = True,
+    wander_phrase_scale: float = 0.40,
+    wander_jump_rate: float = 0.55,
+    wander_timbre_lock: float = 0.55,
+    wander_drift: float = 0.5,
+    wander_repeat_avoid: float = 0.75,
+    wander_crossfile: float = 0.70,
     reorganized_enabled: bool = False,
     reorganized_artifact: dict = None,
     reorganized_model_path: str = None,
@@ -77,7 +77,7 @@ def load_navigation_engine(
     reorganized_evolution: float = 0.60,
     reorganized_novelty: float = 0.50,
     reorganized_crossfile: float = 0.70,
-    policy_variant: str = "random",
+    policy_variant: str = "wander",
     latent_frame_seconds: float = 0.0465,
 ):
     """Factory function to create the LatentNavigationEngine."""
@@ -98,17 +98,17 @@ def load_navigation_engine(
         geometry=geometry,
         file_offsets=file_offsets,
         desc_weighted=desc_weighted,
-        policy_path=random_model_path,
-        policy_temperature=random_temperature,
-        policy_sample=random_sample,
-        policy_timbre_swap_enabled=random_timbre_swap,
-        policy_recompose_enabled=random_recompose,
-        control_phrase_scale=random_phrase_scale,
-        control_jump_rate=random_jump_rate,
-        control_timbre_lock=random_timbre_lock,
-        control_drift=random_drift,
-        control_repeat_avoid=random_repeat_avoid,
-        control_crossfile=random_crossfile,
+        policy_path=wander_model_path,
+        policy_temperature=wander_temperature,
+        policy_sample=wander_sample,
+        policy_timbre_swap_enabled=wander_timbre_swap,
+        policy_recompose_enabled=wander_recompose,
+        control_phrase_scale=wander_phrase_scale,
+        control_jump_rate=wander_jump_rate,
+        control_timbre_lock=wander_timbre_lock,
+        control_drift=wander_drift,
+        control_repeat_avoid=wander_repeat_avoid,
+        control_crossfile=wander_crossfile,
         control_morph_len=reorganized_morph_len,
         control_reorg_jump_rate=reorganized_jump_rate,
         control_reorg_timbre_lock=reorganized_timbre_lock,
@@ -437,8 +437,9 @@ class TransportController:
         return bool(self._running.is_set())
 
     def set_mode(self, mode: str) -> Tuple[bool, str]:
-        mode = str(mode)
-        if mode not in ("random", "reorganized", "manual"):
+        from stable_audio_wanderer.navigation_modes import normalize_mode
+        mode = normalize_mode(mode)
+        if mode not in ("wander", "reorganized", "manual"):
             return False, f"invalid mode '{mode}'"
         if mode == "reorganized" and not self.nav.has_variant("reorganized"):
             return False, "reorganized mode unavailable (missing units artifact)"
@@ -1122,10 +1123,10 @@ class TransportController:
                 print(f"[ws] Unknown transport action: {action}")
                 return False
 
-        if msg_type in ("random_control", "control"):
+        if msg_type in ("wander_control", "random_control", "control"):
             controls = data.get("controls", {})
             if isinstance(controls, dict):
-                self.nav.set_random_controls(**controls)
+                self.nav.set_wander_controls(**controls)
             return True
 
         if msg_type == "reorganized_control":
@@ -1174,7 +1175,7 @@ class TransportController:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Real-time decoding with selectable manual/random/reorganized navigation."
+        description="Real-time decoding with selectable manual/wander/reorganized navigation."
     )
     ap.add_argument(
         "--corpus_dir", required=True, help="Directory containing corpus.npz"
@@ -1204,8 +1205,9 @@ def main():
     )
     ap.add_argument(
         "--initial_navigation_mode",
-        choices=["manual", "random", "reorganized"],
-        default="random",
+        type=lambda value: "wander" if value == "random" else value,
+        choices=["manual", "wander", "reorganized"],
+        default="wander",
         help="Navigation mode selected at startup.",
     )
     ap.add_argument(
@@ -1294,35 +1296,35 @@ def main():
     ap.add_argument("--manifold_n_global", type=int, default=32)
     ap.add_argument("--manifold_sparse_quantile", type=float, default=0.75)
 
-    # Random model/runtime arguments.
+    # Wander model/runtime arguments.
     ap.add_argument(
-        "--random_model_path",
+        "--wander_model_path", "--random_model_path",
         default=None,
-        help="Random mode checkpoint (.pt). Defaults to latest latent_policy_*.pt in --corpus_dir.",
+        help="Wander mode checkpoint (.pt). Defaults to latest latent_policy_*.pt in --corpus_dir.",
     )
     ap.add_argument(
-        "--random_temperature",
+        "--wander_temperature", "--random_temperature",
         type=float,
         default=1.0,
-        help="Base temperature for random mode policy sampling.",
+        help="Base temperature for wander mode policy sampling.",
     )
     ap.add_argument(
-        "--random_sample",
+        "--wander_sample", "--random_sample",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Stochastically sample in random mode (default: yes).",
+        help="Stochastically sample in wander mode (default: yes).",
     )
     ap.add_argument(
-        "--random_timbre_swap",
+        "--wander_timbre_swap", "--random_timbre_swap",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable corpus-locked timbre-aware swapping in random mode.",
+        help="Enable corpus-locked timbre-aware swapping in wander mode.",
     )
     ap.add_argument(
-        "--random_recompose",
+        "--wander_recompose", "--random_recompose",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable short-unit recomposition in random mode.",
+        help="Enable short-unit recomposition in wander mode.",
     )
 
     # Reorganized model/runtime arguments.
@@ -1343,7 +1345,7 @@ def main():
         help="Sampling temperature for reorganized unit selection.",
     )
 
-    # Random control parameters.
+    # Wander control parameters.
     ap.add_argument(
         "--ctrl_phrase_scale",
         type=float,
@@ -1419,7 +1421,7 @@ def main():
         help="Reorganized mode cross-file allowance.",
     )
 
-    # Window size for random/reorganized batched decoding.
+    # Window size for wander/reorganized batched decoding.
     ap.add_argument(
         "--window_size",
         type=int,
@@ -1467,15 +1469,15 @@ def main():
     )
     print(f"[info] Using manual artifact: {manual_artifact_path}")
 
-    random_model_path = _resolve_optional_model_path(
-        args.corpus_dir, args.random_model_path, "latent_policy_*.pt"
+    wander_model_path = _resolve_optional_model_path(
+        args.corpus_dir, args.wander_model_path, "latent_policy_*.pt"
     )
-    if random_model_path is None:
+    if wander_model_path is None:
         print(
-            "[warn] No random model checkpoint found; random mode will use heuristic fallback."
+            "[warn] No wander model checkpoint found; wander mode will use heuristic fallback."
         )
     else:
-        print(f"[info] Using random model checkpoint: {random_model_path}")
+        print(f"[info] Using wander model checkpoint: {wander_model_path}")
 
     reorganized_units_path = _resolve_reorganized_units_path(
         args.corpus_dir, args.reorganized_units_path
@@ -1508,18 +1510,18 @@ def main():
 
     nav = load_navigation_engine(
         data=data,
-        random_model_path=random_model_path,
-        random_temperature=args.random_temperature,
-        random_sample=bool(args.random_sample),
+        wander_model_path=wander_model_path,
+        wander_temperature=args.wander_temperature,
+        wander_sample=bool(args.wander_sample),
         desc_weighted=manual_data["manual_desc_weighted"],
-        random_timbre_swap=bool(args.random_timbre_swap),
-        random_recompose=bool(args.random_recompose),
-        random_phrase_scale=args.ctrl_phrase_scale,
-        random_jump_rate=args.ctrl_jump_rate,
-        random_timbre_lock=args.ctrl_timbre_lock,
-        random_drift=args.ctrl_drift,
-        random_repeat_avoid=args.ctrl_repeat_avoid,
-        random_crossfile=args.ctrl_crossfile,
+        wander_timbre_swap=bool(args.wander_timbre_swap),
+        wander_recompose=bool(args.wander_recompose),
+        wander_phrase_scale=args.ctrl_phrase_scale,
+        wander_jump_rate=args.ctrl_jump_rate,
+        wander_timbre_lock=args.ctrl_timbre_lock,
+        wander_drift=args.ctrl_drift,
+        wander_repeat_avoid=args.ctrl_repeat_avoid,
+        wander_crossfile=args.ctrl_crossfile,
         reorganized_enabled=bool(v2_data is not None),
         reorganized_artifact=v2_data,
         reorganized_model_path=reorganized_model_path,
@@ -1532,8 +1534,8 @@ def main():
         reorganized_crossfile=args.ctrl_reorg_crossfile,
         policy_variant=(
             args.initial_navigation_mode
-            if args.initial_navigation_mode in ("random", "reorganized")
-            else "random"
+            if args.initial_navigation_mode in ("wander", "reorganized")
+            else "wander"
         ),
         latent_frame_seconds=latent_frame_sec,
     )
@@ -1641,7 +1643,7 @@ def main():
     print(f"[info] Running with {nav.N} segments")
     print(f"[info] Selected mode: {args.initial_navigation_mode}")
     print(
-        "[info] Random controls: "
+        "[info] Wander controls: "
         f"phrase_scale={args.ctrl_phrase_scale}, jump_rate={args.ctrl_jump_rate}, "
         f"timbre_lock={args.ctrl_timbre_lock}, drift={args.ctrl_drift}, "
         f"repeat_avoid={args.ctrl_repeat_avoid}, crossfile={args.ctrl_crossfile}"
@@ -1653,11 +1655,11 @@ def main():
         f"novelty={args.ctrl_novelty}, crossfile={args.ctrl_reorg_crossfile}"
     )
     print(
-        f"[info] Random timbre swap: enabled={bool(args.random_timbre_swap)}, "
+        f"[info] Wander timbre swap: enabled={bool(args.wander_timbre_swap)}, "
         f"descriptors={'yes' if manual_data['manual_desc_weighted'] is not None else 'no'}"
     )
     print(
-        f"[info] Random recomposition: enabled={bool(args.random_recompose)}"
+        f"[info] Wander recomposition: enabled={bool(args.wander_recompose)}"
     )
     print(
         "[info] Reorganized availability: "

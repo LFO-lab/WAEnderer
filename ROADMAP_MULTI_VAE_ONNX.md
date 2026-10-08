@@ -117,7 +117,7 @@ Implementation plan: [Phase 5 plan](docs/MULTI_VAE_ONNX_PHASE5_PLAN.md). Validat
 - [x] Use BurntMemory for SAME-S and Rack for Stable Audio Open. EAR CPU comparisons use checkpoint-bound inputs: verified EAR 44k fixture and receipt-backed EAR 48k corpus, in addition to synthetic probes. Content coverage remains narrow.
 - [x] Keep functional decoding results separate from real-time qualification. CPU functionality can pass despite missed audio deadlines.
 - [ ] Measure decode p50/p95/p99, preparation, command transitions, memory, CPU usage, buffer underruns and device underruns for every backend/device being claimed as real-time capable.
-- [ ] Run at least ten minutes of steady PCM per claimed combined backend/device/hardware profile, covering Random/Manual/Reorganized, fixed/adaptive windows, restarts and engine changes on the actual audio device.
+- [ ] Run at least ten minutes of steady PCM per claimed combined backend/device/hardware profile, covering Wander/Manual/Reorganized, fixed/adaptive windows, restarts and engine changes on the actual audio device.
 - [x] Obtain comparative listening feedback for new ONNX CPU outputs: the user reported no audible degradation for one exact CPU pair per VAE. GPU pairs remain pending; approval is never transferred between models or renders.
 - [x] Keep failed tests and performance limits explicit. ONNX export success alone is not proof of sufficient CPU throughput.
 

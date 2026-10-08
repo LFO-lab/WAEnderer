@@ -32,6 +32,7 @@ class FakeElement {
         this.listeners = {};
         this.classList = new FakeClassList();
     }
+    setAttribute(name, value) { this[name] = value; }
     addEventListener(type, callback) { this.listeners[type] = callback; }
 }
 
@@ -90,7 +91,7 @@ assert.deepEqual(sent.pop(), {
 
 vm.runInContext(`handleMessage({
     type: 'state',
-    navigation: {mode: 'random', index: 3, velocity: 0, file_id: 1},
+    navigation: {mode: 'wander', index: 3, velocity: 0, file_id: 1},
     transport: {running: false},
     wander_render: {
         requested_frame_source: 'morphology_graph',
@@ -119,13 +120,13 @@ vm.runInContext(`handleMessage({
     manual_positions_3d: [[0, 0, 0], [0.5, 0.5, 0.5], [1, 1, 1]],
     manual_color_values: [0, 0.5, 1],
     manual_file_ids: [0, 1, 1],
-    navigation_mode: 'random'
+    navigation_mode: 'wander'
 });`, context);
 
 const randomPlaybackState = `{
     type: 'state',
     navigation: {
-        mode: 'random', clock: 'audio_render', generation: 4,
+        mode: 'wander', clock: 'audio_render', generation: 4,
         index: 2, velocity: 0.75, file_id: 1,
         position_3d: [1, 1, 1],
         trajectory_3d: [[0, 0, 0], [0, 0, 0], [1, 1, 1]]
@@ -184,20 +185,20 @@ assert.deepEqual(sent.pop(), {
     faders: [1, 1, 1, 1],
 });
 
-element("mode-random").listeners.click();
+element("mode-wander").listeners.click();
 assert.deepEqual(sent.pop(), {
     type: "transport",
     action: "set_mode",
-    mode: "random",
+    mode: "wander",
 });
 
-element("btn-random-reset").listeners.click();
+element("btn-wander-reset").listeners.click();
 assert.deepEqual(sent.pop(), { type: "reset" });
 
 const html = fs.readFileSync("web/index.html", "utf8");
-assert.match(html, /id="mode-random"[^>]*>Wander<\/button>/);
+assert.match(html, /id="mode-wander"[^>]*>Wander<\/button>/);
 assert.match(html, /<h2>Wander<\/h2>/);
-assert.match(html, /id="btn-random-reset">Reset Wander<\/button>/);
+assert.match(html, /id="btn-wander-reset">Reset Wander<\/button>/);
 assert.match(html, /id="wander-frame-source"/);
 assert.match(html, /value="k_nearest" selected>K Nearest<\/option>/);
 assert.match(html, /value="contiguous">Contiguous<\/option>/);
@@ -216,6 +217,6 @@ for (const id of ["wander-frame-order", "wander-latent-colour"]) {
 assert.match(html, /Latent Colour \(Dither\)/);
 assert.match(html, /id="manual-dither"/, "legacy Manual Dither remains present");
 assert.match(html, /id="perform-decoder-window"/, "Decoder T remains global");
-assert.match(html, /<option value="random">Random Only<\/option>/, "training terminology stays compatible");
+assert.match(html, /<option value="wander">Wander Only<\/option>/, "training uses the canonical Wander name");
 
 console.log("Web Wander rendering controls contract passed");

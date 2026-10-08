@@ -78,7 +78,7 @@ class DecoderTransportController:
         unit_end_idx: Optional[np.ndarray] = None,
         unit_graph_neighbors: Optional[np.ndarray] = None,
         unit_graph_scores: Optional[np.ndarray] = None,
-        initial_mode: str = "random",
+        initial_mode: str = "wander",
         initial_window: int = 2,
     ) -> None:
         self.nav = nav
@@ -177,8 +177,9 @@ class DecoderTransportController:
         return self._running.is_set()
 
     def set_mode(self, mode: str) -> Tuple[bool, str]:
-        mode = str(mode)
-        if mode not in ("random", "reorganized", "manual"):
+        from stable_audio_wanderer.navigation_modes import normalize_mode
+        mode = normalize_mode(mode)
+        if mode not in ("wander", "reorganized", "manual"):
             return False, f"invalid mode {mode!r}"
         if mode == "reorganized" and not self.nav.has_variant("reorganized"):
             return False, "reorganized mode unavailable (missing units artifact)"
@@ -309,7 +310,7 @@ class DecoderTransportController:
             self.set_decoder_window(target, adaptive=True)
 
     def set_wander_render_controls(self, controls) -> Tuple[bool, str]:
-        """Apply decoder-window rendering controls without renaming Random policy APIs."""
+        """Apply decoder-window rendering controls without renaming Wander policy APIs."""
         if not isinstance(controls, dict):
             return False, "wander_render controls must be an object"
 
@@ -355,7 +356,7 @@ class DecoderTransportController:
             if source_changed:
                 self._wander_reset_serial += 1
 
-            if self._running.is_set() and self._active_mode == "random":
+            if self._running.is_set() and self._active_mode == "wander":
                 self._generation_counter += 1
                 self._requested_generation = self._generation_counter
                 self._generation_windows[self._requested_generation] = self._requested_window
@@ -374,7 +375,7 @@ class DecoderTransportController:
         self.nav.reset_policy(idx=idx)
         with self._lock:
             self._wander_reset_serial += 1
-            if self._running.is_set() and self._active_mode == "random":
+            if self._running.is_set() and self._active_mode == "wander":
                 self._generation_counter += 1
                 self._requested_generation = self._generation_counter
                 self._generation_windows[self._requested_generation] = self._requested_window
@@ -573,7 +574,7 @@ class DecoderTransportController:
         if reset_serial != planner_reset_serial:
             self.wander_planner.reset()
             planner_reset_serial = reset_serial
-        controls = self.nav.get_random_controls()
+        controls = self.nav.get_wander_controls()
         planned = self.wander_planner.plan(
             anchor_frame,
             window,
@@ -621,7 +622,7 @@ class DecoderTransportController:
         try:
             if mode == "manual":
                 request = self._manual_request(lane.generation, lane.window)
-            elif mode == "random":
+            elif mode == "wander":
                 request, lane.reset_serial = self._wander_request(
                     lane.generation, lane.window, lane.previous_generation, lane.reset_serial)
             else:
@@ -950,10 +951,10 @@ class DecoderTransportController:
             ok, message = self.set_wander_render_controls(data.get("controls", {}))
             print(f"[ws] wander render: {message}")
             return True
-        if msg_type in ("random_control", "control"):
+        if msg_type in ("wander_control", "random_control", "control"):
             controls = data.get("controls", {})
             if isinstance(controls, dict):
-                self.nav.set_random_controls(**controls)
+                self.nav.set_wander_controls(**controls)
             return True
         if msg_type == "reorganized_control":
             controls = data.get("controls", {})

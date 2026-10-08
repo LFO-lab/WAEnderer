@@ -6,7 +6,7 @@ A real-time latent space navigation instrument for exploring audio corpora. Audi
 
 - **Latent Navigation** - Explore audio corpora in continuous latent space
 - **Manual Navigation Mode** - 4-axis nearest-frame retrieval in descriptor embedding space (PCA or UMAP)
-- **Random Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
+- **Wander Morphologies Mode** - GRU-guided + corpus-locked timbre recomposition
 - **Reorganized Morphologies Mode** - Unit-graph sequencing with optional learned transition scorer
 - **Manifold-Constrained Generation** - Stay on the learned audio manifold with adaptive PCA projection
 - **Real-Time Decoding** - Torch in standalone mode; corpus-selected ONNX/PyTorch with normalized full-output overlap-add in the unified Web performance path
@@ -116,6 +116,11 @@ Log in with your own read-access [token](https://huggingface.co/settings/tokens)
 Do not share tokens between users. See the
 [official CLI guide](https://huggingface.co/docs/huggingface_hub/guides/cli).
 Select the optional encoder and click **Check models** after installation.
+
+If an older corpus has no selectable native SAME-S decoder, click **Download
+SAME-S weights** in Perform. The application downloads and validates the pinned
+checkpoint in the decoder environment, then refreshes availability. Native
+playback does not require a prepared ONNX artifact.
 
 Weights download automatically when encoding first starts if they are not cached.
 The browser displays the current file being downloaded, then encoder loading.
@@ -273,7 +278,7 @@ Outputs:
 
 ### 2. Train Policy
 
-Train navigation artifacts/models for manual, random, reorganized, or all modes.
+Train navigation artifacts/models for manual, wander, reorganized, or all modes.
 
 ```bash
 python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -282,9 +287,9 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
-| `--navigation_mode` | `all` | `manual`, `random`, `reorganized`, or `all` |
+| `--navigation_mode` | `all` | `manual`, `wander`, `reorganized`, or `all` |
 | `--manual_out_path` | `<corpus_dir>/manual_navigation.npz` | Output path for manual artifact |
-| `--random_out_path` | `<corpus_dir>/latent_policy_<timestamp>.pt` | Output path for random model checkpoint |
+| `--wander_out_path` | `<corpus_dir>/latent_policy_<timestamp>.pt` | Output path for wander model checkpoint |
 | `--reorganized_out_path` | `<corpus_dir>/policy_v2_<timestamp>.pt` | Output path for reorganized model checkpoint |
 | `--reorganized_units_path` | embedded / `<corpus_dir>/policy_v2_units.npz` | Reorganized unit artifact source |
 | `--manual_kdtree_leafsize` | 32 | Leaf size used when fitting manual `cKDTree` |
@@ -296,7 +301,7 @@ python bin/train_policy.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--seq_len` | 32 | Training sequence length |
 
 Outputs:
-- Random mode: `corpus/.../latent_policy_*.pt`
+- Wander mode: `corpus/.../latent_policy_*.pt`
 - Reorganized mode: `corpus/.../policy_v2_*.pt`
 - Manual mode: `corpus/.../manual_navigation.npz`
 - All mode: all artifacts
@@ -346,7 +351,7 @@ This creates a checkpoint like `corpus/.../policy_v2_YYYYMMDD_HHMMSS.pt` that ca
 ### 3. Perform
 
 The standalone command remains the original Torch workflow with selectable
-manual/random/reorganized navigation, OSC control, and WebSocket visualization:
+manual/wander/reorganized navigation, OSC control, and WebSocket visualization:
 
 ```bash
 python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
@@ -356,8 +361,8 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 |--------|---------|-------------|
 | `--corpus_dir` | required | Path to corpus directory |
 | `--manual_artifact` | auto from `<corpus_dir>` | Manual navigation artifact path |
-| `--initial_navigation_mode` | `random` | Initial selected mode (`manual`, `random`, or `reorganized`) |
-| `--random_model_path` | latest `latent_policy_*.pt` | Random mode model checkpoint |
+| `--initial_navigation_mode` | `wander` | Initial selected mode (`manual`, `wander`, or `reorganized`) |
+| `--wander_model_path` | latest `latent_policy_*.pt` | Wander mode model checkpoint |
 | `--reorganized_units_path` | `<corpus_dir>/policy_v2_units.npz` | Reorganized units artifact (required for reorganized mode) |
 | `--reorganized_model_path` | latest `policy_v2_*.pt` | Optional reorganized transition model |
 | `--reorganized_temperature` | 1.0 | Reorganized unit-selection sampling temperature |
@@ -370,23 +375,23 @@ python bin/perform.py --corpus_dir corpus/my_corpus_YYYYMMDD_HHMMSS
 | `--manual_buffer_ratio` | 0.15 | Manual target buffer ratio vs current chunk duration (higher = safer, higher latency) |
 | `--manual_fader_motion_threshold` | 0.01 | Max-abs fader delta treated as active motion |
 | `--autostart` | `false` | Start transport immediately on launch |
-| `--random_timbre_swap` | `true` | Enable corpus-locked timbre-aware seed swapping in random mode |
-| `--random_recompose` | `true` | Enable non-serial short-unit recomposition in random mode |
+| `--wander_timbre_swap` | `true` | Enable corpus-locked timbre-aware seed swapping in wander mode |
+| `--wander_recompose` | `true` | Enable non-serial short-unit recomposition in wander mode |
 | `--osc_port` | 9000 | OSC server port |
 | `--osc_debug` | `false` | Log incoming OSC messages, including unmapped paths |
 | `--ws_port` | 8765 | WebSocket server port |
 | `--output_gain` | 1.0 | Initial output gain |
 | `--smoothing` | 0.1 | Crossfade smoothing |
-| `--window_size` | 2 | Initial random/reorganized decode window size (frames) |
-| `--fixed_window` | false | Disable adaptive random/reorganized window sizing |
+| `--window_size` | 2 | Initial wander/reorganized decode window size (frames) |
+| `--fixed_window` | false | Disable adaptive wander/reorganized window sizing |
 | `--boundary_window_updates` | false | Apply adaptive window changes only on boundaries |
-| `--ctrl_phrase_scale` .. `--ctrl_crossfile` | random defaults | Random mode controls |
+| `--ctrl_phrase_scale` .. `--ctrl_crossfile` | wander defaults | Wander mode controls |
 | `--ctrl_morph_len` .. `--ctrl_reorg_crossfile` | reorganized defaults | Reorganized mode controls |
 
 Open `web/index.html` in a browser, choose a navigation tab, and press **Start Decode**.
 `perform.py` exits early if `manual_navigation.npz` is missing or invalid.
-If manual descriptor fields are unavailable, random timbre swap/recompose automatically falls back to baseline contiguous retrieval.
-If reorganized units are missing/invalid, reorganized mode is unavailable while manual/random continue to work.
+If manual descriptor fields are unavailable, wander timbre swap/recompose automatically falls back to baseline contiguous retrieval.
+If reorganized units are missing/invalid, reorganized mode is unavailable while manual/wander continue to work.
 
 #### Unified Web performance (corpus-selected VAE)
 
@@ -555,15 +560,15 @@ Audio Files
 
 ### OSC Messages (default port 9000)
 
-**Random Controls** (0.0 - 1.0):
+**Wander Controls** (0.0 - 1.0):
 ```
-/random/phrase_scale
-/random/jump_rate
-/random/timbre_lock
-/random/drift
-/random/repeat_avoid
-/random/crossfile
-/random/reset
+/wander/phrase_scale
+/wander/jump_rate
+/wander/timbre_lock
+/wander/drift
+/wander/repeat_avoid
+/wander/crossfile
+/wander/reset
 ```
 
 **Reorganized Controls** (0.0 - 1.0):
@@ -579,7 +584,7 @@ Audio Files
 
 Backward compatibility:
 ```
-/policy/* aliases to /random/*
+/policy/* and /random/* remain compatibility aliases for /wander/*
 ```
 
 **Decoder Controls** (0.0 - 1.0):
@@ -605,15 +610,15 @@ Backward compatibility:
 ```
 
 `/cursor` routing note:
-- In `random`/`reorganized` mode, `/cursor ...` controls latent cursor as before.
+- In `wander`/`reorganized` mode, `/cursor ...` controls latent cursor as before.
 - In `manual` mode, `/cursor ...` is routed to manual controls (`X/Y/Z[/W]`, up to control dim).
 
 ### Web UI
 
 The web interface (`web/index.html`) provides:
-- Real-time random/reorganized 2D projection and manual 3D corpus view
-- Random/Reorganized/Manual mode tabs with transport Start/Stop buttons
-- Separate 6-control banks for random and reorganized modes
+- Real-time wander/reorganized 2D projection and manual 3D corpus view
+- Wander/Reorganized/Manual mode tabs with transport Start/Stop buttons
+- Separate 6-control banks for wander and reorganized modes
 - 4 manual XYZW controls for timbre-space navigation, plus manual wander-k
 - Manual 3D camera nudges (left/right/over/under/forward/backward)
 - Decoder gain and smoothing controls
@@ -840,3 +845,12 @@ See [installation, engine selection and platform limits](docs/DUAL_INFERENCE_REL
 and the [phase 5 campaign](docs/DUAL_INFERENCE_PHASE5.md). Native SAME-S uses the
 separate pinned environment; the default ONNX environment is unchanged.
 The recorded release campaign qualifies ONNX CPU and MPS on the tested M1 Max/Core Audio scenario: ten minutes per engine without underruns, numeric parity and comparative listening. CUDA remains experimental and unqualified. Software-clock measurements alone do not qualify an audio device.
+
+### Wander naming compatibility
+
+`wander` is the canonical mode in CLI options, engine state and WebSocket
+messages; OSC controls use `/wander/*`. Older `random` mode inputs,
+`random_control` messages, `/random/*` OSC addresses and `--random_*` CLI flags
+remain accepted as compatibility aliases. Existing `latent_policy_*.pt` filenames
+are unchanged. Random-number generation and UMAP random seeds are unrelated to
+the mode name. Historical qualification receipts retain their recorded names.

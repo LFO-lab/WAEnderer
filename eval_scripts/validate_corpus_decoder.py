@@ -45,7 +45,7 @@ def main():
         report.update(vae_id=decoder.info.vae_id,latent_dim=metadata.latent_dim,
             samples_per_latent=metadata.samples_per_latent,supported_windows=list(decoder.supported_windows))
         controller = manager._perform_controller
-        for mode in ('random','manual','reorganized'):
+        for mode in ('wander','manual','reorganized'):
             controller.stop()
             assert controller.set_mode(mode)[0]
             assert controller.start()[0]

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 def configuration_directory():
     if os.name == 'nt':
@@ -43,12 +44,49 @@ def native_config(vae_id, config):
     return result
 
 
-def request_once(python, operation, payload):
+def worker_directory(python):
+    if local_path(python, python=True) == local_path(sys.executable, python=True):
+        return str(Path(__file__).resolve().parents[2])
+    return None
+
+
+def worker_environment(python):
+    env = dict(os.environ)
+    if local_path(python, python=True) == local_path(sys.executable, python=True):
+        root = str(Path(__file__).resolve().parents[2])
+        env['PYTHONPATH'] = os.pathsep.join(filter(None, (root, env.get('PYTHONPATH', ''))))
+    return env
+
+
+def request_once(python, operation, payload, *, timeout=120, cancel_event=None):
     path = local_path(python,python=True)
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ValueError(f'Native interpreter is missing or not executable: {path}')
-    result = subprocess.run([str(path), '-m', 'stable_audio_wanderer.vae.native_worker', operation],
-        input=json.dumps(payload), text=True, capture_output=True, timeout=120)
+    command = [str(path), '-m', 'stable_audio_wanderer.vae.native_worker', operation]
+    if cancel_event is None:
+        result = subprocess.run(command, input=json.dumps(payload), text=True,
+            capture_output=True, timeout=timeout, env=worker_environment(path), cwd=worker_directory(path))
+    else:
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, env=worker_environment(path), cwd=worker_directory(path))
+        deadline = time.monotonic() + timeout
+        input_text = json.dumps(payload)
+        try:
+            while True:
+                if cancel_event.is_set():
+                    raise RuntimeError('Weight download cancelled')
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Weight download timed out; check connectivity and retry')
+                try:
+                    stdout, stderr = process.communicate(input=input_text, timeout=1)
+                    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+                    break
+                except subprocess.TimeoutExpired:
+                    input_text = None
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
     if result.returncode:
         raise RuntimeError(f'Native runtime {path} failed: {result.stderr[-2000:]}')
     return json.loads(result.stdout)

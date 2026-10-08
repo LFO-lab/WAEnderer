@@ -53,7 +53,7 @@ Si les nouveaux rendus diffèrent des WAV déjà écoutés, le claim utilise `li
 
 ## Mesurer le transport à ton rythme
 
-Commencer par l'interface : sélectionner le corpus, choisir ONNX CPU, démarrer, changer Random/Manual/Reorganized et les fenêtres, arrêter, sélectionner PyTorch CPU puis MPS et redémarrer. Vérifier aussi le retour au choix explicite après un refresh/reconnect. Si un comportement étonne, conserver le corpus, le moteur, la fenêtre et la commande qui le déclenche : ce sont les entrées utiles pour déboguer ensemble.
+Commencer par l'interface : sélectionner le corpus, choisir ONNX CPU, démarrer, changer Wander/Manual/Reorganized et les fenêtres, arrêter, sélectionner PyTorch CPU puis MPS et redémarrer. Vérifier aussi le retour au choix explicite après un refresh/reconnect. Si un comportement étonne, conserver le corpus, le moteur, la fenêtre et la commande qui le déclenche : ce sont les entrées utiles pour déboguer ensemble.
 
 Le banc peut ensuite enregistrer les mêmes familles de transitions. Diagnostic court, sans ouvrir le périphérique :
 

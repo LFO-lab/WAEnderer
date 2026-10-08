@@ -75,7 +75,7 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
     manual_data = load_manual_artifact(manual_artifact_path, expected_frames=Z_concat.shape[0])
     print(f"[serve] Manual artifact: {manual_artifact_path}")
 
-    random_model_path = _resolve_optional_model_path(corpus_dir, None, "latent_policy_*.pt")
+    wander_model_path = _resolve_optional_model_path(corpus_dir, None, "latent_policy_*.pt")
     reorganized_units_path = _resolve_reorganized_units_path(corpus_dir, None)
     v2_data = None
     if reorganized_units_path is not None:
@@ -95,7 +95,7 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
 
     nav = load_navigation_engine(
         data=data,
-        random_model_path=random_model_path,
+        wander_model_path=wander_model_path,
         desc_weighted=manual_data["manual_desc_weighted"],
         reorganized_enabled=bool(v2_data is not None),
         reorganized_artifact=v2_data,
@@ -144,7 +144,7 @@ def _setup_perform_phase(corpus_dir, latent_decoder, config, broadcaster, ws_por
             unit_end_idx=wander_graph.get("unit_end_idx"),
             unit_graph_neighbors=wander_graph.get("unit_graph_neighbors"),
             unit_graph_scores=wander_graph.get("unit_graph_scores"),
-            initial_mode="random",
+            initial_mode="wander",
             initial_window=selected_window,
         )
     except Exception:

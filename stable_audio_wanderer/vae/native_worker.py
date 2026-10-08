@@ -16,6 +16,18 @@ def main():
     wire = sys.stdout
     sys.stdout = sys.stderr
     operation = sys.argv[1]
+    if operation == 'download_same_s':
+        json.load(sys.stdin)
+        from .encoder_availability import prepare_encoder_weights
+        from .same_s_weights import resolve_same_s_weights
+        import threading
+        try:
+            prepare_encoder_weights('same_s', lambda event: print(event['detail'], file=sys.stderr, flush=True), threading.Event())
+            resolve_same_s_weights(local_files_only=True)
+            send(wire, {'ready': True})
+        except Exception as exc:
+            send(wire, {'ready': False, 'error': str(exc)})
+        return
     if operation == 'availability':
         payload = json.load(sys.stdin)
         from .decoder_availability import decoder_availability

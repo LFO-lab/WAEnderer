@@ -32,7 +32,7 @@ let manualPosition3D = [0.5, 0.5, 0.5];
 let manualTrajectory3D = [];
 let currentIndex = 0;
 let currentFileId = 0;
-let selectedNavigationMode = 'random';
+let selectedNavigationMode = 'wander';
 let transportRunning = false;
 let manualNearestIndex = 0;
 let manualNearestDistance = 0;
@@ -149,17 +149,17 @@ function drawTrainingCurves() {
         return;
     }
 
-    const randomTrain = rHist.random.train_loss;
-    const randomVal = rHist.random.val_loss;
-    const windowMAE = rHist.random.window_mae;
+    const wanderTrain = rHist.wander.train_loss;
+    const wanderVal = rHist.wander.val_loss;
+    const windowMAE = rHist.wander.window_mae;
     const reorgTrain = rHist.reorganized.train_loss;
     const reorgVal = rHist.reorganized.val_loss;
     const reorgAcc = rHist.reorganized.accuracy;
 
-    const hasRandom = randomTrain.length > 0;
+    const hasWander = wanderTrain.length > 0;
     const hasReorg = reorgTrain.length > 0;
 
-    if (!hasRandom && !hasReorg) {
+    if (!hasWander && !hasReorg) {
         fill(160);
         noStroke();
         textSize(14);
@@ -269,9 +269,9 @@ function drawTrainingCurves() {
 
     // Top chart: loss curves
     const lossSeries = [];
-    if (hasRandom) {
-        lossSeries.push({ label: 'Train Loss', data: randomTrain, color: [74, 158, 255] });
-        lossSeries.push({ label: 'Val Loss', data: randomVal, color: [255, 100, 100] });
+    if (hasWander) {
+        lossSeries.push({ label: 'Train Loss', data: wanderTrain, color: [74, 158, 255] });
+        lossSeries.push({ label: 'Val Loss', data: wanderVal, color: [255, 100, 100] });
     }
     if (hasReorg) {
         lossSeries.push({ label: 'Reorg Train', data: reorgTrain, color: [100, 255, 180] });
@@ -769,8 +769,8 @@ function handleMessage(data) {
         updateInfoDisplay(data);
         
         if (data.controls) {
-            if (data.controls.random) {
-                updateControlDisplays('random', data.controls.random, 'random');
+            if (data.controls.wander) {
+                updateControlDisplays('wander', data.controls.wander, 'wander');
             }
             if (data.controls.reorganized) {
                 updateControlDisplays(
@@ -803,7 +803,7 @@ function updateConnectionStatus(connected) {
     if (connected) {
         dot.classList.add('connected');
         const runStatus = transportRunning ? 'Running' : 'Idle';
-        const modeLabel = selectedNavigationMode === 'random'
+        const modeLabel = selectedNavigationMode === 'wander'
             ? 'Wander'
             : selectedNavigationMode;
         text.textContent = `Connected (${modeLabel}, ${runStatus})`;
@@ -1026,15 +1026,15 @@ function updateWanderRenderControls(values) {
 
 // UI Control handlers
 function setupControls() {
-    const modeRandomBtn = document.getElementById('mode-random');
+    const modeWanderBtn = document.getElementById('mode-wander');
     const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');
 
-    modeRandomBtn.addEventListener('click', () => {
+    modeWanderBtn.addEventListener('click', () => {
         if (transportRunning) return;
-        selectedNavigationMode = 'random';
+        selectedNavigationMode = 'wander';
         applyNavigationModeUI();
-        sendTransportSetMode('random');
+        sendTransportSetMode('wander');
     });
 
     modeReorganizedBtn.addEventListener('click', () => {
@@ -1066,8 +1066,8 @@ function setupControls() {
         sendTransportAction('start');
     });
 
-    // Random controls
-    const randomControls = [
+    // Wander controls
+    const wanderControls = [
         'phrase_scale',
         'jump_rate',
         'timbre_lock',
@@ -1076,10 +1076,10 @@ function setupControls() {
         'crossfile',
     ];
 
-    randomControls.forEach(ctrl => {
-        const input = document.getElementById(`random-${ctrl}`);
-        const display = document.getElementById(`val-random-${ctrl}`);
-        const inputId = `random-${ctrl}`;
+    wanderControls.forEach(ctrl => {
+        const input = document.getElementById(`wander-${ctrl}`);
+        const display = document.getElementById(`val-wander-${ctrl}`);
+        const inputId = `wander-${ctrl}`;
 
         if (input) {
             // Track when user starts adjusting
@@ -1094,7 +1094,7 @@ function setupControls() {
             input.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) display.textContent = value.toFixed(2);
-                sendRandomControl(ctrl, value);
+                sendWanderControl(ctrl, value);
             });
         }
     });
@@ -1367,7 +1367,7 @@ function setupControls() {
     });
 
     // Reset buttons
-    document.getElementById('btn-random-reset').addEventListener('click', () => {
+    document.getElementById('btn-wander-reset').addEventListener('click', () => {
         sendReset();
     });
     document.getElementById('btn-reorganized-reset').addEventListener('click', () => {
@@ -1393,24 +1393,24 @@ function setupControls() {
 
 function applyNavigationModeUI() {
     const shared3DPanel = document.getElementById('shared-3d-panel');
-    const modeRandomBtn = document.getElementById('mode-random');
+    const modeWanderBtn = document.getElementById('mode-wander');
     const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');
-    const randomPanel = document.getElementById('random-panel');
+    const wanderPanel = document.getElementById('wander-panel');
     const reorganizedPanel = document.getElementById('reorganized-panel');
     const manualPanel = document.getElementById('manual-panel');
 
-    const isRandom = selectedNavigationMode === 'random';
+    const isWander = selectedNavigationMode === 'wander';
     const isReorganized = selectedNavigationMode === 'reorganized';
     const isManual = selectedNavigationMode === 'manual';
     const useShared3DView = currentModeUsesShared3DView();
 
-    modeRandomBtn.classList.toggle('active', isRandom);
+    modeWanderBtn.classList.toggle('active', isWander);
     modeReorganizedBtn.classList.toggle('active', isReorganized);
     modeManualBtn.classList.toggle('active', isManual);
 
     shared3DPanel.classList.toggle('panel-hidden', !useShared3DView);
-    randomPanel.classList.toggle('panel-hidden', !isRandom);
+    wanderPanel.classList.toggle('panel-hidden', !isWander);
     reorganizedPanel.classList.toggle('panel-hidden', !isReorganized);
     manualPanel.classList.toggle('panel-hidden', !isManual);
 
@@ -1419,7 +1419,7 @@ function applyNavigationModeUI() {
         resetManualCameraToggles();
     }
 
-    modeRandomBtn.disabled = transportRunning;
+    modeWanderBtn.disabled = transportRunning;
     modeReorganizedBtn.disabled = transportRunning;
     modeManualBtn.disabled = transportRunning;
     updateDecodeToggle();
@@ -1435,10 +1435,10 @@ function updateDecodeToggle() {
     button.title = button.disabled && wsConnected ? 'Load corpus first' : '';
 }
 
-function sendRandomControl(name, value) {
+function sendWanderControl(name, value) {
     if (ws && wsConnected) {
         ws.send(JSON.stringify({
-            type: 'random_control',
+            type: 'wander_control',
             controls: { [name]: value }
         }));
     }

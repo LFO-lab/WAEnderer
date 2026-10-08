@@ -14,9 +14,11 @@ from .decoder_contract import DecodedAudioWindow, DecoderRuntimeError, DecoderWi
 class ProcessNativeDecoder:
     def __init__(self, selection):
         self._lock = threading.Lock()
+        from .native_runtime import worker_environment, worker_directory
         self._process = subprocess.Popen([selection.worker_python, '-m',
             'stable_audio_wanderer.vae.native_worker', 'serve'],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+            env=worker_environment(selection.worker_python), cwd=worker_directory(selection.worker_python))
         self._responses = queue.Queue()
         self._reader = threading.Thread(target=self._read_responses, daemon=True, name='native-decoder-pcm')
         self._reader.start()

@@ -203,7 +203,7 @@ def _raw_noise_vector(seed: int, frame: int, latent_dim: int) -> np.ndarray:
 
 @dataclass(frozen=True)
 class WanderGraphControls:
-    """Accepted Random/Wander controls mapped onto JUCE graph controls."""
+    """Accepted Wander controls mapped onto JUCE graph controls."""
 
     attractor_x: float
     attractor_y: float
