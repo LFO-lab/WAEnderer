@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Preprocess audio files into a 64D latent corpus with geometry.
+Preprocess audio files into a model-specific latent corpus with geometry.
 Pipeline:
-  - Encode audio with Stable Audio Open VAE
+  - Encode audio with SAME-S by default, or an optional VAE
   - Extract latent-rate timbre descriptors for manual navigation
   - Keep full latent trajectories per file (no mean pooling)
   - Normalize latents with global Z_mean/Z_std
@@ -13,6 +13,7 @@ import os
 import argparse
 import datetime
 import math
+import threading
 from typing import List, Dict
 
 import numpy as np
@@ -627,6 +628,15 @@ def run_preprocess(
     if isinstance(vae, VAEAdapter):
         adapter = vae
     elif vae_id:
+        from stable_audio_wanderer.vae.encoder_availability import prepare_encoder_weights
+        def model_progress(event):
+            if progress_callback is not None:
+                progress_callback(event)
+            else:
+                print(event['detail'], flush=True)
+        prepare_encoder_weights(vae_id, model_progress, cancel_event or threading.Event())
+        if _cancelled():
+            return {"corpus_dir": out_dir, "cancelled": True}
         adapter = load_vae_adapter(vae_id, weight_path=vae_weight_path)
     elif vae is not None:
         # Legacy: raw model passed in — wrap in Stable Audio adapter
@@ -911,13 +921,13 @@ def run_preprocess(
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Preprocess: VAE latents -> 64D corpus + geometry."
+        description="Preprocess: VAE latents -> corpus + geometry."
     )
     ap.add_argument("--audio_dir", required=True)
     ap.add_argument("--out_prefix", required=True)
     ap.add_argument("--pretrained", default="stabilityai/stable-audio-open-1.0",
                     help="HuggingFace model ID (legacy, use --vae_id instead).")
-    ap.add_argument("--vae_id", default="", help="VAE adapter ID (e.g. stable_audio_open, same_s, ear_vae_44k).")
+    ap.add_argument("--vae_id", default="same_s", help="VAE adapter ID (e.g. stable_audio_open, same_s, ear_vae_44k).")
     ap.add_argument("--vae_weight_path", default="", help="Path to local weight file (for VAEs that require it).")
     ap.add_argument("--latent_nav_k", type=int, default=32, help="k for latent kNN geometry.")
     ap.add_argument("--encode_chunk_sec", type=float, default=60.0,

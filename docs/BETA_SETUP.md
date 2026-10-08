@@ -13,7 +13,7 @@ Linux or CUDA audio performance. Other platforms remain beta validation targets.
   verified decoder bundle for prepared ONNX playback. Ordinary wheels intentionally
   exclude model binaries, private audio, corpora and local configuration.
 - For encoding: the selected native profile, model weights, and input WAV files.
-  The default install includes Stable Audio Open and SAME-S libraries.
+  The default install includes SAME-S; Stable Audio Open and EAR require optional profiles.
   Git is required by the SAME-S source dependency. EAR requires its repository
   and matching checkpoint. Installation and first downloads need internet access.
 - On Linux, PortAudio may need installation through the system package manager

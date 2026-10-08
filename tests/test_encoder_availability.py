@@ -16,7 +16,7 @@ def test_missing_dependencies_and_weights_do_not_download(monkeypatch, tmp_path)
     for vae in ('same_s', 'stable_audio_open'):
         result = availability.encoder_availability(vae)
         assert result['ready'] and result['download_required']
-        assert 'hf auth login' in result['detail']
+        assert ('No login required' if vae == 'same_s' else 'login and model access required') in result['detail']
     assert len(calls) == 4
     assert all(revision for _, _, revision in calls)
     # A stale cache path must not count as a downloaded model.
@@ -108,3 +108,11 @@ def test_download_errors_are_actionable(monkeypatch):
     with pytest.raises(RuntimeError, match='Network/offline'):
         availability.prepare_encoder_weights('same_s', events.append, threading.Event())
     assert [event['event'] for event in events] == ['model_download']
+
+
+def test_optional_encoder_setup_is_model_specific(monkeypatch):
+    monkeypatch.setattr(availability, 'installed', lambda name: False)
+    for vae, profile in [('stable_audio_open', 'requirements-stable-audio-open-native.txt'), ('ear_vae_44k', 'requirements-ear-native.txt')]:
+        result = availability.encoder_availability(vae)
+        assert not result['ready'] and result['install_required'] and result['optional']
+        assert profile in result['setup']

@@ -4,8 +4,13 @@ from .decoder_availability import installed
 
 
 def encoder_availability(vae_id):
+    if vae_id.startswith('ear_'):
+        missing = [name for name in ('torch', 'dac', 'audiotools', 'einops') if not installed(name)]
+        return dict(ready=not missing, install_required=bool(missing), optional=True,
+            setup='Optional EAR: from the project folder, run python -m pip install -r requirements-ear-native.txt. Obtain the EAR_VAE repository and matching .pyt checkpoint, enter its path below, then click Check models.',
+            detail='Missing libraries: ' + ', '.join(missing) if missing else 'Libraries installed. Local EAR checkpoint is validated when encoding starts.')
     if vae_id not in ('same_s', 'stable_audio_open'):
-        return dict(ready=True, detail='EAR requires a local checkpoint; validated when encoding starts.')
+        return dict(ready=False, detail='Unknown encoder')
     if vae_id == 'same_s':
         from .same_s_weights import SOURCE_MODEL, SOURCE_REVISION
         names = ('model_config.json', 'model.safetensors')
@@ -14,9 +19,11 @@ def encoder_availability(vae_id):
         from .stable_audio_open_weights import SOURCE_MODEL, SOURCE_REVISION
         names = ('vae/config.json', 'vae/diffusion_pytorch_model.safetensors')
         required = ('huggingface_hub', 'torch', 'diffusers', 'safetensors')
+    setup = ('Optional Stable Audio Open: from the project folder, run python -m pip install -r requirements-stable-audio-open-native.txt. Accept access conditions at huggingface.co/stabilityai/stable-audio-open-1.0, run hf auth login, then click Check models.' if vae_id == 'stable_audio_open' else 'Default SAME-S: weights download automatically on first Encode; no Hugging Face login required.')
+    metadata = dict(optional=vae_id != 'same_s', setup=setup)
     missing = [name for name in required if not installed(name)]
     if missing:
-        return dict(ready=False, detail='Missing libraries: ' + ', '.join(missing) + '. Install requirements.txt in the server environment.')
+        return dict(ready=False, install_required=True, **metadata, detail='Missing libraries: ' + ', '.join(missing) + '. ' + setup)
     try:
         from huggingface_hub import try_to_load_from_cache
         paths = [try_to_load_from_cache(SOURCE_MODEL, name, revision=SOURCE_REVISION) for name in names]
@@ -24,8 +31,8 @@ def encoder_availability(vae_id):
     except Exception:
         cached = False
     if not cached:
-        return dict(ready=True, download_required=True, detail=f'Weights not cached for {SOURCE_MODEL}. Encoding will download them automatically. Internet access and authorized Hugging Face access may be required; see README for hf auth login.')
-    return dict(ready=True, detail='Required model files are cached. Model loading and integrity are checked when encoding starts.')
+        return dict(ready=True, download_required=True, **metadata, detail=f'Weights not cached for {SOURCE_MODEL}. Encoding will download them automatically. ' + ('No login required.' if vae_id == 'same_s' else 'Hugging Face login and model access required.'))
+    return dict(ready=True, **metadata, detail='Required model files are cached. Model loading and integrity are checked when encoding starts.')
 
 
 def prepare_encoder_weights(vae_id, progress, cancel_event):

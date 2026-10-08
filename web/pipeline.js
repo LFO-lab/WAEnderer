@@ -617,7 +617,7 @@ function onVAEList(data) {
         encoderAvailability[v.vae_id] = v.availability;
         const opt = document.createElement('option');
         opt.value = v.vae_id;
-        opt.textContent = v.display_name;
+        opt.textContent = v.display_name + (v.availability?.install_required ? ' — install required' : v.availability?.optional ? ' — optional' : ' — default');
         opt.dataset.requiresPath = v.requires_path ? '1' : '0';
         opt.dataset.pathLabel = v.path_label || 'Path to model weights';
         select.appendChild(opt);
@@ -638,6 +638,8 @@ function updateVAEPathVisibility() {
     const opt = select.options[select.selectedIndex];
     const status = document.getElementById('pp-model-status');
     if (status) status.textContent = encoderAvailability[select.value]?.detail || 'Checking model availability…';
+    const setup = document.getElementById('pp-model-setup');
+    if (setup) setup.textContent = encoderAvailability[select.value]?.setup || '';
     updateDecoderControls();
     const needsPath = opt && opt.dataset.requiresPath === '1';
     pathGroup.classList.toggle('panel-hidden', !needsPath);

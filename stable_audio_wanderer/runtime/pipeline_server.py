@@ -336,7 +336,7 @@ class PipelineManager:
             return
 
         from ..vae.encoder_availability import encoder_availability
-        availability = encoder_availability(config.get("vae_id") or "stable_audio_open")
+        availability = encoder_availability(config.get("vae_id") or "same_s")
         if not availability['ready']:
             self._emit({"type": "pipeline_state", "phase": self.phase, "error": availability['detail']})
             return
@@ -358,19 +358,12 @@ class PipelineManager:
             def progress_cb(event_data):
                 self._emit({"type": "pipeline_stats", "phase": "preprocess", **event_data})
 
-            from ..vae.encoder_availability import prepare_encoder_weights
-            prepare_encoder_weights(config.get("vae_id") or "stable_audio_open", progress_cb, self._cancel)
-            if self._cancel.is_set():
-                self.phase = "idle"
-                self._emit({"type": "pipeline_phase_change", "phase": "idle", "reason": "cancelled"})
-                return
-
             result = run_preprocess(
                 audio_dir=config.get("audio_dir"),
                 out_prefix=config.get("out_prefix", "corpus"),
                 pretrained=self.pretrained,
                 vae=self._vae,
-                vae_id=str(config.get("vae_id", "")),
+                vae_id=str(config.get("vae_id") or "same_s"),
                 vae_weight_path=str(config.get("vae_weight_path", "")),
                 progress_callback=progress_cb,
                 cancel_event=self._cancel,

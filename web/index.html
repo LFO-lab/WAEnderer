@@ -610,12 +610,13 @@
                     <div class="control-row">
                         <div class="control-group" style="width:100%">
                             <select id="pp-vae-select">
-                                <option value="stable_audio_open" selected>Stable Audio Open (44.1k)</option>
-                                <option value="same_s">SAME-S (44.1k)</option>
+                                <option value="same_s" selected>SAME-S (44.1k) — default</option>
+                                <option value="stable_audio_open">Stable Audio Open (44.1k) — optional</option>
                             </select>
                         </div>
                     </div>
                     <p id="pp-model-status" role="status">Checking model availability…</p>
+                    <p id="pp-model-setup"></p>
                     <button id="pp-check-models" type="button">Check models</button>
                     <div id="pp-vae-path-group" class="control-row panel-hidden">
                         <div class="control-group" style="width:100%">

@@ -1,14 +1,15 @@
 # Installation profiles
 
-`pyproject.toml` owns the base package dependencies. `requirements.txt` installs the package with its `export`, `native-stable-audio-open`, and `native-same-s` extras instead of maintaining a competing list. A plain package installation supplies the application and prepared ONNX runtime; it does not imply that optional native SAME-S/EAR libraries or checkpoints are installed.
+`pyproject.toml` owns the base package dependencies. `requirements.txt` installs the package with its `export` and `native-same-s` extras instead of maintaining a competing list. A plain package installation supplies the application and prepared ONNX runtime; it does not imply that optional native SAME-S/EAR libraries or checkpoints are installed.
 
 From the repository's Python root, choose a profile and honor normal dependency resolution:
 
 | Profile | Command | Additional requirements |
 | --- | --- | --- |
 | Runtime / prepared ONNX | `python -m pip install -r requirements-runtime.txt` | Matching prepared decoder and corpus supplied separately |
-| Default: Stable Audio Open, SAME-S and ONNX export | `python -m pip install -r requirements.txt` | Git; pinned Stable Audio 3 and Torch/Torchaudio 2.7.1; model weights separately |
-| Focused native Stable Audio Open + SAME-S | `python -m pip install -r requirements-same-s-native.txt` | Pinned Stable Audio 3 commit, Torch/Torchaudio 2.7.1 |
+| Default: SAME-S and ONNX export | `python -m pip install -r requirements.txt` | Git; pinned Stable Audio 3 and Torch/Torchaudio 2.7.1; model weights separately |
+| Focused native SAME-S | `python -m pip install -r requirements-same-s-native.txt` | Pinned Stable Audio 3 commit, Torch/Torchaudio 2.7.1 |
+| Optional Stable Audio Open | `python -m pip install -r requirements-stable-audio-open-native.txt` | Hugging Face access conditions and `hf auth login` |
 | Native EAR and export | `python -m pip install -r requirements-ear-native.txt` | DAC 1.0.0, pinned audio-tools revision, einops, protobuf 4.25.x |
 | Both native families | `python -m pip install -r requirements-native.txt` | Union of the two source profiles |
 
@@ -28,3 +29,7 @@ The default Stable Audio Open + SAME-S profile also resolved successfully for
 Python 3.12 on macOS (72 packages) after adding the shared `native-same-s` extra.
 The development lockfile was refreshed successfully. These are dependency
 resolution checks, not a fresh install or model-load qualification.
+
+The default now uses SAME-S only, with automatic public-weight download on first
+Encode and no login prerequisite. Stable Audio Open is an optional installation;
+EAR is separate as well. Earlier combined-profile receipts remain historical.

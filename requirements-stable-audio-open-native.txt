@@ -1,0 +1,3 @@
+# Optional Stable Audio Open encoder/decoder and ONNX export tooling.
+.[export,native-stable-audio-open]
+# Weights require model access approval and hf auth login.

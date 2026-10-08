@@ -1,6 +1,7 @@
-# Default source install: both browser encoders plus ONNX export tooling.
+# Default source install: SAME-S encoder plus ONNX export tooling.
 # pyproject.toml owns dependencies, including SAME-S upstream Torch pins.
 # Python 3.12 is the reference platform; Git is required for stable-audio-3.
-.[export,native-stable-audio-open,native-same-s]
+.[export,native-same-s]
+# Stable Audio Open: python -m pip install -r requirements-stable-audio-open-native.txt
 # EAR remains optional: python -m pip install -r requirements-ear-native.txt
 # Always run python -m pip check; model weights are downloaded separately.

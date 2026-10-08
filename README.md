@@ -43,12 +43,13 @@ its `corpus/` folder is used for corpus discovery and generated outputs.
 For a supplied application wheel, activate a fresh environment as above, then:
 
 ```sh
-python -m pip install "/path/to/stable_audio_wanderer-0.1.0-py3-none-any.whl[native-stable-audio-open,native-same-s,export]"
+python -m pip install "/path/to/stable_audio_wanderer-0.1.0-py3-none-any.whl[native-same-s,export]"
 python -m pip check
 waenderer-serve
 ```
 
-The default setup includes native Stable Audio Open and SAME-S libraries, plus
+The default setup includes the native SAME-S library, the Python Hugging Face
+client, and
 ONNX export tooling. Git is required to fetch the pinned SAME-S library; no
 manual SAME-S repository clone is needed.
 
@@ -72,9 +73,10 @@ decoder. Use **Start Perform**, then the performance transport to start audio.
 Do not copy only `corpus.npz`: retain the navigation artifacts alongside it.
 
 Creating a corpus requires model weights in addition to the installed libraries.
-SAME-S is the browser's default encoder; both it and Stable Audio Open are
-available through the default install above. EAR remains optional and needs its
-[additional profile](docs/INSTALLATION_PROFILES.md) and external repository/checkpoint.
+SAME-S is the browser's default encoder and downloads its public weights on first
+Encode without Hugging Face login. Stable Audio Open and EAR are optional; see
+[installation profiles](docs/INSTALLATION_PROFILES.md). EAR needs its external
+repository/checkpoint.
 Model downloads may need upstream access/acceptance and an internet connection;
 prepared ONNX performance can run offline. The Erae controller is an optional
 separate bridge, not required to use the browser instrument.
@@ -87,22 +89,33 @@ and model preparation. Installed tools include `waenderer-serve`,
 
 ### Hugging Face model setup
 
-Opening the web interface only verifies that the server runs. Before encoding,
-install the Hugging Face client/CLI in the **same activated environment**:
+The default SAME-S workflow needs no Hugging Face account or login. The default
+installation provides the Python Hub client; first Encode downloads the pinned
+public weights automatically. The browser shows download and loading status.
+Manual SAME-S downloads below are optional for offline preparation.
+
+#### Optional Stable Audio Open
+
+Install its libraries in the **same activated environment** as the server:
 
 ```sh
-python -m pip install "huggingface_hub>=1.7.1"
-hf --help
+python -m pip install -r requirements-stable-audio-open-native.txt
+python -m pip check
 hf auth login
 hf auth whoami
 ```
 
+For a wheel installation, use
+`python -m pip install "stable-audio-wanderer[native-stable-audio-open,export]"`
+with the supplied wheel path in place of the package name if it is not published.
+
 Create a [Hugging Face account](https://huggingface.co/join), visit
-[Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) and
-[SAME-S](https://huggingface.co/stabilityai/SAME-S), and complete any access request
-or terms acceptance required by each model. Log in with your own read-access
-[token](https://huggingface.co/settings/tokens). Do not share tokens between users.
-See the [official CLI guide](https://huggingface.co/docs/huggingface_hub/guides/cli).
+[Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0), and
+accept its access conditions (license agreement and contact-information sharing).
+Log in with your own read-access [token](https://huggingface.co/settings/tokens).
+Do not share tokens between users. See the
+[official CLI guide](https://huggingface.co/docs/huggingface_hub/guides/cli).
+Select the optional encoder and click **Check models** after installation.
 
 Weights download automatically when encoding first starts if they are not cached.
 The browser displays the current file being downloaded, then encoder loading.
@@ -117,7 +130,7 @@ hf download stabilityai/stable-audio-open-1.0 vae/config.json vae/diffusion_pyto
 hf download stabilityai/SAME-S model_config.json model.safetensors --revision fbeb3dcf53a326e5682f38e22e7f740202d44232
 ```
 
-Wait for both commands to finish successfully. Authentication errors require
+Run only the command for your selected model and wait for it to finish successfully. Authentication errors require
 checking the account's model access and token permissions; network errors require
 restoring connectivity. Run these commands as the same OS user as the server,
 with the same Hugging Face cache settings. Then click **Check models** in Encode.
@@ -135,7 +148,7 @@ ONNX corpus/decoder can run without these native weights or an online login.
 For prepared ONNX playback only, use `requirements-runtime.txt` (or install the
 wheel without extras). This smaller profile omits native encoder and export
 libraries. `requirements.txt` is the default for creating and playing corpora
-with Stable Audio Open or SAME-S.
+with SAME-S. Stable Audio Open and EAR require their optional profiles.
 For development with the committed lockfile, use `uv sync --all-extras`;
 this includes SAME-S and Stable Audio Open; EAR remains a separate profile.
 
@@ -161,7 +174,7 @@ and the Stop Perform → select → Start Perform workflow.
 
 ### Using Other VAEs
 
-The pipeline supports pluggable VAE backends. The standalone CLI defaults to [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) (44.1 kHz, 64D latents); the browser defaults to SAME-S. Additional VAEs can be selected from the GUI dropdown or via CLI flags.
+The pipeline supports pluggable VAE backends. The browser and preprocessing CLI default to SAME-S. [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) (44.1 kHz, 64D latents) and EAR are optional. Additional VAEs can be selected from the GUI dropdown or via CLI flags.
 
 #### EAR VAE
 
@@ -222,7 +235,7 @@ python bin/preprocess.py --audio_dir /path/to/wavs --out_prefix my_corpus
 |--------|---------|-------------|
 | `--audio_dir` | required | Directory containing WAV files |
 | `--out_prefix` | required | Output corpus name prefix |
-| `--vae_id` | `stable_audio_open` | VAE to use (`stable_audio_open`, `same_s`, `ear_vae_44k`, `ear_vae_48k`) |
+| `--vae_id` | `same_s` | VAE to use (`stable_audio_open`, `same_s`, `ear_vae_44k`, `ear_vae_48k`) |
 | `--vae_weight_path` | | Path to VAE weights (required for EAR VAE) |
 | `--seg_sec` | 0.2 | Segment duration in seconds |
 | `--hop_sec` | 0.05 | Hop duration in seconds |
