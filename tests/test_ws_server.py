@@ -76,6 +76,20 @@ class FakeDecoder:
         return {"gain": 1.0, "underruns": 2, "transition_status": "idle"}
 
 
+def test_audio_input_availability_and_diagnostics_reach_web_client():
+    audio_input = {
+        'available': True, 'running': False, 'path': 'descriptors',
+        'devices': [{'id': 3, 'name': 'Microphone'}],
+        'paths': {'latents': {'status': 'error', 'error': 'Encoder unavailable'}},
+    }
+    broadcaster = WSBroadcaster(
+        FakeNav(_make_nav_state()), FakeDecoder(),
+        extra_state_provider=lambda: {'audio_input': audio_input})
+    assert json.loads(broadcaster._get_state_json())['audio_input'] == audio_input
+    broadcaster.unbind_nav_decoder()
+    assert 'audio_input' not in json.loads(broadcaster._get_state_json())
+
+
 def _make_nav_state():
     return {
         "policy_index": 1.0,

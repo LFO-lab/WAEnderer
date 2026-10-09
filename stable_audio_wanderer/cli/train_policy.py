@@ -592,11 +592,26 @@ def _build_reorganized_sequences_by_file(
     return seqs
 
 
+def _validate_reorganized_training_units(unit_file_id):
+    ids = np.asarray(unit_file_id, dtype=np.int32).reshape(-1)
+    _, counts = np.unique(ids, return_counts=True)
+    if not np.any(counts >= 2):
+        raise RuntimeError(
+            f"Reorganized training requires at least two units in the same source file; "
+            f"this artifact has {ids.size} units across {counts.size} files, with no "
+            "within-file transitions. Use longer source audio or re-encode with "
+            "smaller Reorganized unit durations (--reorg_min_sec, --reorg_target_sec, "
+            "--reorg_max_sec). Alternatively, select Manual or Wander training only. "
+            "Adding more files with one unit each does not provide training transitions."
+        )
+
+
 def _build_reorganized_transition_samples(
     unit_file_id: np.ndarray,
     unit_start_t: np.ndarray,
     unit_graph_neighbors: np.ndarray,
 ) -> List[Tuple[int, np.ndarray, int]]:
+    _validate_reorganized_training_units(unit_file_id)
     neighbors = np.asarray(unit_graph_neighbors, dtype=np.int32)
     seqs = _build_reorganized_sequences_by_file(unit_file_id, unit_start_t)
     samples: List[Tuple[int, np.ndarray, int]] = []
@@ -1067,6 +1082,11 @@ def run_train(
 
     mode = _normalize_navigation_mode(navigation_mode)
     print(f"[info] Training mode: {mode}")
+
+    # Check data eligibility before writing artifacts or running other training stages.
+    if mode in ("reorganized", "all"):
+        artifact, _ = _resolve_reorganized_artifact(args, data)
+        _validate_reorganized_training_units(artifact["unit_file_id"])
 
     results = {}
 

@@ -301,6 +301,12 @@ Outputs:
 - Manual mode: `corpus/.../manual_navigation.npz`
 - All mode: all artifacts
 
+Reorganized training needs at least two units in the same source file: its
+training targets are observed consecutive units, not arbitrary graph neighbors.
+If every file produces only one unit, use longer source recordings or smaller
+unit durations. Selecting Manual or Wander alone avoids this Reorganized
+requirement. Training checks eligibility before starting any stage.
+
 ### 2.5 Rebuild Reorganized Unit Artifact (Optional)
 
 `preprocess.py` now always writes `policy_v2_units.npz`.

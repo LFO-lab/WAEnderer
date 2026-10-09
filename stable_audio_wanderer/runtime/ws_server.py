@@ -517,6 +517,9 @@ class WSBroadcaster:
                 wander_render = extra.get("wander_render")
                 if isinstance(wander_render, dict):
                     state["wander_render"] = dict(wander_render)
+                audio_input = extra.get("audio_input")
+                if isinstance(audio_input, dict):
+                    state["audio_input"] = dict(audio_input)
                 decoder_state = extra.get("decoder")
                 if isinstance(decoder_state, dict):
                     existing_decoder = state.get("decoder")
