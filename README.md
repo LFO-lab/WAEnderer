@@ -40,6 +40,15 @@ Open [http://localhost:8080](http://localhost:8080). Keep the terminal open;
 Ctrl-C stops the server. Launch from the same working directory each time:
 its `corpus/` folder is used for corpus discovery and generated outputs.
 
+Source installs are editable: `waenderer-serve` and `python bin/serve.py`
+use the same checkout code and Web assets. Restart the server after Python edits.
+To update an existing non-editable source installation without reinstalling its
+dependencies, run `python -m pip install --no-deps -e .` in the activated environment.
+If a command still appears outdated, check `python -m pip show stable-audio-wanderer`
+and `python -c "import stable_audio_wanderer.cli.serve as s; print(s.__file__)"`.
+The module path should point to your checkout; ensure the command uses the same
+activated environment.
+
 For a supplied application wheel, activate a fresh environment as above, then:
 
 ```sh
