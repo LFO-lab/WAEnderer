@@ -492,6 +492,12 @@ function handlePipelineMessage(data) {
             selectTab('perform');
         }
 
+        // New corpora are written during preprocessing; training then updates
+        // their artifacts. Refresh options without replaying connection setup.
+        if (data.completed === 'preprocess' || data.completed === 'train') {
+            sendPipelineMessage({type: 'pipeline_list_corpora'});
+        }
+
         // Auto-switch to tab when a phase starts
         if (pipelinePhase !== 'idle') selectTab(['preprocess', 'train'].includes(pipelinePhase) ? pipelinePhase : 'perform');
 
