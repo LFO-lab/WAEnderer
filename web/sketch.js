@@ -568,6 +568,8 @@ function connectWebSocket() {
         
         ws.onclose = () => {
             wsConnected = false;
+            document.getElementById("osc-input-toggle").disabled = true;
+            document.getElementById("osc-input-status").textContent = "OSC status unavailable: disconnected";
             if (typeof pipelineDisconnected === 'function') pipelineDisconnected();
             updateConnectionStatus(false);
             console.log('WebSocket disconnected');
@@ -634,6 +636,17 @@ function applyNavigationCursor(nav, authoritativeTrajectory = false) {
 }
 
 function handleMessage(data) {
+    if (data.type === 'state' && data.osc_input) {
+        const osc = data.osc_input;
+        const toggle = document.getElementById('osc-input-toggle');
+        toggle.checked = osc.enabled;
+        toggle.disabled = !wsConnected;
+        document.getElementById('osc-input-status').textContent =
+            `${osc.enabled ? 'On' : 'Off'} · ${osc.host}:${osc.port} · ` +
+            `${osc.ready ? 'Controller ready' : 'Waiting for Start Perform'} · ` +
+            `${osc.received} messages${osc.last_address ? ' · ' + osc.last_address : ''}` +
+            `${osc.error ? ' · Error: ' + osc.error : ''}`;
+    }
     if (typeof eraeHandleMessage === "function" && eraeHandleMessage(data)) return;
     // Route pipeline messages to pipeline.js handler
     if (data.type && data.type.startsWith('pipeline_')) {
@@ -1026,6 +1039,11 @@ function updateWanderRenderControls(values) {
 
 // UI Control handlers
 function setupControls() {
+    document.getElementById('osc-input-toggle').addEventListener('change', (event) => {
+        if (!wsConnected || !ws || ws.readyState !== WebSocket.OPEN) return;
+        event.target.disabled = true;
+        ws.send(JSON.stringify({type: 'osc_input', enabled: event.target.checked}));
+    });
     const modeWanderBtn = document.getElementById('mode-wander');
     const modeReorganizedBtn = document.getElementById('mode-reorganized');
     const modeManualBtn = document.getElementById('mode-manual');

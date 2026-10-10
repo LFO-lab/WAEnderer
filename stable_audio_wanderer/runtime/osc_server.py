@@ -6,16 +6,14 @@ from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer
 
 
-def run_server(
+def create_dispatcher(
     nav,
     decoder=None,
-    ip: str = "127.0.0.1",
-    port: int = 9000,
     manual_controller=None,
     osc_debug: bool = False,
 ):
     """
-    Start OSC server for navigation and decoder control.
+    Create shared OSC address mappings for navigation and decoder control.
 
     OSC Messages:
         Navigation:
@@ -54,8 +52,6 @@ def run_server(
     Args:
         nav: Navigation engine instance
         decoder: DecoderPlayer instance (optional)
-        ip: Server IP address
-        port: Server port
         manual_controller: Transport controller exposing set_manual_axis(axis, value)
         osc_debug: Print incoming OSC messages and handler outcomes.
     """
@@ -69,7 +65,8 @@ def run_server(
         if len(args) == 0:
             return None
         try:
-            return float(args[0])
+            value = float(args[0])
+            return value if np.isfinite(value) else None
         except Exception:
             return None
 
@@ -87,7 +84,13 @@ def run_server(
         if len(coords) == 0:
             _dbg(f"{addr} ignored (no args)")
             return
-        arr = np.asarray(coords, dtype=np.float32)
+        try:
+            arr = np.asarray(coords, dtype=np.float32)
+        except (TypeError, ValueError):
+            _dbg(f"{addr} ignored (invalid coordinates)")
+            return
+        if not np.all(np.isfinite(arr)):
+            return
         arr = np.clip(arr, 0.0, 1.0)
         # In manual mode, route /cursor to manual XYZ controls for convenience.
         if manual_controller is not None:
@@ -144,8 +147,11 @@ def run_server(
             _dbg(f"{addr} {v}")
 
     def on_wander_reset(addr, *vals):
-        nav.set_policy_variant("wander")
-        nav.reset_policy()
+        if manual_controller is not None and hasattr(manual_controller, "reset_wander"):
+            manual_controller.reset_wander()
+        else:
+            nav.set_policy_variant("wander")
+            nav.reset_policy()
         _dbg(f"{addr}")
 
     # --- Reorganized controls ---
@@ -390,6 +396,13 @@ def run_server(
     dispatcher.map("/manual/xyzw", on_manual_xyzw)
     dispatcher.set_default_handler(on_unmapped)
 
+    return dispatcher
+
+
+def run_server(nav, decoder=None, ip="127.0.0.1", port=9000,
+               manual_controller=None, osc_debug=False):
+    """Compatibility blocking listener used by the standalone perform CLI."""
+    dispatcher = create_dispatcher(nav, decoder, manual_controller, osc_debug)
     server = BlockingOSCUDPServer((ip, port), dispatcher)
 
     print(f"OSC listening on {ip}:{port}")
@@ -407,4 +420,7 @@ def run_server(
     if bool(osc_debug):
         print("  OSC debug: enabled (logs matched and unmatched OSC messages)")
 
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()

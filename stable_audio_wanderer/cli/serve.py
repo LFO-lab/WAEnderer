@@ -182,6 +182,9 @@ def main():
         default="stabilityai/stable-audio-open-1.0",
         help="HuggingFace model ID for the VAE.",
     )
+    ap.add_argument("--osc-host", default="127.0.0.1", help="General OSC bind address; use 0.0.0.0 for remote senders.")
+    ap.add_argument("--osc-port", type=int, default=9001, help="General OSC UDP port, enabled from the Navigation UI.")
+    ap.add_argument("--osc-debug", action="store_true", help="Log general OSC handler outcomes.")
     ap.add_argument("--erae-osc", action="store_true", help="Enable bidirectional Erae OSC")
     ap.add_argument("--erae-osc-host", default="127.0.0.1")
     ap.add_argument("--erae-osc-port", type=int, default=9000)
@@ -202,6 +205,9 @@ def main():
             preparation_config = json.load(stream)
     pipeline = PipelineManager(pretrained=args.pretrained, preparation_config=preparation_config)
 
+    from stable_audio_wanderer.runtime.osc_input import OscInput
+    osc_input = OscInput(args.osc_host, args.osc_port, args.osc_debug)
+
     # Bind early: report OSC port conflicts before starting the GUI services.
     erae_osc = None
     if args.erae_osc:
@@ -220,6 +226,7 @@ def main():
             raise RuntimeError("application is shutting down")
         controller = _setup_perform_phase(corpus_dir, decoder, config, broadcaster, args.port)
         try:
+            osc_input.bind(controller)
             if erae_osc is not None:
                 erae_osc.bind(controller)
                 broadcaster.bind_visual(erae_osc.session, erae_osc.revision)
@@ -232,6 +239,7 @@ def main():
             raise
 
     def on_perform_teardown():
+        osc_input.bind(None)
         if erae_osc is not None:
             erae_osc.bind(None)
         broadcaster.unbind_nav_decoder()
@@ -256,6 +264,8 @@ def main():
         port=args.port,
         on_exit_request=request_shutdown,
         pipeline_message_handler=pipeline.handle_message,
+        service_message_handler=osc_input.handle_message,
+        service_state_provider=osc_input.get_state,
     )
     if erae_osc is not None:
         broadcaster.visual_select = erae_osc.select_from_view
@@ -277,6 +287,7 @@ def main():
         print("\n[serve] Shutting down...")
         shutdown_requested.set()
         try:
+            osc_input.close()
             pipeline.close()
         finally:
             if erae_osc is not None:

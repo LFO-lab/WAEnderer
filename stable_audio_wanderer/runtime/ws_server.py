@@ -59,6 +59,8 @@ class WSBroadcaster:
         manual_fader_p01: Optional[np.ndarray] = None,
         manual_fader_p99: Optional[np.ndarray] = None,
         pipeline_message_handler: Optional[Callable[[dict], bool]] = None,
+        service_message_handler: Optional[Callable[[dict], bool]] = None,
+        service_state_provider: Optional[Callable[[], dict]] = None,
     ):
         """
         Initialize broadcaster.
@@ -71,6 +73,8 @@ class WSBroadcaster:
             message_handler: Optional callback for custom inbound messages.
             extra_state_provider: Optional callback that returns extra state fields.
             pipeline_message_handler: Optional callback for pipeline_* messages.
+            service_message_handler: Application controls independent of perform binding.
+            service_state_provider: Application state retained across corpus changes.
         """
         if not HAS_WEBSOCKETS:
             raise ImportError("websockets package required. Install with: pip install websockets")
@@ -93,6 +97,8 @@ class WSBroadcaster:
         self._message_handler = message_handler
         self._extra_state_provider = extra_state_provider
         self._pipeline_message_handler = pipeline_message_handler
+        self._service_message_handler = service_message_handler
+        self._service_state_provider = service_state_provider
         self._manual_points = None
         self._manual_points_3d = None
         self._manual_points_3d_norm = None
@@ -420,6 +426,8 @@ class WSBroadcaster:
                         state.update(extra)
                 except Exception:
                     pass
+            if self._service_state_provider is not None:
+                state.update(self._service_state_provider())
             return json.dumps(state)
 
         nav_state = self.nav.get_state()
@@ -524,6 +532,8 @@ class WSBroadcaster:
                         existing_decoder = {}
                     state["decoder"] = {**existing_decoder, **decoder_state}
 
+        if self._service_state_provider is not None:
+            state.update(self._service_state_provider())
         self._apply_presentation_state(state, presentation_state)
 
         return json.dumps(state)
@@ -601,6 +611,9 @@ class WSBroadcaster:
         try:
             data = json.loads(message)
             msg_type = data.get("type", "")
+            if self._service_message_handler is not None:
+                if await asyncio.to_thread(self._service_message_handler, data):
+                    return
             if await self.visual.handle(websocket, data):
                 return
 
@@ -773,6 +786,8 @@ def start_ws_server(
     manual_fader_p01: Optional[np.ndarray] = None,
     manual_fader_p99: Optional[np.ndarray] = None,
     pipeline_message_handler: Optional[Callable[[dict], bool]] = None,
+    service_message_handler: Optional[Callable[[dict], bool]] = None,
+    service_state_provider: Optional[Callable[[], dict]] = None,
 ) -> Tuple[WSBroadcaster, threading.Thread]:
     """
     Start a WebSocket server for visualization.
@@ -792,6 +807,8 @@ def start_ws_server(
         manual_fader_p01: Optional manual control-space lower bounds used for normalization.
         manual_fader_p99: Optional manual control-space upper bounds used for normalization.
         pipeline_message_handler: Optional callback for pipeline_* inbound messages.
+        service_message_handler: Application controls independent of perform binding.
+        service_state_provider: Application state retained across corpus changes.
 
     Returns:
         Tuple of (WSBroadcaster, Thread)
@@ -808,6 +825,8 @@ def start_ws_server(
         manual_fader_p01=manual_fader_p01,
         manual_fader_p99=manual_fader_p99,
         pipeline_message_handler=pipeline_message_handler,
+        service_message_handler=service_message_handler,
+        service_state_provider=service_state_provider,
     )
     thread = broadcaster.start(host, port)
     return broadcaster, thread

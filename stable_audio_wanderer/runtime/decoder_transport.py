@@ -139,7 +139,7 @@ class DecoderTransportController:
         self._manual_last_index = 0
         self._manual_last_distance = 0.0
 
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._stats_lock = threading.Lock()
         self._running = threading.Event()
         self._decode_thread: Optional[threading.Thread] = None
@@ -211,6 +211,18 @@ class DecoderTransportController:
             self.manual.set_faders(values)
         delta = float(np.max(np.abs(values - previous)))
         return True, f"manual faders updated (delta={delta:.3f})"
+
+    def set_manual_axis(self, axis, value) -> Tuple[bool, str]:
+        """Update a single OSC fader through the same path as Web controls."""
+        with self._lock:
+            if not 0 <= axis < len(self._manual_faders):
+                return False, f"manual axis {axis} is unavailable"
+            values = self._manual_faders.copy()
+            try:
+                values[axis] = float(value)
+            except (TypeError, ValueError):
+                return False, "invalid manual value"
+            return self.set_manual_faders(values)
 
     def set_manual_wander_params(self, k=None, speed=None) -> Tuple[bool, str]:
         try:

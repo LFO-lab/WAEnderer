@@ -567,7 +567,25 @@ Audio Files
 
 ## Control Protocol
 
-### OSC Messages (default port 9000)
+### OSC input
+
+In `waenderer-serve` (also `python bin/serve.py`), enable **OSC input** with the
+on/off switch in the Navigation section of the Perform tab. It defaults to
+`127.0.0.1:9001` and starts off. **Start Perform** prepares the controller;
+incoming messages then control the same navigation and decoder as the Web UI.
+The switch closes the UDP socket when turned off. Across corpus changes the
+listener stays on, but messages are ignored until the new controller is ready.
+The status shows received-message count, last address, and errors. A received
+message does not necessarily mean its address is mapped or its values are valid.
+
+Configure the listener with `waenderer-serve --osc-host 0.0.0.0 --osc-port 9001`
+for senders on another computer; send to the server computer's IP address.
+Add `--osc-debug` to log matched and unmapped addresses in the terminal.
+Erae remains separate on port 9000 by default (`--erae-osc`); use distinct ports
+if both listeners are enabled. The standalone `bin/perform.py` listener retains
+its default port 9000 and `--osc_ip`, `--osc_port`, `--osc_debug` options.
+
+### OSC Messages
 
 **Wander Controls** (0.0 - 1.0):
 ```
@@ -593,13 +611,12 @@ Audio Files
 
 Backward compatibility:
 ```
-/policy/* and /random/* remain compatibility aliases for /wander/*
+/random/* remains a compatibility alias for /wander/*
 ```
 
-**Decoder Controls** (0.0 - 1.0):
+**Decoder Controls** (0.0 - 2.0):
 ```
 /decoder/gain       Output volume
-/decoder/smoothing  Crossfade smoothing
 ```
 
 **Cursor**:
