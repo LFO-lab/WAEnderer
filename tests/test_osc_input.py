@@ -12,6 +12,32 @@ from stable_audio_wanderer.runtime.ws_server import WSBroadcaster
 from test_onnx_transport import _controller
 
 
+def test_camera_controls_without_audio_controller():
+    osc = OscInput()
+    osc._dispatch("/camera/left", 1)
+    osc._dispatch("/camera/right", 1)
+    osc._dispatch("/camera/speed", 8)
+    state = osc.get_state()["osc_input"]
+    updates = state["camera_updates"]
+    assert not state["ready"]
+    assert updates["left"]["value"] is False
+    assert updates["right"]["value"] is True
+    assert updates["speed"]["value"] == 3
+    revision = osc._camera_revision
+    for address, values in (("/camera/left", (float("nan"),)),
+                            ("/camera/speed", ("invalid",)),
+                            ("/camera/over", (0.5,))):
+        osc._dispatch(address, *values)
+        assert osc._camera_revision == revision
+        assert osc.get_state()["osc_input"]["error"]
+    osc._dispatch("/camera/stop", 0)
+    assert osc._camera_revision == revision
+    osc._dispatch("/camera/stop")
+    updates = osc.get_state()["osc_input"]["camera_updates"]
+    assert all(updates[key]["value"] is False for key in osc._camera_opposites)
+    assert updates["speed"]["value"] == 3
+
+
 def test_current_transport_manual_axes_and_wander_reset():
     controller, _, _ = _controller(initial_mode="manual")
     osc = OscInput()
@@ -54,6 +80,15 @@ def test_udp_routing_unbind_and_port_release():
         assert changed.wait(2)
         assert values[-1] == pytest.approx([0.25, 0.5, 0.75])
         assert osc.get_state()["osc_input"]["last_address"] == "/cursor"
+
+        changed.clear()
+        client.send_message("/camera/over", 1)
+        client.send_message("/cursor", [0.25, 0.5, 0.75])
+        assert changed.wait(2)
+        broadcaster = WSBroadcaster(service_state_provider=osc.get_state)
+        camera = json.loads(broadcaster._get_state_json())["osc_input"]["camera_updates"]
+        assert camera["over"]["value"] is True
+        assert camera["under"]["value"] is False
 
         osc.bind(None)
         changed.clear()

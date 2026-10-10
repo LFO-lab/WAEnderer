@@ -55,6 +55,7 @@ let manualViewYawDeg = -34.4;
 let manualViewPitchDeg = 20.1;
 let manualViewDistance = 2.6;
 let manualCameraSpeed = 1.0;
+let oscCameraRevision = 0;
 let manualPickDragging = false;
 let manualColorA = [74, 158, 255];
 let manualColorB = [255, 141, 74];
@@ -554,6 +555,7 @@ function connectWebSocket() {
         ws = new WebSocket(WS_URL);
         
         ws.onopen = () => {
+            oscCameraRevision = 0;
             wsConnected = true;
             updateConnectionStatus(true);
             console.log('WebSocket connected');
@@ -638,6 +640,23 @@ function applyNavigationCursor(nav, authoritativeTrajectory = false) {
 function handleMessage(data) {
     if (data.type === 'state' && data.osc_input) {
         const osc = data.osc_input;
+        // Apply each OSC update once; subsequent state broadcasts leave local
+        // camera buttons and the speed slider free to change.
+        const updates = Object.entries(osc.camera_updates || {})
+            .sort((a, b) => a[1].revision - b[1].revision);
+        let latestRevision = oscCameraRevision;
+        for (const [key, update] of updates) {
+            if (update.revision <= oscCameraRevision) continue;
+            if (key === 'speed') {
+                manualCameraSpeed = update.value;
+                document.getElementById('cam-speed').value = update.value;
+                document.getElementById('val-cam-speed').textContent = update.value.toFixed(2);
+            } else {
+                setManualCameraToggle(key, update.value);
+            }
+            latestRevision = Math.max(latestRevision, update.revision);
+        }
+        oscCameraRevision = latestRevision;
         const toggle = document.getElementById('osc-input-toggle');
         toggle.checked = osc.enabled;
         toggle.disabled = !wsConnected;

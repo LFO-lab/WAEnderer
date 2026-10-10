@@ -587,6 +587,26 @@ its default port 9000 and `--osc_ip`, `--osc_port`, `--osc_debug` options.
 
 ### OSC Messages
 
+**3D camera motion** (general Web server OSC input, default port 9001):
+```
+/camera/left 1         Orbit left; 0 stops this direction
+/camera/right 1        Orbit right
+/camera/over 1         Orbit over
+/camera/under 1        Orbit under
+/camera/forward 1      Move closer
+/camera/backward 1     Move farther away
+/camera/speed 1.5      Motion speed, clamped to 0..3 (same as Web slider)
+/camera/stop           Stop all six directions; speed stays unchanged
+```
+Direction addresses require `0` or `1`. Enabling a direction disables its opposite,
+just like the Web buttons. `/camera/stop 1` also works; `0` is ignored, allowing
+momentary buttons. Enable OSC input and keep the 3D view open in a connected
+browser; camera controls work even before **Start Perform**. These addresses
+control the browser view, not the audio navigation cursor. Each connected browser
+receives the updates; local mouse/button controls remain usable between messages.
+Reconnecting applies the latest OSC camera settings. Turning OSC input off stops
+receiving commands; use `/camera/stop` or the Web buttons to stop ongoing motion.
+
 **Wander Controls** (0.0 - 1.0):
 ```
 /wander/phrase_scale

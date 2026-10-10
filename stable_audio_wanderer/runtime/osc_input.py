@@ -1,5 +1,6 @@
 """Switchable general OSC input for the Web application's perform controller."""
 import threading
+import math
 
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer
@@ -8,6 +9,11 @@ from .osc_server import create_dispatcher
 
 
 class OscInput:
+    _camera_opposites = {
+        "left": "right", "right": "left", "over": "under", "under": "over",
+        "forward": "backward", "backward": "forward",
+    }
+
     def __init__(self, host="127.0.0.1", port=9001, debug=False):
         self.host, self.port, self.debug = host, port, debug
         self._lock = threading.RLock()
@@ -19,6 +25,42 @@ class OscInput:
         self._received = 0
         self._last_address = ""
         self._closed = False
+        self._camera_revision = 0
+        self._camera_updates = {}
+
+    def _camera_message(self, address, values):
+        if not address.startswith("/camera/"):
+            return False
+        key = address.removeprefix("/camera/")
+        if key not in (*self._camera_opposites, "speed", "stop"):
+            raise ValueError("unknown camera address")
+        if key == "stop" and not values:
+            value = 1.0
+        else:
+            if len(values) != 1:
+                raise ValueError("expected one numeric value")
+            value = float(values[0])
+            if not math.isfinite(value):
+                raise ValueError("camera value must be finite")
+        if key != "speed" and value not in (0, 1):
+            raise ValueError("camera switches expect 0 or 1")
+        if key == "stop":
+            if not value:
+                return True
+            updates = {direction: False for direction in self._camera_opposites}
+        elif key == "speed":
+            updates = {key: max(0.0, min(3.0, value))}
+        else:
+            updates = {key: bool(value)}
+            if value:
+                updates[self._camera_opposites[key]] = False
+        self._camera_revision += 1
+        for control, setting in updates.items():
+            self._camera_updates[control] = {
+                "revision": self._camera_revision, "value": setting}
+        if self.debug:
+            print(f"[osc-debug] {address} -> camera {updates}")
+        return True
 
     def bind(self, controller):
         # Wait for any in-flight handler before the old controller is closed.
@@ -31,9 +73,11 @@ class OscInput:
         with self._lock:
             self._received += 1
             self._last_address = address
-            if self._dispatcher is None:
-                return
             try:
+                if self._camera_message(address, values):
+                    return
+                if self._dispatcher is None:
+                    return
                 for handler in self._dispatcher.handlers_for_address(address):
                     handler.callback(address, *values)
             except Exception as exc:
@@ -93,6 +137,8 @@ class OscInput:
                 "received": self._received,
                 "last_address": self._last_address,
                 "error": self._error,
+                "camera_updates": {key: dict(update)
+                                   for key, update in self._camera_updates.items()},
             }}
 
     def close(self):
